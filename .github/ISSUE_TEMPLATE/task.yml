@@ -1,0 +1,25 @@
+name: Implementation task
+description: Claim a focused piece of the MVP.
+title: "[Task] "
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What should work when this task is complete?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Expected scope
+      description: Modules, files, shared contracts, and dependencies.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable behavior and the checks that prove it.
+    validations:
+      required: true
