@@ -54,7 +54,7 @@ The first demo should show a rejected candidate, a corrected revision in the ori
 
 ## Start contributing
 
-Read [the MVP backlog](tasks/todo.md), [the architecture](docs/architecture.md), and [the contribution guide](CONTRIBUTING.md). Agree on message schemas before implementing the coordinator, connector, and desktop client in parallel.
+Read [the MVP backlog](tasks/todo.md), [the architecture](docs/architecture.md), [the detailed implementation spec](docs/implementation-spec.md), and [the contribution guide](CONTRIBUTING.md). Agree on message schemas before implementing the coordinator, connector, and desktop client in parallel.
 
 Proposed starting stack: TypeScript, Node.js and SQLite for the coordinator; Electron and React for the desktop client; Claude Code CLI for the first adapter. These are implementation choices to validate, not installed dependencies.
 
