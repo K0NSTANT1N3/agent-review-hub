@@ -1,0 +1,50 @@
+name: Packaged-app smoke test
+
+on:
+  pull_request:
+    paths:
+      - 'packages/desktop/**'
+      - '.github/workflows/smoke.yml'
+      - '.github/scripts/packaged-smoke.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb xauth libgtk-3-0t64 libnss3 libasound2t64
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm --filter @quorum/desktop stage
+      - name: Capture staged app with a mock team
+        run: xvfb-run -a --server-args="-screen 0 1280x900x24" node .github/scripts/packaged-smoke.mjs
+        env:
+          QUORUM_USER_DATA: ${{ runner.temp }}/quorum-smoke/host
+          QUORUM_SMOKE_SCREENSHOT: ${{ runner.temp }}/quorum-smoke/setup.png
+          QUORUM_START_PAGE: setup=host
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: packaged-app-screenshots
+          path: ${{ runner.temp }}/quorum-smoke/*.png
+          if-no-files-found: error
