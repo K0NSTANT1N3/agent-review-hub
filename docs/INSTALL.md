@@ -269,11 +269,14 @@ Make the npm package files from the repository, then install them with npm:
 git clone https://github.com/K0NSTANT1N3/agent-review-hub.git && cd agent-review-hub
 corepack pnpm install --filter '@quorum/leader...' --filter '@quorum/node...' --filter '@quorum/cli...'
 for p in protocol leader node cli; do (cd packages/$p && corepack pnpm pack --pack-destination ../../dist-npm); done
-npm install -g ./dist-npm/*.tgz
+npm install -g --allow-scripts=better-sqlite3 ./dist-npm/*.tgz
 ```
 
 The `--filter` options install only the server packages. They do not download the desktop app (Electron).
 `pnpm pack` builds each package before it makes the package file.
+
+[npm 12 blocks dependency install scripts by default](https://docs.npmjs.com/cli/v12/commands/npm-install/).
+`--allow-scripts=better-sqlite3` permits the SQLite native module to install. With an older npm version that does not support this option, omit it.
 
 This installs three programs: `quorum-leader` (the Leader), `quorum-node` (the agent Node) and `quorum` (the CLI for coding agents and scripts).
 Each program shows its commands with `--help`. Install all four package files together, because the other packages use `@quorum/protocol`.
