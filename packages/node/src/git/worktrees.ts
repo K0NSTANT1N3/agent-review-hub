@@ -65,7 +65,8 @@ export async function createWorktree(config: WorktreeConfig, sid: string): Promi
   if (await exists(target)) {
     const existingRoot = await git(target, ['rev-parse', '--show-toplevel'], options(config));
     assertGitSuccess(existingRoot, `verify worktree for session ${sid}`);
-    if (resolve(existingRoot.stdout.trim()) !== resolve(target)) {
+    // Compare real paths: git reports the symlink-resolved root (macOS /var -> /private/var).
+    if ((await realpath(existingRoot.stdout.trim())) !== (await realpath(target))) {
       throw new Error(`Session path ${target} is already occupied by a different directory`);
     }
     return target;
