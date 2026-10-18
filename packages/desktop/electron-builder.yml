@@ -1,0 +1,26 @@
+appId: dev.agentreviewhub.quorum
+productName: Quorum
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - package.json
+  - node_modules/**
+asarUnpack:
+  - "**/*.node"
+  - "**/@anthropic-ai/**"
+npmRebuild: false
+linux:
+  target: [AppImage, deb]
+  category: Development
+  maintainer: Agent Review Hub contributors <noreply@example.com>
+mac:
+  target: [dmg]
+  category: public.app-category.developer-tools
+win:
+  target: [nsis]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+publish: null

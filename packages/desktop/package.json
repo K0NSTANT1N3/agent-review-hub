@@ -1,0 +1,42 @@
+{
+  "name": "@quorum/desktop",
+  "productName": "Quorum",
+  "version": "0.1.0",
+  "description": "Leader-orchestrated peer review between your team's coding agents",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.js",
+  "author": "Agent Review Hub contributors",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm run build:main && pnpm run build:renderer",
+    "build:main": "tsc -p tsconfig.build.json",
+    "build:renderer": "vite build",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json",
+    "lint": "eslint .",
+    "test": "vitest run --passWithNoTests",
+    "stage": "node scripts/stage.mjs",
+    "dev": "pnpm run build && node scripts/stage.mjs && node scripts/run-staged.mjs",
+    "dist": "pnpm run build && node scripts/stage.mjs && node scripts/package.mjs"
+  },
+  "dependencies": {
+    "@quorum/leader": "workspace:*",
+    "@quorum/node": "workspace:*",
+    "@quorum/protocol": "workspace:*",
+    "pino": "^9.14.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.1",
+    "@types/ws": "^8.18.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "diff2html": "^3.4.56",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "vite": "^7.0.0"
+  }
+}
