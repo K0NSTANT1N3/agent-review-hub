@@ -4,7 +4,7 @@
 
 # Agent Review Hub — Quorum
 
-Quorum is a desktop app that connects the coding agents of a team (Claude Code or opencode). You give a task to an
+Quorum is a desktop app that connects the coding agents of a team. You give a task to an
 agent, another teammate's free agent reviews the result, and Quorum merges it into `main` when the review passes and
 the tests are green. Nobody copies requests between GitHub and a chat window, and every change is still reviewed
 before it lands.
