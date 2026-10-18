@@ -177,6 +177,7 @@ export class Scheduler {
       if (this.isRateLimited(agent)) return 'rate_limited';
       if (!this.hasSlot(agent)) return 'session_capacity';
       if (this.backedOff(agent.id)) return 'session_start_backoff';
+      if (role === 'author' && !this.canAdmitAuthor(task, agent.id)) return 'review_capacity_reserved';
       return null;
     }
 
@@ -198,6 +199,7 @@ export class Scheduler {
       const estimate = role === 'author' ? estimateAuthor(agent, this.config.costEstimate) : estimateReview(agent, task, this.config.costEstimate);
       if (budgetRemaining(this.db, agent, this.now(), this.config.dayBoundaryTz) < estimate) return 'budget_exhausted';
     }
+    if (role === 'author' && !this.canAdmitAuthor(task, agent.id)) return 'review_capacity_reserved';
     return null;
   }
 

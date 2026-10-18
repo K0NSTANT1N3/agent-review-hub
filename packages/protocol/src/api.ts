@@ -69,6 +69,7 @@ export const TaskWaitBlockerSchema = z.object({
     'agent_paused',
     'rate_limited',
     'session_capacity',
+    'review_capacity_reserved',
     'session_start_backoff',
     'lending_disabled',
     'owner_active',

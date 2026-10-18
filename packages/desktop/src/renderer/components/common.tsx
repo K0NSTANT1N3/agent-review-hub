@@ -40,6 +40,7 @@ const WAIT_BLOCKERS: Record<TaskWaitReason['blockers'][number]['code'], { label:
   agent_paused: { label: 'paused', nextStep: 'Resume the agent or choose another available agent.' },
   rate_limited: { label: 'rate-limited', nextStep: 'Wait for the usage limit to reset.' },
   session_capacity: { label: 'at session capacity', nextStep: 'Wait for a session to become free.' },
+  review_capacity_reserved: { label: 'reserving capacity for reviews', nextStep: 'Wait for current author work to reach review.' },
   session_start_backoff: { label: 'retrying after a session start failure', nextStep: 'The Leader will retry automatically.' },
   lending_disabled: { label: 'not accepting teammate work', nextStep: 'Ask a teammate to enable lending, or wait for another agent.' },
   owner_active: { label: 'owner is active', nextStep: 'Wait until the owner is idle or ask them to change their lending mode.' },

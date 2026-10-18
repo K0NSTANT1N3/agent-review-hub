@@ -159,6 +159,23 @@ describe('author assignment (§9.2)', () => {
     expect(scheduler.waitReason(db.tasks.require(t.id))).toBeNull();
   });
 
+  it('explains when an otherwise eligible author is held back to reserve reviewer capacity', () => {
+    db.agents.update('alice-claude', { max_sessions: 1 });
+    agent('bob-claude', { max_sessions: 1 });
+    session('alice-author', 'alice-claude', { profile: 'author' });
+    const active = task({ state: 'AUTHORING', author_agent_id: 'alice-claude', author_session_id: 'alice-author' });
+    locks.lockSession('alice-author', 'task', String(active.id), 'author');
+    const queued = task({ requester_agent_id: 'bob-claude', mode: 'own' });
+
+    scheduler.schedule();
+
+    expect(db.tasks.require(queued.id).state).toBe('QUEUED');
+    expect(commands).toHaveLength(0);
+    expect(scheduler.waitReason(db.tasks.require(queued.id))).toEqual({
+      role: 'author', blockers: [{ code: 'review_capacity_reserved', agentCount: 1 }],
+    });
+  });
+
   it('explains starting and temporarily backed-off author sessions', () => {
     const t = task();
     scheduler.schedule();
