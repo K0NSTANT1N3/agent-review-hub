@@ -41,6 +41,9 @@ export class Scheduler {
   private readonly openBackoff = new Map<string, number>();
   private readonly notified = new Set<string>();
   private timer: ReturnType<typeof setInterval> | undefined;
+  /** Per-pass caches for author admission (issue #63); undefined outside the author loop. */
+  private budgets: Map<string, number> | undefined;
+  private capacity: { free: Map<string, number>; wants: string[][] } | undefined;
   private triggered = false;
   private stopped = false;
 
@@ -84,8 +87,17 @@ export class Scheduler {
   /** One full pass — spec §9 steps 1–5. Each item runs in its own savepoint so one failure doesn't block the rest. */
   schedule(): void {
     this.expire();
+    // Reviewers first: they finish work already in flight and free its author slot (issue #63).
     for (const task of this.byPriority(['AWAITING_REVIEWER'])) this.guard(`assign reviewer ${task.id}`, () => this.assignReviewer(task.id));
-    for (const task of this.byPriority(['QUEUED'])) this.guard(`assign author ${task.id}`, () => this.assignAuthor(task.id));
+    // Free capacity and review demand are snapshotted once for the author loop and updated as authors are admitted.
+    this.budgets = new Map();
+    this.capacity = undefined;
+    try {
+      for (const task of this.byPriority(['QUEUED'])) this.guard(`assign author ${task.id}`, () => this.assignAuthor(task.id));
+    } finally {
+      this.budgets = undefined;
+      this.capacity = undefined;
+    }
     for (const d of this.db.directives.find({ state: 'queued' }).sort((a, b) => a.created_at - b.created_at)) {
       this.guard(`directive ${d.id}`, () => this.runDirective(d.id));
     }
@@ -177,7 +189,7 @@ export class Scheduler {
       if (this.isRateLimited(agent)) return 'rate_limited';
       if (!this.hasSlot(agent)) return 'session_capacity';
       if (this.backedOff(agent.id)) return 'session_start_backoff';
-      if (role === 'author' && !this.canAdmitAuthor(task, agent.id)) return 'review_capacity_reserved';
+      if (role === 'author' && !this.reviewCapacityAllows(task, agent)) return 'review_capacity_reserved';
       return null;
     }
 
@@ -199,7 +211,7 @@ export class Scheduler {
       const estimate = role === 'author' ? estimateAuthor(agent, this.config.costEstimate) : estimateReview(agent, task, this.config.costEstimate);
       if (budgetRemaining(this.db, agent, this.now(), this.config.dayBoundaryTz) < estimate) return 'budget_exhausted';
     }
-    if (role === 'author' && !this.canAdmitAuthor(task, agent.id)) return 'review_capacity_reserved';
+    if (role === 'author' && !this.reviewCapacityAllows(task, agent)) return 'review_capacity_reserved';
     return null;
   }
 
@@ -281,23 +293,28 @@ export class Scheduler {
     const task = this.db.tasks.require(taskId);
     if (task.state !== 'QUEUED' || this.hasPendingOpen(task.id)) return;
     const requester = this.db.agents.require(task.requester_agent_id);
-    let chosen: AgentRow | undefined;
+    const candidates: Candidate[] = [];
     if (task.mode === 'own') {
       const a = requester;
-      if (this.isOnline(a) && a.paused === 0 && !this.isRateLimited(a) && this.hasSlot(a) && !this.backedOff(a.id) && this.canAdmitAuthor(task, a.id)) chosen = a;
+      if (this.isOnline(a) && a.paused === 0 && !this.isRateLimited(a) && this.hasSlot(a) && !this.backedOff(a.id)) candidates.push({ agent: a, score: 0 });
     } else {
-      const candidates: Candidate[] = [];
       for (const a of this.db.agents.all()) {
         if (!this.isOnline(a) || this.isRateLimited(a) || !this.hasSlot(a) || this.backedOff(a.id)) continue;
         const own = a.owner_name === requester.owner_name;
         const estimate = estimateAuthor(a, this.config.costEstimate);
         if (own ? a.paused !== 0 : !this.mayLend(a) || budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) continue;
-        if (!this.canAdmitAuthor(task, a.id)) continue;
         candidates.push({ agent: a, score: this.score(a, task, 'author', own, estimate) });
       }
-      chosen = this.best(candidates);
+    }
+    // Best-scored agent whose author slot still leaves a reviewer for every task in flight.
+    let chosen: AgentRow | undefined;
+    while (chosen === undefined && candidates.length > 0) {
+      const next = this.best(candidates)!;
+      if (this.reviewCapacityAllows(task, next)) chosen = next;
+      else candidates.splice(candidates.findIndex((c) => c.agent === next), 1);
     }
     if (chosen === undefined) return;
+    this.reserve(task, chosen);
     const sid = this.pickSession(chosen, taskFiles(task), 'author');
     if (sid !== null) this.bindAuthor(task, sid);
     else this.openSession(chosen.id, 'author', { taskId: task.id });
@@ -327,7 +344,13 @@ export class Scheduler {
   private assignReviewer(taskId: number): void {
     const task = this.db.tasks.require(taskId);
     if (task.state !== 'AWAITING_REVIEWER' || this.hasPendingOpen(task.id) || task.author_agent_id === null) return;
-    const candidates = this.eligibleReviewers(task, task.author_agent_id).filter(({ agent }) => this.hasSlot(agent));
+    const requesterOwner = this.ownerOf(task.requester_agent_id);
+    const candidates: Candidate[] = [];
+    for (const a of this.db.agents.all()) {
+      if (!this.hasSlot(a) || !this.mayReview(a, task, task.author_agent_id, requesterOwner)) continue;
+      const own = a.owner_name === requesterOwner;
+      candidates.push({ agent: a, score: this.score(a, task, 'reviewer', own, estimateReview(a, task, this.config.costEstimate)) });
+    }
     // Agents whose earlier review of this task was abandoned (crash, invalid output, rate limit, …) are a last resort.
     const dropped = new Set(this.db.conversations.find({ task_id: task.id, state: 'abandoned' }).map((c) => c.reviewer_agent_id));
     const fresh = candidates.filter((c) => !dropped.has(c.agent.id));
@@ -362,15 +385,6 @@ export class Scheduler {
       candidates.push({ agent, score: this.score(agent, task, 'reviewer', own, estimate) });
     }
     return candidates;
-  }
-
-  /**
-   * Keep enough free reviewer slots to match every task already in the author/review queue, plus
-   * the author we are about to admit. Each author lock lasts through review, so assigning authors
-   * without this check can consume every slot before any review starts.
-   */
-  private canAdmitAuthor(task: TaskRow, authorAgentId: string): boolean {
-    return this.canMatchReviewDemands([...this.pendingReviewDemands(), { task, authorAgentId }], authorAgentId);
   }
 
   private pendingReviewDemands(): { task: TaskRow; authorAgentId: string }[] {
@@ -423,6 +437,83 @@ export class Scheduler {
       return false;
     };
     return eligible.every((_, index) => match(index, new Set()));
+  }
+
+  /** Every §9.3 reviewer filter except free capacity. */
+  private mayReview(a: AgentRow, task: TaskRow, authorAgentId: string, requesterOwner: string): boolean {
+    if (a.id === authorAgentId || !this.isOnline(a) || this.isRateLimited(a) || this.backedOff(a.id)) return false;
+    if (a.owner_name === requesterOwner) return a.paused === 0;
+    return this.mayLend(a) && this.budgetOf(a) >= estimateReview(a, task, this.config.costEstimate);
+  }
+
+  private budgetOf(a: AgentRow): number {
+    const cached = this.budgets?.get(a.id);
+    if (cached !== undefined) return cached;
+    const remaining = budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz);
+    this.budgets?.set(a.id, remaining);
+    return remaining;
+  }
+
+  /** Agents that could review `task` if it were authored on `authorAgentId`. */
+  private reviewerIds(task: TaskRow, authorAgentId: string): string[] {
+    const owner = this.ownerOf(task.requester_agent_id);
+    return this.db.agents.all().filter((a) => this.mayReview(a, task, authorAgentId, owner)).map((a) => a.id);
+  }
+
+  /**
+   * Author admission backpressure (issue #63). An author keeps its slot until the review ends, so authors alone can fill
+   * every slot and leave no reviewer. Admit `task` on `author` only if every author still waiting for a reviewer, this one
+   * included, can be matched to its own slot on an eligible reviewer — a slot that is free or will free up without new
+   * capacity. Tasks nobody could review need no slot: they wait for a human (no_reviewer attention).
+   */
+  private reviewCapacityAllows(task: TaskRow, author: AgentRow): boolean {
+    const snapshot = this.capacitySnapshot();
+    const free = new Map(snapshot.free);
+    free.set(author.id, (free.get(author.id) ?? 0) - 1);
+    const mine = this.reviewerIds(task, author.id);
+    return matchesAll(mine.length > 0 ? [...snapshot.wants, mine] : snapshot.wants, free);
+  }
+
+  /** Record an admitted author in the pass snapshot. */
+  private reserve(task: TaskRow, author: AgentRow): void {
+    if (this.capacity === undefined) return;
+    this.capacity.free.set(author.id, (this.capacity.free.get(author.id) ?? 0) - 1);
+    const mine = this.reviewerIds(task, author.id);
+    if (mine.length > 0) this.capacity.wants.push(mine);
+  }
+
+  private capacitySnapshot(): { free: Map<string, number>; wants: string[][] } {
+    if (this.capacity !== undefined) return this.capacity;
+    // Slots held by reviews, directives or tasks already in review free up without new capacity, so only authors still
+    // waiting for a reviewer take a slot out of the pool.
+    const demand = this.reviewDemand();
+    const free = new Map(this.db.agents.all().map((a) => [a.id, a.max_sessions - demand.filter((d) => d.authorAgentId === a.id).length]));
+    const wants = demand.map((d) => this.reviewerIds(d.task, d.authorAgentId)).filter((ids) => ids.length > 0);
+    const snapshot = { free, wants };
+    if (this.budgets !== undefined) this.capacity = snapshot;
+    return snapshot;
+  }
+
+  /** Tasks holding (or opening) an author slot with no reviewer slot yet. */
+  private reviewDemand(): { task: TaskRow; authorAgentId: string }[] {
+    const authors = new Map<number, string>();
+    const reviewing = new Set<number>();
+    for (const s of this.db.sessions.find({ state: 'locked' })) {
+      if (s.lock_kind === 'task' && s.lock_role === 'author' && s.lock_ref !== null) authors.set(Number(s.lock_ref), s.agent_id);
+    }
+    for (const s of this.db.sessions.find({ state: 'opening' })) {
+      const req = this.db.openRequestFor(s.id);
+      if (req?.task_id === null || req?.task_id === undefined) continue;
+      if (this.sessionProfile(s.id) === 'reviewer') reviewing.add(req.task_id);
+      else authors.set(req.task_id, s.agent_id);
+    }
+    const out: { task: TaskRow; authorAgentId: string }[] = [];
+    for (const [taskId, authorAgentId] of authors) {
+      if (reviewing.has(taskId) || this.db.conversations.find({ task_id: taskId, state: 'active' }).length > 0) continue;
+      const task = this.db.tasks.get(taskId);
+      if (task !== undefined && !isTerminal(task.state)) out.push({ task, authorAgentId });
+    }
+    return out;
   }
 
   /** AWAITING_REVIEWER → IN_REVIEW with a new conversation (T7). */
@@ -879,7 +970,7 @@ export class Scheduler {
       if (budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) return 'out of lending budget';
     }
     // Last, as in assignAuthor: the review-capacity check is the expensive one.
-    if (role === 'author' && !this.canAdmitAuthor(task, a.id)) return 'reserving capacity for reviews';
+    if (role === 'author' && !this.reviewCapacityAllows(task, a)) return 'reserving capacity for reviews';
     return null;
   }
 
@@ -914,4 +1005,29 @@ export class Scheduler {
       this.log.error({ err: error, label }, 'scheduler step failed');
     }
   }
+}
+
+/** Whether each demand (a list of acceptable agent ids) gets its own unit of `capacity` — augmenting-path matching. */
+export function matchesAll(wants: readonly (readonly string[])[], capacity: ReadonlyMap<string, number>): boolean {
+  const holders = new Map<string, number[]>();
+  const place = (i: number, seen: Set<string>): boolean => {
+    for (const id of wants[i]!) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const held = holders.get(id) ?? [];
+      holders.set(id, held);
+      if (held.length < (capacity.get(id) ?? 0)) {
+        held.push(i);
+        return true;
+      }
+      for (let k = 0; k < held.length; k++) {
+        if (place(held[k]!, seen)) {
+          held[k] = i;
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  return wants.every((_, i) => place(i, new Set()));
 }

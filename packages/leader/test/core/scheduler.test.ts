@@ -193,9 +193,88 @@ describe('author assignment (§9.2)', () => {
     agent('bob-claude');
     session('b', 'bob-claude', { profile: 'author' });
     session('c', 'carol-claude', { profile: 'author' });
+    agent('dave-claude'); // free reviewer capacity for carol's work
     const t = task({ mode: 'pool' });
     scheduler.schedule();
     expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_agent_id: expect.stringMatching(/^(bob|carol)-claude$/) });
+  });
+});
+
+describe('review capacity backpressure (issue #63)', () => {
+  beforeEach(() => {
+    db.agents.update('alice-claude', { max_sessions: 1 });
+    agent('bob-claude', { max_sessions: 1 });
+  });
+
+  it('does not start an author when no eligible reviewer would be left with a free slot', () => {
+    // bob is the only reviewer of alice's task, so its slot is reserved; bob's own task (nobody can review it) would need it.
+    const first = task();
+    const second = task({ requester_agent_id: 'bob-claude' });
+    scheduler.schedule();
+    expect(db.tasks.require(first.id).state).toBe('QUEUED');
+    expect(sent('session.open')).toHaveLength(1);
+    expect(sent('session.open')[0]!.agentId).toBe('alice-claude');
+    expect(db.tasks.require(second.id).state).toBe('QUEUED');
+  });
+
+  it('pool mode skips an author whose slot is the last reviewer slot of a task in flight', () => {
+    db.agents.update('alice-claude', { paused: 1 }); // alice reviews nothing now
+    db.agents.update('bob-claude', { max_sessions: 2 });
+    agent('carol-claude', { max_sessions: 1 });
+    agent('dave-claude', { max_sessions: 1, lend_tokens_per_day: 100_000 }); // too little budget to review the big diff
+    // In flight: authored on bob, a diff only carol can afford to review.
+    session('bx', 'bob-claude', { profile: 'author' });
+    const busy = task({ state: 'AUTHORING', mode: 'pool', author_agent_id: 'bob-claude', author_session_id: 'bx', diff_lines: 100_000 });
+    locks.lockSession('bx', 'task', String(busy.id), 'author');
+    for (const [sid, id] of [['b', 'bob-claude'], ['c', 'carol-claude'], ['d', 'dave-claude']] as const) session(sid, id, { profile: 'author' });
+    const t = task({ mode: 'pool' });
+    scheduler.schedule();
+    // Carol scores best but holds busy's only reviewer slot.
+    const after = db.tasks.require(t.id);
+    expect(after.state).toBe('AUTHORING');
+    expect(['bob-claude', 'dave-claude']).toContain(after.author_agent_id);
+    expect(db.sessions.require('c').state).toBe('idle');
+  });
+
+  it('counts a slot busy with a review as reserve: the review ends without new capacity', () => {
+    const inReview = awaitingReview();
+    session('r', 'bob-claude', { profile: 'reviewer' });
+    scheduler.schedule();
+    expect(db.tasks.require(inReview.id).state).toBe('IN_REVIEW');
+    agent('carol-claude', { lend_mode: 'never', max_sessions: 1 });
+    session('c', 'carol-claude', { profile: 'author' });
+    const t = task({ requester_agent_id: 'carol-claude' });
+    scheduler.schedule();
+    expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_agent_id: 'carol-claude' });
+  });
+
+  it('still starts an author when nobody could ever review the task (human approval path)', () => {
+    db.agents.update('bob-claude', { lend_mode: 'never' });
+    session('a', 'alice-claude', { profile: 'author' });
+    const t = task();
+    scheduler.schedule();
+    expect(db.tasks.require(t.id).state).toBe('AUTHORING');
+  });
+
+  it('assigns reviewers before authors so a freed slot goes to waiting reviews', () => {
+    const waiting = awaitingReview();
+    session('r', 'bob-claude', { profile: 'reviewer' });
+    const queued = task({ requester_agent_id: 'bob-claude', mode: 'pool' });
+    scheduler.schedule();
+    expect(db.tasks.require(waiting.id).state).toBe('IN_REVIEW');
+    expect(db.tasks.require(queued.id).state).toBe('QUEUED');
+  });
+});
+
+describe('matchesAll', () => {
+  it('finds a matching through reassignment and respects capacity', async () => {
+    const { matchesAll } = await import('../../src/core/scheduler.js');
+    const cap = new Map([['x', 1], ['y', 1]]);
+    expect(matchesAll([['x', 'y'], ['x']], cap)).toBe(true);
+    expect(matchesAll([['x'], ['x']], cap)).toBe(false);
+    expect(matchesAll([['x', 'y'], ['x', 'y'], ['y']], cap)).toBe(false);
+    expect(matchesAll([], cap)).toBe(true);
+    expect(matchesAll([['z']], cap)).toBe(false);
   });
 });
 
