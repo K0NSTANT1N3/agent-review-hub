@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskState, TaskView } from '@quorum/protocol';
-import { DEFAULT_QUERY, DONE_PAGE, buildBoard, layoutForWidth, taskRole, type TaskBoardQuery } from '../src/renderer/task-board.js';
+import { DEFAULT_QUERY, DONE_PAGE, buildBoard, layoutForWidth, ownerInScope, taskRole, type TaskBoardQuery } from '../src/renderer/task-board.js';
 
 function task(partial: Partial<TaskView> & Pick<TaskView, 'id' | 'title' | 'state'>): TaskView {
   return {
@@ -116,9 +116,16 @@ describe('task board layout and completed tasks', () => {
     expect(more.open(1)).toBe(1);
   });
 
-  it('distinguishes loading, empty, and no-results', () => {
+  it('distinguishes loading, empty, an empty mine view, and no-results', () => {
     expect(buildBoard({ tasks: undefined, query: DEFAULT_QUERY, extra: {}, width: 1400 }).status).toBe('loading');
     expect(board([]).status).toBe('empty');
+    expect(buildBoard({ tasks: [], query: DEFAULT_QUERY, extra: {}, width: 1400, scope: 'mine' }).status).toBe('empty-mine');
     expect(board([task({ id: 1, title: 'a', state: 'QUEUED' })], { search: 'nope' }).status).toBe('no-results');
+  });
+
+  it('drops an owner that is not in the loaded list and keeps one that is', () => {
+    expect(ownerInScope([], 'grace', false)).toBe('grace');
+    expect(ownerInScope(['ada'], 'grace', true)).toBe('all');
+    expect(ownerInScope(['ada', 'grace'], 'grace', true)).toBe('grace');
   });
 });

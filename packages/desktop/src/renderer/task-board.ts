@@ -98,6 +98,12 @@ export function ownerOptions(tasks: readonly TaskView[]): string[] {
   return [...new Set(tasks.map((task) => task.requesterOwner))].sort((a, b) => a.localeCompare(b));
 }
 
+/** Drop an owner the loaded list no longer contains, so the dropdown cannot hide an active filter. */
+export function ownerInScope(owners: readonly string[], selected: string, loaded: boolean): string {
+  if (!loaded || selected === 'all' || owners.includes(selected)) return selected;
+  return 'all';
+}
+
 export interface BoardColumn {
   title: string;
   total: number;
@@ -105,7 +111,7 @@ export interface BoardColumn {
   hidden: number;
 }
 
-export type BoardStatus = 'loading' | 'empty' | 'no-results' | 'ready';
+export type BoardStatus = 'loading' | 'empty' | 'empty-mine' | 'no-results' | 'ready';
 
 export interface BoardModel {
   status: BoardStatus;
@@ -123,6 +129,8 @@ export function buildBoard(args: {
   /** Extra rows revealed per column, on top of the first page. */
   extra: Readonly<Record<string, number>>;
   width: number;
+  /** `mine` means the caller already limited the list to the current owner. */
+  scope?: 'mine' | 'all';
 }): BoardModel {
   const layout = layoutForWidth(args.width);
   const owners = args.tasks === undefined ? [] : ownerOptions(args.tasks);
@@ -134,7 +142,7 @@ export function buildBoard(args: {
     open: () => null as number | null,
   };
   if (args.tasks === undefined) return { ...base, status: 'loading' };
-  if (args.tasks.length === 0) return { ...base, status: 'empty' };
+  if (args.tasks.length === 0) return { ...base, status: args.scope === 'mine' ? 'empty-mine' : 'empty' };
 
   const matched = sortTasks(filterTasks(args.tasks, args.query), args.query.sort);
   if (matched.length === 0) return { ...base, status: 'no-results' };
