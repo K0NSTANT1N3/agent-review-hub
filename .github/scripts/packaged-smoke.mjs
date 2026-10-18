@@ -75,7 +75,8 @@ function validateShot(shot) {
 
 async function capture(page, shot, configured = false) {
   console.log(`[smoke] Launch staged app at #${page}`);
-  const child = spawn(electron, [join(desktop, 'stage'), '--no-sandbox'], {
+  // Xvfb has no hardware GPU; use Chromium's software compositor for capturePage.
+  const child = spawn(electron, [join(desktop, 'stage'), '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'], {
     stdio: 'inherit',
     signal: globalThis.AbortSignal.timeout(45_000),
     killSignal: 'SIGKILL',
