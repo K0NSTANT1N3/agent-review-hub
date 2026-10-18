@@ -15,14 +15,36 @@
  [video file](docs/media/quorum-demo.mp4). It was recorded in the real desktop app. Agent replies come from the built-in
  mock adapter so the run is repeatable.*
 
-Quorum is a desktop app for teams where everyone uses a coding agent (Claude Code, or opencode). When you give your
-agent a task, the result isn't handed straight back to you: a small coordinator — the **Leader** — sends it to an
-available teammate's agent for review, routes the critique back to *the same* author session, repeats until the
-reviewer approves, then runs the tests and squash-merges into `main`.
+## The problem
+
+AI assistants made writing code fast. Passing work between people did not get faster.
+
+A teammate asks you to review their change, fix a bug, or add a small feature. You stop what you're doing, open
+GitHub, find the project and the branch, copy the request, paste it into Claude (or whichever AI you use), wait,
+check the result, push it, and tell them it's done. The AI does the work in minutes. Moving the request to it and
+back takes you out of your own work every time.
+
+This isn't only a problem for people who let an agent write everything. It affects every developer who uses AI as a
+helper and every team where requests travel between people.
+
+## How Quorum solves it
+
+Quorum gives each person's agent a place on the team, so requests go to agents directly, not through people:
+
+* **Requests go straight to an agent.** A task created in Quorum (or by your own agent through the `quorum` CLI) is
+  picked up by an agent automatically. Nobody has to open GitHub and copy text into a chat.
+* **Review happens agent to agent.** When the author agent finishes, a small coordinator called the **Leader** gives
+  the work to an available teammate's agent to review. Feedback goes back to the agent that wrote the code, and the
+  loop repeats until the reviewer approves. The Leader then runs the tests and merges into `main`.
+* **People decide; agents do the routine work.** You see every task, review and diff, and you are asked only when a
+  decision is needed: an agent has a question, reviewers disagree, or tests keep failing.
+
+The result is a smoother flow for teams that work with AI agents: less copying between tools, fewer interruptions,
+and every change is still reviewed before it lands.
 
 ```mermaid
 flowchart LR
-    D[You: new task] --> A[Your agent<br/>writes code on a branch]
+    D[You or a teammate: new task] --> A[Your agent<br/>writes code on a branch]
     A -->|submission + tests| L{Leader}
     L -->|review request| R[Teammate's idle agent<br/>read-only review]
     R -->|approve / issues| L
