@@ -1,5 +1,5 @@
 import type { AgentView, QueueEntryView, TeamActivityView } from '@quorum/protocol';
-import { duration, timeAgo } from '../bridge';
+import { duration, formatTokens, timeAgo } from '../bridge';
 import { Card, Dot, Empty } from './common';
 
 // Dashboard answers at a glance: who works on what, who waits for whom, and what the scheduler picks next.
@@ -63,6 +63,7 @@ interface AgentTile {
   maxSessions: number | null;
   rateLimitedUntil: number | null;
   lastHeartbeatAt: number | null;
+  budgetRemaining: number | null;
   rows: TeamActivityView[];
 }
 
@@ -74,7 +75,7 @@ function agentTiles(agents: AgentView[] | undefined, activities: TeamActivityVie
       agentId: a.id, ownerName: a.ownerName, status: a.status, paused: a.paused, lendMode: a.lendMode,
       usedSessions: a.lockedSessions, maxSessions: a.maxSessions,
       rateLimitedUntil: a.rateLimitedUntil !== null && a.rateLimitedUntil > Date.now() ? a.rateLimitedUntil : null,
-      lastHeartbeatAt: a.lastHeartbeatAt, rows: [],
+      lastHeartbeatAt: a.lastHeartbeatAt, budgetRemaining: a.budgetRemaining, rows: [],
     });
   }
   for (const row of activities) {
@@ -82,13 +83,27 @@ function agentTiles(agents: AgentView[] | undefined, activities: TeamActivityVie
     if (tile === undefined) {
       tile = {
         agentId: row.agentId, ownerName: row.ownerName, status: row.agentStatus, paused: row.activityState === 'paused', lendMode: null,
-        usedSessions: null, maxSessions: null, rateLimitedUntil: row.rateLimitedUntil ?? null, lastHeartbeatAt: row.lastHeartbeatAt, rows: [],
+        usedSessions: null, maxSessions: null, rateLimitedUntil: row.rateLimitedUntil ?? null, lastHeartbeatAt: row.lastHeartbeatAt,
+        budgetRemaining: null, rows: [],
       };
       tiles.set(row.agentId, tile);
     }
     if (row.role !== 'idle') tile.rows.push(row);
   }
   return [...tiles.values()].sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.agentId.localeCompare(b.agentId));
+}
+
+/**
+ * What an idle agent can do for teammates. It never promises a pickup: when_idle eligibility depends on an idle
+ * threshold the Leader does not report, and each task's cost estimate decides whether the remaining budget suffices.
+ */
+function idleLabel(tile: AgentTile): string {
+  if (tile.lendMode === 'never') return 'Idle · own work only';
+  if (tile.maxSessions !== null && tile.usedSessions !== null && tile.usedSessions >= tile.maxSessions) return 'Idle · no free session';
+  if (tile.budgetRemaining !== null && tile.budgetRemaining <= 0) return 'Idle · lending budget used up';
+  if (tile.lendMode === 'when_idle') return 'Idle · lends when its owner is away';
+  if (tile.lendMode === 'always') return tile.budgetRemaining === null ? 'Idle · lends to teammates' : `Idle · lends to teammates (${formatTokens(tile.budgetRemaining)} budget left)`;
+  return 'Idle';
 }
 
 function tileTone(tile: AgentTile): Tone {
@@ -150,7 +165,7 @@ export function AgentsNow({ agents, activities, me, onOpenTask }: {
                     {tile.paused && <div className="warn-text">Paused by its owner</div>}
                     {tile.rows.map((row) => <SessionLine key={row.key} row={row} onOpen={onOpenTask} />)}
                     {tile.rows.length === 0 && tile.rateLimitedUntil === null && !tile.paused && (
-                      <div className="muted">{tile.lendMode === 'never' ? 'Idle · own work only' : 'Idle · free to help'}</div>
+                      <div className="muted">{idleLabel(tile)}</div>
                     )}
                   </>
                 )}

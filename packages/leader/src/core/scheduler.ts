@@ -633,7 +633,11 @@ export class Scheduler {
     }
     const opening = this.pendingOpenAgent(task.id);
     if (opening !== undefined) {
-      return { ...base, needs: 'author', waitingOn: 'scheduler', reason: `${paused}; opening an author session on ${opening.owner_name}'s agent` };
+      // The scheduler skips a task while its session opens, so this waits on that agent, not on the next pass.
+      return {
+        ...base, needs: 'author', waitingOn: 'agent', reason: `${paused}; opening an author session on ${opening.owner_name}'s agent`,
+        candidates: [{ agentId: opening.id, ownerName: opening.owner_name, blocker: 'opening a session' }],
+      };
     }
     const author = task.author_agent_id === null ? undefined : this.db.agents.get(task.author_agent_id);
     const blocker = author === undefined
@@ -685,7 +689,11 @@ export class Scheduler {
     const base = this.entryBase(task, position);
     const opening = this.pendingOpenAgent(task.id);
     if (opening !== undefined) {
-      return { ...base, needs: role, waitingOn: 'scheduler', reason: `Opening a ${role} session on ${opening.owner_name}'s agent` };
+      // The scheduler skips a task while its session opens, so this waits on that agent, not on the next pass.
+      return {
+        ...base, needs: role, waitingOn: 'agent', reason: `Opening ${role === 'author' ? 'an author' : 'a reviewer'} session on ${opening.owner_name}'s agent`,
+        candidates: [{ agentId: opening.id, ownerName: opening.owner_name, blocker: 'opening a session' }],
+      };
     }
     if (role === 'reviewer' && task.author_agent_id === null) {
       return { ...base, needs: role, waitingOn: 'agent', reason: 'Waiting for its author' };

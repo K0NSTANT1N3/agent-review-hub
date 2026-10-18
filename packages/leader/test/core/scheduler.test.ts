@@ -452,4 +452,13 @@ describe('queue explanation', () => {
       needs: 'human', waitingOn: 'human', reason: 'Paused: rate limited; the author agent is unavailable: reassign to the pool, wait, or cancel',
     });
   });
+  it('treats a task whose session is still opening as waiting on that agent, not as next', () => {
+    const t = task();
+    scheduler.schedule();
+    expect(sent('session.open')).toHaveLength(1);
+    expect(scheduler.queueSnapshot()[0]).toMatchObject({
+      taskId: t.id, waitingOn: 'agent', reason: "Opening an author session on alice's agent",
+      candidates: [{ agentId: 'alice-claude', ownerName: 'alice', blocker: 'opening a session' }],
+    });
+  });
 });
