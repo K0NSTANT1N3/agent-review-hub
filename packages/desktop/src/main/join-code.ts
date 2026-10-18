@@ -29,7 +29,7 @@ export function decodeJoinCode(text: string): JoinCode {
   for (const key of ['leaderUrl', 'agentId', 'ownerName', 'token', 'repoRemoteUrl'] as const) {
     if (typeof c[key] !== 'string' || c[key] === '') throw new Error(`The join code is missing ${key}`);
   }
-  if (!/^wss?:\/\//.test(c.leaderUrl!)) throw new Error('The join code has an invalid Leader URL');
+  if (!/^wss?:\/\//.test(c.leaderUrl!) || !URL.canParse(c.leaderUrl!)) throw new Error('The join code has an invalid Leader URL');
   return c as JoinCode;
 }
 
@@ -52,4 +52,35 @@ export function agentIdFor(ownerName: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
   return `${slug || 'member'}-agent`;
+}
+
+/**
+ * Leader URL teammates connect to. `publicHost` may be a host name / IP (plain ws on `port`, fine on a LAN or VPN)
+ * or a full URL such as a tunnel "https://xyz.trycloudflare.com" (encrypted wss, no port needed).
+ */
+export function publicLeaderUrl(publicHost: string, port: number): string {
+  const value = publicHost.trim();
+  if (/^(https?|wss?):\/\//i.test(value)) {
+    const u = new URL(value);
+    u.protocol = u.protocol === 'https:' || u.protocol === 'wss:' ? 'wss:' : 'ws:';
+    u.pathname = '/ws/node';
+    u.search = '';
+    u.hash = '';
+    return u.toString();
+  }
+  return `ws://${value || '127.0.0.1'}:${port}/ws/node`;
+}
+
+/** True when the host's address is a bare host name/IP (IPv6 in brackets) or a full http(s)/ws(s) tunnel URL. */
+export function isValidPublicHost(publicHost: string): boolean {
+  const value = publicHost.trim();
+  if (value === '') return true;
+  if (/^(https?|wss?):\/\//i.test(value)) return URL.canParse(value);
+  // A bare host must not carry a port, path or spaces: the Leader port is appended separately.
+  if (/[/\s]/.test(value) || (value.includes(':') && !/^\[[0-9a-f:.]+\]$/i.test(value))) return false;
+  return URL.canParse(`ws://${value}:1/`);
+}
+
+export function isEncryptedLeaderUrl(leaderUrl: string): boolean {
+  return leaderUrl.startsWith('wss://');
 }

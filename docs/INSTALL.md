@@ -31,8 +31,27 @@ Download the installer for your system from the project's **Releases** page:
 | System | File | Notes |
 |---|---|---|
 | Linux | `Quorum-x.y.z-linux-x86_64.AppImage` | `chmod +x` it and run, or install the `.deb` with `sudo apt install ./Quorum-…amd64.deb` |
-| macOS | `Quorum-x.y.z-mac-arm64.dmg` | Builds are unsigned: the first time, right-click the app → **Open** → **Open**. |
+| macOS | `Quorum-x.y.z-mac-arm64.dmg` | Builds are unsigned. Do the [macOS first-run steps](#macos-first-run) below. |
 | Windows | `Quorum-x.y.z-win-x64.exe` | Builds are unsigned: on the SmartScreen prompt choose **More info → Run anyway**. |
+
+### macOS first run
+
+The app is unsigned, so macOS blocks it the first time. Do these steps one time only.
+
+macOS 14 and earlier:
+
+1. In Finder, right-click the Quorum app.
+2. Click **Open**.
+3. In the dialog, click **Open** again.
+
+macOS 15 and later (right-click > **Open** does not work on these versions):
+
+1. Open the Quorum app. macOS blocks the app and shows a warning.
+2. Close the warning.
+3. Open **System Settings > Privacy & Security**.
+4. Go to the **Security** section.
+5. Click **Open Anyway** next to the message about Quorum.
+6. Confirm the request. macOS can ask for your login password.
 
 Building it yourself instead: see [§7](#7-building-from-source).
 
@@ -40,16 +59,45 @@ Building it yourself instead: see [§7](#7-building-from-source).
 
 1. Open Quorum → **Host a team**.
 2. Fill in your name, the **team repository** URL and its main branch.
-3. **Leader port** (default 7420) and **the address teammates use to reach you**:
-   * same office / Wi-Fi: your LAN IP (the app suggests it);
-   * remote teams: a VPN such as **Tailscale** (use your Tailscale IP/name), or forward the port on your router;
-   * allow the port through your firewall (`sudo ufw allow 7420/tcp`, macOS/Windows firewall prompt → Allow).
+3. **Leader port** (default 7420) and **the address teammates use to reach you** — see
+   [Connecting teammates](#connecting-teammates) below. On the same Wi-Fi/office network just keep the suggested
+   local address.
 4. Choose your agent settings (see [§5](#5-agent-settings)) → **Start hosting**.
 5. **Team → Invite a teammate**: type their name → **Create join code** → send the code privately (it contains
    their secret token). Inviting the same name again replaces their token.
 
 The host's computer must be on (with Quorum running) for the team to work. Its data lives in the app data folder
 (shown in **Settings**); the Leader keeps all tasks, reviews and history there.
+
+### Connecting teammates
+
+There is no automatic discovery: **join codes are the only way in**. A join code contains the host's address; a
+teammate's app connects to exactly that address. So the host's computer must be reachable at it. In **Host a team**
+Quorum lists every address this computer has, labelled by network, and you pick one:
+
+| Option in the list | Who can reach the host | Encrypted | What you need |
+|---|---|---|---|
+| **Local network** (e.g. `192.168.1.20`) | people on the same Wi-Fi / office | no (stays in your network) | nothing |
+| **Tailscale** (e.g. `ana-laptop.tail1234.ts.net`) — recommended for remote teams | everyone on your tailnet, from anywhere | yes | Tailscale on every computer (free plan) |
+| **ZeroTier / WireGuard / other VPN** | everyone on that VPN | yes (by the VPN) | the VPN on every computer |
+| **Custom address or tunnel URL** | depends | a `https://` tunnel URL → yes | e.g. `cloudflared tunnel --url http://localhost:7420` |
+
+Quorum works with **any** VPN — it doesn't install or control one; it only shows the addresses your computer already
+has. If no VPN shows up, connect it and reopen Host a team.
+
+**Only accept connections through this address** (on by default for VPN addresses): the Leader listens on that
+address only, so other networks you're on (café, office Wi-Fi) can't reach it at all. If the VPN isn't connected when
+Quorum starts, the dashboard says so — connect it and click **Restart**.
+
+#### Setting up Tailscale (free)
+
+1. **Host:** install [Tailscale](https://tailscale.com/download), sign in (Google / Microsoft / GitHub / Apple account).
+2. **Host:** in the Tailscale admin page, **share** your computer with each teammate (or invite them to your tailnet).
+3. **Teammates:** install Tailscale, sign in, accept the share.
+4. **Host:** open Quorum → **Host a team** → pick the Tailscale name (it's pre-selected) → Start hosting → invite
+   teammates as usual. The name never changes, so join codes keep working.
+
+If a teammate can't connect, their dashboard explains which network the team uses and what to check.
 
 ## 4. Join a team (everyone else)
 
@@ -73,6 +121,14 @@ Reviewers are always **read-only** (they can read the repository but not change 
 only the allow-listed commands (`npm test`, `npm run …`, `ls`, `cat`, `git status/diff/log`, `npx tsc`); they can never
 commit, push or touch files outside the task's worktree — Quorum does the git work.
 
+The allow-list is not a sandbox. Some allow-listed commands run code from the worktree. For example, `npm run`,
+`npm test`, `pytest`, `go test` and `cargo test` run scripts and test files that the author agent can edit. Thus an
+author can run any code through these commands, with the permissions of your user account.
+
+The allow-list stops casual misuse, but it is not an isolation boundary. Run Quorum on a computer or user account
+where this risk is acceptable. For stronger isolation, run Quorum in a container or a virtual machine. Quorum applies
+the allow-list to Claude Code. An opencode server uses its own permission settings.
+
 ## 6. Everyday use
 
 1. **New task** → describe the goal and how to verify it → **Create task**. Choose *My agent* (default) or *Any
@@ -87,6 +143,50 @@ commit, push or touch files outside the task's worktree — Quorum does the git 
 5. **Ask an agent** sends a read-only question to any teammate's agent (e.g. "where is retry logic implemented?").
 
 You get desktop notifications when your task is merged, needs a decision, or your agent hits a usage limit.
+
+### Let a coding agent use Quorum (the `quorum` CLI)
+
+The `quorum` CLI lets a coding agent or a script use Quorum as you.
+The CLI can create tasks, wait for tasks, read diffs, answer a blocked author agent and ask agents.
+A CLI token cannot approve, send back, cancel or merge a task. Only you can do these actions in the app.
+
+To connect the CLI:
+
+1. Open **Settings → Agent CLI access**.
+2. Type a label, for example `Claude Code on my laptop`.
+3. Click **Create CLI token**.
+4. Copy the `quorum login` command. The app shows the token one time only.
+5. Run the command in a terminal on the same computer.
+
+```bash
+quorum login --url http://127.0.0.1:7420 --token qrq_…
+quorum agents
+quorum task create --title "Rate-limit failed logins" --description-file task.md --wait --json
+quorum task answer 12 "Use Redis for the counters."
+quorum task wait 12 --json
+quorum task diff 12
+quorum ask bob-agent "Where is the retry logic for payments?"
+```
+
+The installers do not include the CLI in v0.1. To use the CLI, build it from source (see §7). Then make an alias:
+
+```bash
+alias quorum="node /path/to/agent-review-hub/packages/cli/dist/cli.js"
+```
+
+Agents use `--json` and the exit code:
+
+| Exit code | Meaning | What the agent does |
+|---|---|---|
+| 0 | The task merged, or the agent answered. | Continue. |
+| 3 | A person must act. If `question` is in the output, the author agent asked a question. | Get the answer from the user. Then run `quorum task answer`. |
+| 4 | The task failed or was cancelled. | Read `lastTestOutput` and tell the user. |
+| 5 | The wait stopped at `--timeout`. | Run `quorum task wait <id>` again. |
+| 6 | The token is missing, not valid, or does not have permission. | Tell the user. |
+| 1, 2 | Error or incorrect command. | Read the message on stderr. |
+
+To stop a token, click **Revoke** in **Settings → Agent CLI access**. When the host invites you again, Quorum also revokes your CLI tokens.
+On a headless Leader, the host can make a token with `quorum-leader add-token --config quorum.leader.json --id <agent id>`.
 
 ## 7. Building from source
 
@@ -120,7 +220,7 @@ Config formats: [`docs/implementation-spec.md`](implementation-spec.md) §6.
 
 | Symptom | Fix |
 |---|---|
-| "Connecting to the Leader…" forever | The host's app is closed, the address/port is wrong, or a firewall blocks it. From your machine: `curl http://HOST:7420/api/health` must print `{"ok":true}`. |
+| "Connecting to the Leader…" forever | The host's app is closed, the address/port is wrong, a firewall blocks it, or a quick tunnel URL changed. From your machine: `curl http://HOST:7420/api/health` (or `curl https://TUNNEL/api/health`) must print `{"ok":true}`. |
 | Agent stopped with a git error | Your computer can't clone/push the team repository — check `git ls-remote <repo>`. |
 | Agent turns fail immediately | Claude Code isn't logged in: run `claude` once in a terminal and sign in. |
 | "Rate-limited until …" | Your Claude usage limit was reached; the Leader routes work elsewhere and resumes your tasks after the reset. |
@@ -136,5 +236,8 @@ folder: `QUORUM_USER_DATA=/tmp/quorum-2 ./Quorum.AppImage`.
   their SHA-256 is kept by the Leader. Revoke a teammate by re-inviting them (rotates the token) or with
   `quorum-leader revoke-agent`.
 * Agent-to-agent text is treated as untrusted data; tool permissions are enforced in code, not just in prompts.
-* The Leader listens on plain HTTP/WebSocket. Expose it only on a trusted network or VPN, or put it behind a TLS
-  reverse proxy (or set `tls.certFile`/`tls.keyFile` in headless mode) and use `wss://`.
+* The author Bash allow-list is not a sandbox: test and script commands run code that the author agent can edit.
+  See [§5](#5-agent-settings).
+* The Leader itself speaks plain HTTP/WebSocket. That is fine on a LAN or VPN; for teammates on the internet use an
+  HTTPS tunnel (cloudflared/ngrok), a TLS reverse proxy, or `tls.certFile`/`tls.keyFile` in headless mode, so
+  connections use `wss://`. Avoid raw port forwarding.

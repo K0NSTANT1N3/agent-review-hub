@@ -1,8 +1,6 @@
 // Mock adapter script format — spec §15.4 (implemented by Codex-2 in packages/node/src/adapters/mock.ts).
 
 export interface MockTurn {
-  /** Delay for this turn; overrides behaviors.delayMs. */
-  delayMs?: number;
   /** Files written into the session's worktree before replying (paths relative to the repo root). */
   writeFiles?: Record<string, string>;
   /** Object emitted inside a ```quorum-json block. */
@@ -10,6 +8,8 @@ export interface MockTurn {
   /** Emitted verbatim instead of `reply` (to exercise invalid output). */
   rawReply?: string;
   failTurnWith?: 'RATE_LIMITED' | 'ADAPTER_ERROR' | 'INVALID_OUTPUT' | null;
+  /** Delay before this turn replies (overrides behaviors.delayMs). */
+  delayMs?: number;
 }
 
 export interface MockRule {

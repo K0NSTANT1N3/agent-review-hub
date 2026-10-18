@@ -46,7 +46,8 @@ export async function ensureBaseClone(config: WorktreeConfig): Promise<string> {
     assertGitSuccess(result, 'clone repository');
   }
 
-  const actualRemote = await git(repoPath, ['remote', 'get-url', 'origin'], options(config));
+  // `remote get-url` applies url.<base>.insteadOf rewriting; compare the URL that was actually configured.
+  const actualRemote = await git(repoPath, ['config', '--get', 'remote.origin.url'], options(config));
   assertGitSuccess(actualRemote, 'read origin URL');
   if (actualRemote.stdout.trim() !== config.repoRemoteUrl) {
     throw new Error(`Existing base clone uses ${actualRemote.stdout.trim()}, expected ${config.repoRemoteUrl}`);
@@ -65,7 +66,8 @@ export async function createWorktree(config: WorktreeConfig, sid: string): Promi
   if (await exists(target)) {
     const existingRoot = await git(target, ['rev-parse', '--show-toplevel'], options(config));
     assertGitSuccess(existingRoot, `verify worktree for session ${sid}`);
-    if (resolve(existingRoot.stdout.trim()) !== resolve(target)) {
+    // Compare real paths: git reports the symlink-resolved root (macOS /var -> /private/var).
+    if ((await realpath(existingRoot.stdout.trim())) !== (await realpath(target))) {
       throw new Error(`Session path ${target} is already occupied by a different directory`);
     }
     return target;
@@ -268,6 +270,9 @@ export async function finishSync(
 
 export async function releaseWorktree(config: WorktreeConfig, sid: string): Promise<void> {
   const cwd = worktreePath(config, sid);
+  // Discard tracked edits first: an aborted author turn leaves them behind, and checkout would carry them over.
+  const reset = await git(cwd, ['reset', '--hard'], options(config));
+  assertGitSuccess(reset, 'reset released session worktree');
   const checkout = await git(cwd, ['checkout', '--detach', `origin/${config.mainBranch}`], options(config));
   assertGitSuccess(checkout, 'release session worktree');
   const cleaned = await git(cwd, ['clean', '-fd'], options(config));

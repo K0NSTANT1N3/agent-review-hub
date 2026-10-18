@@ -23,7 +23,7 @@ const PROFILE_TOOLS: Record<Profile, readonly string[]> = {
 };
 
 const PATH_FIELDS = ['file_path', 'path', 'notebook_path'] as const;
-const SHELL_METACHARS = [';', '&&', '||', '|', '`', '$(', '>', '<', '\n', '\r'];
+const SHELL_METACHARS = [';', '&', '|', '`', '$(', '>', '<', '\n', '\r'];
 const FORBIDDEN_GIT = /\bgit\s+(?:-[^\s]+\s+)*(commit|push|checkout|switch|merge|rebase|reset|restore|clean|stash|worktree|branch|tag|remote|config|filter-branch|update-ref)\b/;
 
 /** Resolves symlinks where possible so `cwd/../x` and symlink escapes are caught. */
@@ -35,6 +35,12 @@ function canonical(p: string): string {
     const parent = resolve(p, '..');
     return parent === p ? p : resolve(canonical(parent), relative(parent, p));
   }
+}
+
+/** True when `target` is the worktree's `.git` file/directory or inside it. */
+export function isGitMetadata(root: string, target: string): boolean {
+  const rel = relative(canonical(root), canonical(isAbsolute(target) ? target : resolve(root, target)));
+  return rel.split(/[\\/]/)[0]?.toLowerCase() === '.git';
 }
 
 export function isInside(root: string, target: string): boolean {
@@ -71,6 +77,9 @@ export function makeCanUseTool(cwd: string, profile: Profile, authorBashAllow: r
       const value = input[field];
       if (typeof value === 'string' && value !== '' && !isInside(cwd, value)) {
         return deny(`access outside the repository is not allowed: ${value}`);
+      }
+      if (typeof value === 'string' && value !== '' && toolName !== 'Read' && toolName !== 'Glob' && toolName !== 'Grep' && isGitMetadata(cwd, value)) {
+        return deny('git metadata is managed by Quorum and cannot be modified');
       }
     }
     if (toolName === 'Bash') {

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import pino from 'pino';
 import { parseLeaderConfig, type LeaderConfig } from '@quorum/protocol';
-import { addAgent, listAgents, revokeAgent, startLeader } from './index.js';
+import { addAgent, addApiToken, listAgents, revokeAgent, startLeader } from './index.js';
 
 const USAGE = `quorum-leader <command> --config <quorum.leader.json> [options]
 
@@ -11,7 +11,8 @@ Commands:
   start                          run the Leader
   add-agent --id <id> --owner <name>   register an agent (or rotate its token); prints the token once
   revoke-agent --id <id>         revoke an agent's token
-  list-agents                    list registered agents`;
+  list-agents                    list registered agents
+  add-token --id <agent id> [--label <text>]   mint a requester-scope API token for the quorum CLI; prints it once`;
 
 function loadConfig(path: string | undefined): LeaderConfig {
   if (path === undefined) throw new Error('--config is required');
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   const { values } = parseArgs({
     args: rest,
-    options: { config: { type: 'string' }, id: { type: 'string' }, owner: { type: 'string' } },
+    options: { config: { type: 'string' }, id: { type: 'string' }, owner: { type: 'string' }, label: { type: 'string' } },
     allowPositionals: false,
   });
   switch (command) {
@@ -47,6 +48,13 @@ async function main(): Promise<void> {
       const config = loadConfig(values.config);
       if (values.id === undefined) throw new Error('--id is required');
       await revokeAgent(config.dbPath, values.id);
+      return;
+    }
+    case 'add-token': {
+      const config = loadConfig(values.config);
+      if (values.id === undefined) throw new Error('--id is required');
+      const { token } = await addApiToken(config.dbPath, { agentId: values.id, ...(values.label !== undefined ? { label: values.label } : {}) });
+      process.stdout.write(`${token}\n`);
       return;
     }
     case 'list-agents': {

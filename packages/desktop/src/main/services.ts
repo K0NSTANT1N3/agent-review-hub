@@ -14,7 +14,8 @@ import {
   type UiEvent,
 } from '@quorum/protocol';
 import type { ApiCallOptions, ApiResult, AppState, DesktopSettings, HostSetup, JoinSetup, Mode } from '../shared/ipc.js';
-import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl } from './join-code.js';
+import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, isValidPublicHost, publicLeaderUrl } from './join-code.js';
+import { leaderNetworkKind } from './network.js';
 import { UiStream } from './ui-stream.js';
 
 const execFileAsync = promisify(execFile);
@@ -34,8 +35,9 @@ export interface DaemonHandleLike {
 export interface ServiceDeps {
   startLeader(config: LeaderConfig): Promise<LeaderHandleLike>;
   addAgent(dbPath: string, args: { id: string; owner: string }): Promise<{ token: string }>;
-  startDaemon(config: NodeConfig, opts: { idleSeconds?: () => number | null }): Promise<DaemonHandleLike>;
-  secrets: { encrypt(plain: string): string; decrypt(stored: string): string };
+  startDaemon(config: NodeConfig, opts: { idleSeconds?: () => number | null; insecure?: boolean; onReject?: (reason: string) => void }): Promise<DaemonHandleLike>;
+  /** `isEncrypted` tells whether a stored value is protected by the OS keychain or kept as plain text. */
+  secrets: { encrypt(plain: string): string; decrypt(stored: string): string; isEncrypted(stored: string): boolean };
   idleSeconds?: () => number | null;
   claudeExecutable?: () => string | undefined;
 }
@@ -48,7 +50,7 @@ interface StoredConfig {
   repoRemoteUrl: string;
   leaderUrl: string;
   tokenStored: string;
-  host?: { mainBranch: string; port: number; publicHost: string };
+  host?: { mainBranch: string; port: number; publicHost: string; restrictToIp?: string | null };
   settings: DesktopSettings;
 }
 
@@ -58,9 +60,16 @@ export class Services {
   private leaderError: string | null = null;
   private daemon: DaemonHandleLike | null = null;
   private nodeError: string | null = null;
+  /** Bumped on every Node start so a reject from an older daemon is ignored. */
+  private nodeGeneration = 0;
+  private authError: string | null = null;
   private ui: UiStream | null = null;
   private connected = false;
   private readonly configPath: string;
+  // Lifecycle calls (boot, setup, settings, restart, reset, stop) run one at a time.
+  private lifecycle: Promise<unknown> = Promise.resolve();
+  private pending = 0;
+  private restarting: Promise<AppState> | null = null;
 
   constructor(
     readonly dataDir: string,
@@ -72,7 +81,11 @@ export class Services {
     this.configPath = join(dataDir, 'quorum-desktop.json');
   }
 
-  async boot(): Promise<AppState> {
+  boot(): Promise<AppState> {
+    return this.serializedState(() => this.bootNow());
+  }
+
+  private async bootNow(): Promise<AppState> {
     if (existsSync(this.configPath)) {
       try {
         this.config = JSON.parse(readFileSync(this.configPath, 'utf8')) as StoredConfig;
@@ -98,32 +111,49 @@ export class Services {
           ? {
               running: this.leader !== null,
               port: this.leader?.port ?? c.host?.port ?? null,
-              publicUrl: c.host !== undefined ? `ws://${c.host.publicHost}:${c.host.port}/ws/node` : null,
+              publicUrl: c.host !== undefined ? publicLeaderUrl(c.host.publicHost, c.host.port) : null,
+              restrictedTo: c.host?.restrictToIp ?? null,
               error: this.leaderError,
             }
           : null,
       node: { running: this.daemon !== null, error: this.nodeError, status: safeStatus(this.daemon) },
       connected: this.connected,
+      apiUrl: c === null ? null : httpBaseFromLeaderUrl(c.leaderUrl),
+      encrypted: c === null ? false : isEncryptedLeaderUrl(this.teamLeaderUrl(c)),
+      leaderNetwork: c === null ? null : leaderNetworkKind(this.teamLeaderUrl(c)),
+      authError: this.authError,
+      secretsEncrypted: c === null || c.tokenStored === '' ? null : this.deps.secrets.isEncrypted(c.tokenStored),
+      busy: this.pending > 0,
       settings: c?.settings ?? null,
       dataDir: this.dataDir,
     };
   }
 
-  async setupHost(setup: HostSetup): Promise<AppState> {
+  setupHost(setup: HostSetup): Promise<AppState> {
+    return this.serializedState(() => this.setupHostNow(setup));
+  }
+
+  private async setupHostNow(setup: HostSetup): Promise<AppState> {
     const ownerName = setup.ownerName.trim();
     if (ownerName === '') throw new Error('Your name is required');
     if (setup.repoRemoteUrl.trim() === '') throw new Error('The repository URL is required');
     if (!Number.isInteger(setup.port) || setup.port < 1 || setup.port > 65535) throw new Error('Port must be 1–65535');
-    await this.stopAll();
+    await this.stopAllNow();
     const agentId = agentIdFor(ownerName);
-    const host = { mainBranch: setup.mainBranch.trim() || 'main', port: setup.port, publicHost: setup.publicHost.trim() || '127.0.0.1' };
+    const restrictToIp = setup.restrictToIp?.trim() || null;
+    if (restrictToIp !== null && !/^\d+\.\d+\.\d+\.\d+$/.test(restrictToIp)) throw new Error('Choose an address from the list to restrict connections to it');
+    const host = { mainBranch: setup.mainBranch.trim() || 'main', port: setup.port, publicHost: setup.publicHost.trim() || restrictToIp || '127.0.0.1', restrictToIp };
+    if (!isValidPublicHost(host.publicHost)) {
+      throw new Error('The address must be a host name or IP without a port (wrap IPv6 addresses in [ ]), or a full https:// tunnel URL');
+    }
     const draft: StoredConfig = {
       version: 1,
       mode: 'host',
       ownerName,
       agentId,
       repoRemoteUrl: setup.repoRemoteUrl.trim(),
-      leaderUrl: `ws://127.0.0.1:${host.port}/ws/node`,
+      // The host's own agent connects locally — through the restricted address when one is set.
+      leaderUrl: `ws://${restrictToIp ?? '127.0.0.1'}:${host.port}/ws/node`,
       tokenStored: '',
       host,
       settings: setup.settings,
@@ -145,9 +175,13 @@ export class Services {
     return this.changed();
   }
 
-  async setupJoin(setup: JoinSetup): Promise<AppState> {
+  setupJoin(setup: JoinSetup): Promise<AppState> {
+    return this.serializedState(() => this.setupJoinNow(setup));
+  }
+
+  private async setupJoinNow(setup: JoinSetup): Promise<AppState> {
     const code = decodeJoinCode(setup.joinCode);
-    await this.stopAll();
+    await this.stopAllNow();
     this.save({
       version: 1,
       mode: 'join',
@@ -173,7 +207,7 @@ export class Services {
     const { token } = await this.deps.addAgent(this.leaderConfig().dbPath, { id: agentId, owner: ownerName });
     return {
       joinCode: encodeJoinCode({
-        leaderUrl: `ws://${c.host.publicHost}:${c.host.port}/ws/node`,
+        leaderUrl: publicLeaderUrl(c.host.publicHost, c.host.port),
         agentId,
         ownerName,
         token,
@@ -182,7 +216,11 @@ export class Services {
     };
   }
 
-  async updateSettings(settings: DesktopSettings): Promise<AppState> {
+  updateSettings(settings: DesktopSettings): Promise<AppState> {
+    return this.serializedState(() => this.updateSettingsNow(settings));
+  }
+
+  private async updateSettingsNow(settings: DesktopSettings): Promise<AppState> {
     const c = this.requireConfig();
     const adapterChanged = JSON.stringify(c.settings.adapter) !== JSON.stringify(settings.adapter);
     this.save({ ...c, settings });
@@ -219,18 +257,31 @@ export class Services {
     }
   }
 
-  async restart(): Promise<AppState> {
-    await this.stopAll();
-    await this.startAll();
-    return this.state();
+  /** A restart requested while one is in flight joins it instead of queueing another stop and start. */
+  restart(): Promise<AppState> {
+    this.restarting ??= this.serializedState(async () => {
+      await this.stopAllNow();
+      await this.startAll();
+    }).finally(() => {
+      this.restarting = null;
+    });
+    return this.restarting;
   }
 
-  /** Forgets this machine's setup (the Leader database of a host is kept on disk). */
-  async reset(): Promise<AppState> {
-    await this.stopAll();
-    rmSync(this.configPath, { force: true });
-    this.config = null;
-    return this.changed();
+  /**
+   * Forgets this machine's setup and deletes the Node's clone and journal, so a later setup can use another repository.
+   * A host's Leader data (all tasks and history) is deleted only when asked.
+   */
+  reset(options: { deleteLeaderData?: boolean } = {}): Promise<AppState> {
+    return this.serializedState(async () => {
+      await this.stopAllNow();
+      rmSync(this.configPath, { force: true });
+      const dirs = ['workspace', 'node', ...(options.deleteLeaderData === true ? ['leader'] : [])];
+      for (const dir of dirs) rmSync(join(this.dataDir, dir), { recursive: true, force: true });
+      this.config = null;
+      this.nodeError = null;
+      this.authError = null;
+    });
   }
 
   async api<R extends ApiRouteName>(route: R, options: ApiCallOptions = {}): Promise<ApiResult<R>> {
@@ -238,7 +289,13 @@ export class Services {
     const def = API_ROUTES[route];
     const url = new URL(apiPath(route, options.id), httpBaseFromLeaderUrl(c.leaderUrl));
     for (const [k, v] of Object.entries(options.query ?? {})) url.searchParams.set(k, v);
-    const headers: Record<string, string> = { authorization: `Bearer ${this.token()}` };
+    let token: string;
+    try {
+      token = this.token();
+    } catch (error) {
+      return { ok: false, status: 0, error: 'TOKEN_UNREADABLE', message: tokenUnreadable(error) };
+    }
+    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
     const init: RequestInit = { method: def.method, headers };
     if (def.method !== 'GET') {
       headers['content-type'] = 'application/json';
@@ -259,7 +316,29 @@ export class Services {
     return { ok: true, data: json as ApiResult<R> extends { data: infer D } ? D : never };
   }
 
-  async stopAll(): Promise<void> {
+  stopAll(): Promise<void> {
+    return this.serialized(() => this.stopAllNow());
+  }
+
+  // ---------------------------------------------------------------------------
+
+  private serialized<T>(fn: () => Promise<T>): Promise<T> {
+    this.pending += 1;
+    if (this.pending === 1) this.changed();
+    const run = this.lifecycle.then(fn).finally(() => {
+      this.pending -= 1;
+      if (this.pending === 0) this.changed();
+    });
+    this.lifecycle = run.catch(() => undefined);
+    return run;
+  }
+
+  /** The state is read after the call leaves the queue, so it does not report itself as busy. */
+  private serializedState(fn: () => Promise<unknown>): Promise<AppState> {
+    return this.serialized(fn).then(() => this.state());
+  }
+
+  private async stopAllNow(): Promise<void> {
     this.ui?.stop();
     this.ui = null;
     this.connected = false;
@@ -270,8 +349,6 @@ export class Services {
     }
     this.leaderError = null;
   }
-
-  // ---------------------------------------------------------------------------
 
   private async startAll(): Promise<void> {
     if (this.config?.mode === 'host') await this.startLeader();
@@ -285,7 +362,7 @@ export class Services {
     if (c.host === undefined) throw new Error('not a host');
     const dir = join(this.dataDir, 'leader');
     return parseLeaderConfig({
-      listen: { host: '0.0.0.0', port: c.host.port },
+      listen: { host: c.host.restrictToIp ?? '0.0.0.0', port: c.host.port },
       dbPath: join(dir, 'leader.db'),
       repo: { remoteUrl: c.repoRemoteUrl, mainBranch: c.host.mainBranch, clonePath: join(dir, 'repo') },
       admins: [c.ownerName],
@@ -298,7 +375,11 @@ export class Services {
       this.leader = await this.deps.startLeader(this.leaderConfig());
     } catch (error) {
       this.leader = null;
-      this.leaderError = describe(error);
+      const ip = this.config?.host?.restrictToIp;
+      this.leaderError =
+        ip && /EADDRNOTAVAIL|address not available/i.test(describe(error))
+          ? `The address ${ip} is not on this computer right now. Connect your VPN, then click Restart.`
+          : describe(error);
     }
   }
 
@@ -326,9 +407,13 @@ export class Services {
 
   private async startNode(): Promise<void> {
     this.nodeError = null;
+    const generation = ++this.nodeGeneration;
     try {
       this.daemon = await this.deps.startDaemon(this.nodeConfig(), {
+        // The host chose this address (LAN, VPN or tunnel); the Node's ws:// guard is meant for headless setups.
+        insecure: true,
         ...(this.deps.idleSeconds !== undefined ? { idleSeconds: this.deps.idleSeconds } : {}),
+        onReject: (reason) => this.nodeRejected(generation, reason),
       });
     } catch (error) {
       this.daemon = null;
@@ -343,14 +428,46 @@ export class Services {
     }
   }
 
+  /** The Leader refused the daemon's token: it has stopped reconnecting, so stop it and say why. */
+  private nodeRejected(generation: number, reason: string): void {
+    if (generation !== this.nodeGeneration) return;
+    this.nodeError = `The Leader rejected this agent: ${reason}`;
+    this.authError = this.authMessage(reason);
+    this.changed();
+    void this.serialized(async () => {
+      if (generation === this.nodeGeneration) await this.stopNode();
+    });
+  }
+
+  private authMessage(reason: string): string {
+    const hint =
+      this.config?.mode === 'host'
+        ? 'Use "Disconnect this computer" in Settings and host again.'
+        : 'Ask the host for a new join code, then use "Disconnect this computer" in Settings and join again.';
+    return `The Leader no longer accepts this computer's agent token (${reason}). ${hint}`;
+  }
+
   private startUi(): void {
     const c = this.config;
     if (c === null) return;
     this.ui?.stop();
-    this.ui = new UiStream(httpBaseFromLeaderUrl(c.leaderUrl), this.token(), {
+    this.ui = null;
+    this.authError = null;
+    let token: string;
+    try {
+      token = this.token();
+    } catch (error) {
+      this.authError = tokenUnreadable(error);
+      return;
+    }
+    this.ui = new UiStream(httpBaseFromLeaderUrl(c.leaderUrl), token, {
       onEvent: (e) => this.emitUi(e),
       onConnection: (up) => {
         this.connected = up;
+        this.changed();
+      },
+      onAuthError: (reason) => {
+        this.authError = this.authMessage(reason);
         this.changed();
       },
     });
@@ -359,6 +476,11 @@ export class Services {
 
   private token(): string {
     return this.deps.secrets.decrypt(this.requireConfig().tokenStored);
+  }
+
+  /** The URL teammates use (for a host: the published address, not the local one). */
+  private teamLeaderUrl(c: StoredConfig): string {
+    return c.mode === 'host' && c.host !== undefined ? publicLeaderUrl(c.host.publicHost, c.host.port) : c.leaderUrl;
   }
 
   private requireConfig(): StoredConfig {
@@ -404,6 +526,10 @@ function safeJson(text: string): unknown {
   } catch {
     return { error: 'BAD_RESPONSE', message: text.slice(0, 200) };
   }
+}
+
+function tokenUnreadable(error: unknown): string {
+  return `Could not read the stored agent token (${describe(error)}). Use "Disconnect this computer" in Settings and set up again.`;
 }
 
 function describe(error: unknown): string {

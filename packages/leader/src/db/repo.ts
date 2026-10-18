@@ -106,6 +106,7 @@ export class LeaderDb {
   readonly usageLedger: TableRepo<'usage_ledger'>;
   readonly directives: TableRepo<'directives'>;
   readonly mergeQueue: TableRepo<'merge_queue'>;
+  readonly apiTokens: TableRepo<'api_tokens'>;
 
   constructor(private readonly sql: Database.Database) {
     migrate(sql);
@@ -119,6 +120,7 @@ export class LeaderDb {
     this.usageLedger = new TableRepo(this, sql, 'usage_ledger');
     this.directives = new TableRepo(this, sql, 'directives');
     this.mergeQueue = new TableRepo(this, sql, 'merge_queue');
+    this.apiTokens = new TableRepo(this, sql, 'api_tokens');
   }
 
   withTx<T>(fn: () => SyncResult<T>): T {
@@ -182,6 +184,11 @@ export class LeaderDb {
   /** Conversations created at or after `since` (for reviewer fairness and pair penalties). */
   conversationsSince(since: number): ConversationRow[] {
     return this.sql.prepare('SELECT * FROM conversations WHERE created_at >= ? ORDER BY created_at').all(since) as ConversationRow[];
+  }
+
+  /** A task's conversations in creation order (insertion order breaks timestamp ties). */
+  conversationsForTask(taskId: number): ConversationRow[] {
+    return this.sql.prepare('SELECT * FROM conversations WHERE task_id = ? ORDER BY created_at, rowid').all(taskId) as ConversationRow[];
   }
 
   /** A task's transcript in issue order. */

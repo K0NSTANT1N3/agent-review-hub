@@ -5,6 +5,20 @@ import type { AdapterConfig, ApiResponse, ApiRouteName, LendMode, NodeStatus, Ui
 
 export type Mode = 'host' | 'join';
 
+/** Kind of network an address belongs to. Quorum works with any VPN; these are only labels. */
+export type AddressKind = 'tailscale' | 'zerotier' | 'wireguard' | 'vpn' | 'local' | 'public';
+
+export interface AddressOption {
+  /** What goes into join codes (IP, or a stable name such as a Tailscale MagicDNS name). */
+  address: string;
+  /** Local IP the Leader binds to when connections are restricted to this address. */
+  bindIp: string;
+  kind: AddressKind;
+  label: string;
+  interfaceName: string;
+  recommended: boolean;
+}
+
 export interface DesktopSettings {
   adapter: AdapterConfig;
   maxSessions: number;
@@ -22,9 +36,21 @@ export interface AppState {
   agentId: string | null;
   repoRemoteUrl: string | null;
   isAdmin: boolean;
-  leader: { running: boolean; port: number | null; publicUrl: string | null; error: string | null } | null;
+  leader: { running: boolean; port: number | null; publicUrl: string | null; restrictedTo: string | null; error: string | null } | null;
   node: { running: boolean; error: string | null; status: NodeStatus | null };
   connected: boolean;
+  /** http(s) base of the Leader this app talks to (what `quorum login --url` needs). */
+  apiUrl: string | null;
+  /** Whether teammates' connections to the Leader are encrypted (wss://). */
+  encrypted: boolean;
+  /** Network the Leader is reached through, to explain connection problems. */
+  leaderNetwork: AddressKind | 'tunnel' | 'loopback' | null;
+  /** Set when the Leader refuses this computer's token (revoked or rotated) or the stored token cannot be read. */
+  authError: string | null;
+  /** False when the agent token is stored as plain text because the OS has no keychain; null before setup. */
+  secretsEncrypted: boolean | null;
+  /** A start, stop, restart or setup is in progress. */
+  busy: boolean;
   settings: DesktopSettings | null;
   dataDir: string;
 }
@@ -36,12 +62,19 @@ export interface HostSetup {
   port: number;
   /** Host name or IP teammates use to reach this machine. */
   publicHost: string;
+  /** When set, the Leader accepts connections only on this local IP (e.g. the VPN address). */
+  restrictToIp?: string | null;
   settings: DesktopSettings;
 }
 
 export interface JoinSetup {
   joinCode: string;
   settings: DesktopSettings;
+}
+
+export interface ResetOptions {
+  /** Host only: also delete the Leader database and clone (all tasks and history). */
+  deleteLeaderData?: boolean;
 }
 
 export interface ApiCallOptions {
@@ -61,8 +94,8 @@ export interface QuorumBridge {
   invite(args: { agentId: string; ownerName: string }): Promise<{ joinCode: string }>;
   updateSettings(settings: DesktopSettings): Promise<AppState>;
   restart(): Promise<AppState>;
-  reset(): Promise<AppState>;
-  networkAddresses(): Promise<string[]>;
+  reset(options?: ResetOptions): Promise<AppState>;
+  networkAddresses(): Promise<AddressOption[]>;
   checkAgent(): Promise<{ ok: boolean; detail: string }>;
   openExternal(url: string): Promise<void>;
   api<R extends ApiRouteName>(route: R, options?: ApiCallOptions): Promise<ApiResult<R>>;

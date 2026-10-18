@@ -69,6 +69,21 @@ describe.skipIf(!E2E_READY)('isolation and liveness', () => {
     assertNoCrossTaskDelivery([d1, d2]);
   });
 
+  it('#5c an agent that reviewed earlier authors its own task in a fresh author session', async () => {
+    h = await Harness.create();
+    await h.startLeader();
+    const alice = await h.addAgent({ id: 'alice-claude', script: { author: anyTask([authorDone(greetFile('a'))]) }, config: { lendMode: 'never' } });
+    const bob = await h.addAgent({ id: 'bob-claude', script: { author: anyTask([authorDone({ 'src/bob.js': 'export const bob = 1;\n' })]), reviewer: anyTask([approve()]) } });
+    const t1 = await alice.api.createTask({ title: 'Alice task', description: 'x' });
+    await waitForState(alice.api, t1.id, 'MERGED');
+    await h.addAgent({ id: 'carol-claude', script: { reviewer: anyTask([approve()]) } });
+    const t2 = await bob.api.createTask({ title: 'Bob task', description: 'x' });
+    const done = await waitForState(bob.api, t2.id, 'MERGED');
+    const reviewSid = (await alice.api.getTask(t1.id)).conversations[0]!.reviewerSessionId;
+    expect(done.task.authorSessionId).not.toBe(reviewSid);
+    expect(done.messages.some((m) => m.type === 'turn.failed')).toBe(false);
+  });
+
   it('#6 reviewer disconnect → lease expiry → new reviewer in a NEW conversation', async () => {
     h = await Harness.create();
     const { alice } = await aliceAndBob(h, {

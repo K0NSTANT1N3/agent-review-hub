@@ -39,6 +39,12 @@ importers:
         specifier: workspace:*
         version: link:../packages/protocol
 
+  packages/cli:
+    dependencies:
+      '@quorum/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
   packages/desktop:
     dependencies:
       '@quorum/leader':

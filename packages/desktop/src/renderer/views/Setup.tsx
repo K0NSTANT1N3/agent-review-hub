@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
-import { DEFAULT_SETTINGS, type DesktopSettings } from '../../shared/ipc';
+import { DEFAULT_SETTINGS, type AddressOption, type DesktopSettings } from '../../shared/ipc';
 import { bridge } from '../bridge';
 import { ErrorNote } from '../components/common';
+import { Logo } from '../components/Logo';
 import { SettingsForm } from '../components/SettingsForm';
 
 export function Setup() {
-  const [mode, setMode] = useState<'host' | 'join' | null>(null);
+  const [mode, setMode] = useState<'host' | 'join' | null>(() => {
+    const start = new URLSearchParams(window.location.hash.slice(1)).get('setup');
+    return start === 'host' || start === 'join' ? start : null;
+  });
   const [settings, setSettings] = useState<DesktopSettings>(DEFAULT_SETTINGS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -15,8 +19,11 @@ export function Setup() {
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('main');
   const [port, setPort] = useState(7420);
-  const [addresses, setAddresses] = useState<string[]>([]);
-  const [publicHost, setPublicHost] = useState('');
+  const [addresses, setAddresses] = useState<AddressOption[]>([]);
+  /** Index into `addresses`, or -1 for a custom address. */
+  const [choice, setChoice] = useState(-1);
+  const [custom, setCustom] = useState('');
+  const [restrict, setRestrict] = useState(false);
   // join
   const [joinCode, setJoinCode] = useState('');
 
@@ -25,7 +32,10 @@ export function Setup() {
       .networkAddresses()
       .then((a) => {
         setAddresses(a);
-        setPublicHost((p) => p || (a[0] ?? '127.0.0.1'));
+        const best = a.findIndex((o) => o.recommended);
+        setChoice(best);
+        // Restricting is the safe default for VPN addresses; a LAN-only team usually wants every interface.
+        setRestrict(best >= 0 && a[best]!.kind !== 'local' && a[best]!.kind !== 'public');
       });
   }, []);
 
@@ -33,7 +43,18 @@ export function Setup() {
     setBusy(true);
     setError(null);
     try {
-      if (mode === 'host') await bridge().setupHost({ ownerName, repoRemoteUrl: repo, mainBranch: branch, port, publicHost, settings });
+      if (mode === 'host') {
+        const picked = choice >= 0 ? addresses[choice] : undefined;
+        await bridge().setupHost({
+          ownerName,
+          repoRemoteUrl: repo,
+          mainBranch: branch,
+          port,
+          publicHost: picked?.address ?? custom,
+          restrictToIp: picked !== undefined && restrict ? picked.bindIp : null,
+          settings,
+        });
+      }
       else await bridge().setupJoin({ joinCode, settings });
     } catch (e) {
       setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e));
@@ -45,6 +66,7 @@ export function Setup() {
   if (mode === null) {
     return (
       <div className="setup">
+        <Logo size={64} />
         <h1>Welcome to Quorum</h1>
         <p className="lead">
           Your coding agent writes code; a teammate's agent reviews it; the Leader merges it once it is approved.
@@ -88,18 +110,38 @@ export function Setup() {
             Leader port
             <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
           </label>
-          <label className="span-2">
-            Address teammates use to reach this computer
-            <input list="addresses" value={publicHost} onChange={(e) => setPublicHost(e.target.value)} />
-            <datalist id="addresses">
-              {addresses.map((a) => (
-                <option key={a} value={a} />
-              ))}
-            </datalist>
+          <div className="span-2 stack-sm">
+            <strong>Address teammates use to reach this computer</strong>
             <span className="hint">
-              Teammates must be able to reach <code>{publicHost || '…'}:{port}</code> — same network, a VPN such as Tailscale, or a forwarded port.
+              It goes into every join code. Teammates connect to this address — nothing is discovered automatically.
             </span>
-          </label>
+            {addresses.map((o, i) => (
+              <label key={`${o.address}-${o.interfaceName}`} className="radio">
+                <input type="radio" checked={choice === i} onChange={() => setChoice(i)} />
+                <code>{o.address}</code>
+                <span className={`badge badge-${o.kind === 'local' || o.kind === 'public' ? 'muted' : 'info'}`}>{o.label}</span>
+                {o.recommended && <span className="tag">recommended</span>}
+              </label>
+            ))}
+            <label className="radio">
+              <input type="radio" checked={choice === -1} onChange={() => setChoice(-1)} />
+              Custom address or tunnel URL
+              {choice === -1 && (
+                <input className="grow" value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="my-pc.example.com or https://name.trycloudflare.com" />
+              )}
+            </label>
+            {addresses.every((o) => o.kind === 'local' || o.kind === 'public') && (
+              <div className="note note-warn">
+                No VPN found. That is fine if everyone is on this network. For teammates elsewhere, connect a VPN such as Tailscale (free) on
+                every computer, then come back — its address will appear here.
+              </div>
+            )}
+            <label className="radio">
+              <input type="checkbox" checked={restrict && choice >= 0} disabled={choice < 0} onChange={(e) => setRestrict(e.target.checked)} />
+              Only accept connections through this address
+              <span className="hint">(e.g. only from your VPN — other networks you join can't even reach the Leader)</span>
+            </label>
+          </div>
         </div>
       ) : (
         <div className="form-grid">

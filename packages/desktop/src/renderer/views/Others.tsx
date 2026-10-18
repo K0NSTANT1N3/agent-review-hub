@@ -194,7 +194,11 @@ export function Team({ state }: { state: AppState }) {
             </div>
           )}
           <p className="hint">
-            Teammates connect to <code>{state.leader?.publicUrl}</code>. Make sure that address and port are reachable from their computers.
+            Teammates connect to <code>{state.leader?.publicUrl}</code>
+            {state.leader?.restrictedTo ? <> (only connections through {state.leader.restrictedTo} are accepted)</> : null}.{' '}
+            {state.encrypted
+              ? 'The connection is encrypted.'
+              : 'This connection is not encrypted: fine on the same network or a VPN; for teammates on the internet use a tunnel URL (Settings → Disconnect, then host again with the tunnel address).'}
           </p>
         </Card>
       ) : (
@@ -240,7 +244,8 @@ export function Settings({ state }: { state: AppState }) {
 
   const reset = async () => {
     if (!window.confirm('Disconnect this computer from the team? You will need a new join code (or to host again).')) return;
-    await bridge().reset();
+    const deleteLeaderData = state.mode === 'host' && window.confirm("Also delete this team's Leader data (tasks and history)?");
+    await bridge().reset({ deleteLeaderData });
   };
 
   return (
@@ -256,6 +261,7 @@ export function Settings({ state }: { state: AppState }) {
         </div>
         {check !== null && <div className={check.ok ? 'note note-ok' : 'note note-danger'}>{check.detail}</div>}
       </Card>
+      <CliAccess state={state} />
       <Card title="This computer">
         <p>
           Signed in as <strong>{state.ownerName}</strong> (<code>{state.agentId}</code>) · {state.mode === 'host' ? 'hosting the Leader' : 'member'}
@@ -266,10 +272,103 @@ export function Settings({ state }: { state: AppState }) {
         <p className="muted">
           Data folder <code>{state.dataDir}</code>
         </p>
+        {state.secretsEncrypted === false && (
+          <p className="muted">
+            This computer has no OS keychain, so your agent token is stored unencrypted in <code>{state.dataDir}</code>.
+          </p>
+        )}
+        <ErrorNote error={state.authError} />
         <button className="danger" onClick={() => void reset()}>
           Disconnect this computer
         </button>
       </Card>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Agent CLI access — requester-scope tokens for the `quorum` CLI
+// ---------------------------------------------------------------------------
+
+function CliAccess({ state }: { state: AppState }) {
+  const tokens = useLive(() => call('listApiTokens'), [], { pollMs: 30_000 });
+  const [label, setLabel] = useState('');
+  const [created, setCreated] = useState<{ token: string; label: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const create = async () => {
+    setError(null);
+    setCopied(false);
+    try {
+      const t = await call('createApiToken', { body: { label: label.trim() || 'quorum CLI' } });
+      setCreated({ token: t.token, label: t.label });
+      setLabel('');
+      tokens.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const revoke = async (id: string) => {
+    if (!window.confirm('Revoke this token? Scripts and agents using it stop working.')) return;
+    try {
+      await call('revokeApiToken', { id });
+      tokens.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const login = created === null ? '' : `quorum login --url ${state.apiUrl ?? '<leader url>'} --token ${created.token}`;
+  const live = (tokens.data?.tokens ?? []).filter((t) => t.revokedAt === null);
+
+  return (
+    <Card title="Agent CLI access">
+      <p className="muted">
+        Let a coding agent or script use Quorum as you through the <code>quorum</code> CLI: create tasks, wait for them, read diffs, answer a blocked author and
+        ask agents. CLI tokens can never approve, send back, cancel or merge. Those stay in this app.
+      </p>
+      <div className="row">
+        <input className="grow" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label, e.g. Claude Code on my laptop" />
+        <button className="primary" onClick={() => void create()}>
+          Create CLI token
+        </button>
+      </div>
+      <ErrorNote error={error ?? tokens.error} />
+      {created !== null && (
+        <div className="stack-sm">
+          <div className="note note-warn">Copy this now. The token is shown only once and works like a password.</div>
+          <textarea readOnly rows={2} value={login} onFocus={(e) => e.currentTarget.select()} />
+          <button onClick={() => void navigator.clipboard.writeText(login).then(() => setCopied(true))}>{copied ? 'Copied ✓' : 'Copy login command'}</button>
+        </div>
+      )}
+      {live.length > 0 && (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Label</th>
+              <th>Created</th>
+              <th>Last used</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {live.map((t) => (
+              <tr key={t.id}>
+                <td>{t.label || <span className="muted">unnamed</span>}</td>
+                <td>{timeAgo(t.createdAt)}</td>
+                <td>{timeAgo(t.lastUsedAt)}</td>
+                <td>
+                  <button className="danger" onClick={() => void revoke(t.id)}>
+                    Revoke
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
   );
 }

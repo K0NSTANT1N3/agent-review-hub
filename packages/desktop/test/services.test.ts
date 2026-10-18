@@ -1,23 +1,44 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addAgent, startLeader } from '@quorum/leader';
 import type { NodeConfig, OwnerSettings } from '@quorum/protocol';
 import { DEFAULT_SETTINGS } from '../src/shared/ipc.js';
-import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl } from '../src/main/join-code.js';
+import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, isValidPublicHost, publicLeaderUrl } from '../src/main/join-code.js';
+import { networkInterfaces } from 'node:os';
+import { startDaemon } from '@quorum/node';
 import { Services, type DaemonHandleLike, type ServiceDeps } from '../src/main/services.js';
 
 let dir: string;
 let bare: string;
 let started: NodeConfig[];
 let updates: Partial<OwnerSettings>[];
+let live: number;
+let maxLive: number;
+let rejects: ((reason: string) => void)[];
 const services: Services[] = [];
 
-const fakeDaemon = (): ServiceDeps['startDaemon'] => async (config) => {
+const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Slow start and stop widen the window in which overlapping lifecycle calls used to race.
+const fakeDaemon = (): ServiceDeps['startDaemon'] => async (config, opts) => {
+  await tick(20);
   started.push(config);
-  const handle: DaemonHandleLike = { stop: async () => {}, status: () => null, updateSettings: (p) => updates.push(p) };
+  if (opts.onReject !== undefined) rejects.push(opts.onReject);
+  live += 1;
+  maxLive = Math.max(maxLive, live);
+  let stopped = false;
+  const handle: DaemonHandleLike = {
+    stop: async () => {
+      await tick(20);
+      if (!stopped) live -= 1;
+      stopped = true;
+    },
+    status: () => null,
+    updateSettings: (p) => updates.push(p),
+  };
   return handle;
 };
 
@@ -26,7 +47,7 @@ function deps(): ServiceDeps {
     startLeader: (c) => startLeader(c, { logger: { debug() {}, info() {}, warn() {}, error() {} } }),
     addAgent,
     startDaemon: fakeDaemon(),
-    secrets: { encrypt: (s) => `plain:${s}`, decrypt: (s) => s.slice(6) },
+    secrets: { encrypt: (s) => `plain:${s}`, decrypt: (s) => s.slice(6), isEncrypted: (s) => !s.startsWith('plain:') },
   };
 }
 
@@ -58,11 +79,40 @@ beforeEach(() => {
   execFileSync('git', ['push', bare, 'main'], { cwd: seed });
   started = [];
   updates = [];
+  live = 0;
+  maxLive = 0;
+  rejects = [];
 });
+
+async function until(check: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting for condition');
+    await tick(25);
+  }
+}
+
+async function hosted(name = 'host'): Promise<{ host: Services; port: number }> {
+  const host = make(name);
+  const port = await freePort();
+  await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: '127.0.0.1', settings: DEFAULT_SETTINGS });
+  return { host, port };
+}
 
 afterEach(async () => {
   for (const s of services.splice(0)) await s.stopAll();
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe('isValidPublicHost', () => {
+  it('accepts bare hosts, bracketed IPv6 and tunnel URLs; rejects ports and paths on bare hosts', () => {
+    for (const ok of ['', '192.168.1.5', 'devbox.local', '[fe80::1]', 'https://abc.trycloudflare.com', 'wss://leader.example.com/x']) {
+      expect(isValidPublicHost(ok)).toBe(true);
+    }
+    for (const bad of ['192.168.1.5:7420', 'host/path', 'two words', 'fe80::1', 'https://']) {
+      expect(isValidPublicHost(bad)).toBe(false);
+    }
+  });
 });
 
 describe('join codes', () => {
@@ -77,7 +127,81 @@ describe('join codes', () => {
   });
 });
 
+describe('public Leader URL', () => {
+  it('builds ws:// for hosts/IPs and wss:// for tunnel URLs', () => {
+    expect(publicLeaderUrl('192.168.1.20', 7420)).toBe('ws://192.168.1.20:7420/ws/node');
+    expect(publicLeaderUrl('https://abc.trycloudflare.com', 7420)).toBe('wss://abc.trycloudflare.com/ws/node');
+    expect(publicLeaderUrl('https://abc.trycloudflare.com/', 7420)).toBe('wss://abc.trycloudflare.com/ws/node');
+    expect(publicLeaderUrl('http://box.tailnet.ts.net:7420', 7420)).toBe('ws://box.tailnet.ts.net:7420/ws/node');
+    expect(isEncryptedLeaderUrl(publicLeaderUrl('https://x.example', 1))).toBe(true);
+    expect(isEncryptedLeaderUrl(publicLeaderUrl('10.0.0.2', 1))).toBe(false);
+  });
+});
+
+const lanIp = Object.values(networkInterfaces())
+  .flat()
+  .find((a) => a !== undefined && a.family === 'IPv4' && !a.internal)?.address;
+
+describe.skipIf(lanIp === undefined)('joining over the LAN with the real Node daemon', () => {
+  it('a member connects to the host through its LAN address (plain ws://)', async () => {
+    const real: ServiceDeps = { ...deps(), startDaemon: (c, o) => startDaemon(c, o) };
+    const mock = join(dir, 'mock.json');
+    writeFileSync(mock, JSON.stringify({ author: [], reviewer: [] }));
+    const settings = { ...DEFAULT_SETTINGS, adapter: { type: 'mock' as const, scriptPath: mock, contextWindow: 200000 } };
+    const host = new Services(join(dir, 'lan-host'), real);
+    services.push(host);
+    const port = await freePort();
+    await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: lanIp!, settings });
+    const { joinCode } = await host.invite({ agentId: '', ownerName: 'Bo' });
+    expect(decodeJoinCode(joinCode).leaderUrl).toBe(`ws://${lanIp}:${port}/ws/node`);
+
+    const member = new Services(join(dir, 'lan-member'), real);
+    services.push(member);
+    const state = await member.setupJoin({ joinCode, settings });
+    expect(state.node).toMatchObject({ running: true, error: null });
+    let online = false;
+    for (let i = 0; i < 50 && !online; i += 1) {
+      const r = await host.api('listAgents');
+      online = r.ok && r.data.agents.find((a) => a.id === 'bo-agent')?.status === 'online';
+      if (!online) await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(online).toBe(true);
+  });
+});
+
+describe.skipIf(lanIp === undefined)('restricting the Leader to one address', () => {
+  it('listens only on the chosen address; the host agent still connects through it', async () => {
+    const real: ServiceDeps = { ...deps(), startDaemon: (c, o) => startDaemon(c, o) };
+    const mock = join(dir, 'mock.json');
+    writeFileSync(mock, JSON.stringify({ author: [], reviewer: [] }));
+    const settings = { ...DEFAULT_SETTINGS, adapter: { type: 'mock' as const, scriptPath: mock, contextWindow: 200000 } };
+    const host = new Services(join(dir, 'restricted'), real);
+    services.push(host);
+    const port = await freePort();
+    const state = await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: lanIp!, restrictToIp: lanIp!, settings });
+    expect(state.leader).toMatchObject({ running: true, restrictedTo: lanIp });
+    expect(state.leaderNetwork).toBe('local');
+    expect(await (await fetch(`http://${lanIp}:${port}/api/health`)).json()).toEqual({ ok: true });
+    await expect(fetch(`http://127.0.0.1:${port}/api/health`)).rejects.toThrow();
+    let online = false;
+    for (let i = 0; i < 50 && !online; i += 1) {
+      const r = await host.api('listAgents');
+      online = r.ok && r.data.agents.find((a) => a.id === 'ana-agent')?.status === 'online';
+      if (!online) await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(online).toBe(true);
+  });
+});
+
 describe('Services', () => {
+  it('explains a restricted address that is not on this computer (VPN not connected)', async () => {
+    const host = make('novpn');
+    await expect(
+      host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port: await freePort(), publicHost: '10.255.255.254', restrictToIp: '10.255.255.254', settings: DEFAULT_SETTINGS }),
+    ).rejects.toThrow(/not on this computer right now\. Connect your VPN/);
+    expect(host.state().configured).toBe(false);
+  });
+
   it('host setup starts the Leader, registers the host agent and starts the Node pointed at it', async () => {
     const host = make('host');
     expect((await host.boot()).configured).toBe(false);
@@ -142,5 +266,90 @@ describe('Services', () => {
     const state = await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port: await freePort(), publicHost: '127.0.0.1', settings: DEFAULT_SETTINGS });
     expect(state.node).toMatchObject({ running: false, error: expect.stringContaining('not implemented') });
     expect(state.leader?.running).toBe(true);
+  });
+
+  it('runs lifecycle calls one at a time: concurrent restarts start exactly one daemon and one Leader', async () => {
+    const { host } = await hosted();
+    const before = started.length;
+    const states = await Promise.all([host.restart(), host.restart(), host.restart()]);
+    expect(started.length).toBe(before + 1);
+    expect(live).toBe(1);
+    expect(maxLive).toBe(1);
+    for (const state of states) expect(state).toMatchObject({ busy: false, leader: { running: true, error: null }, node: { running: true } });
+  });
+
+  it('serializes boot, settings and restart so two daemons never run at once', async () => {
+    const { host } = await hosted();
+    await host.stopAll();
+    const again = new Services(join(dir, 'host'), deps());
+    services.push(again);
+    const booting = again.boot();
+    expect(again.state().busy).toBe(true);
+    const restarting = again.restart();
+    const updating = again.updateSettings({ ...DEFAULT_SETTINGS, adapter: { type: 'mock', scriptPath: '/tmp/s.json', contextWindow: 1000 } });
+    await Promise.all([booting, restarting, updating]);
+    expect(maxLive).toBe(1);
+    expect(live).toBe(1);
+    expect(again.state()).toMatchObject({ busy: false, leader: { running: true, error: null }, node: { running: true } });
+  });
+
+  it('reset deletes the Node clone and journal but keeps Leader data unless asked', async () => {
+    const { host } = await hosted();
+    const data = join(dir, 'host');
+    for (const sub of ['workspace', 'node']) mkdirSync(join(data, sub), { recursive: true });
+    expect(existsSync(join(data, 'leader', 'leader.db'))).toBe(true);
+    const state = await host.reset();
+    expect(state).toMatchObject({ configured: false, node: { running: false } });
+    expect(existsSync(join(data, 'workspace'))).toBe(false);
+    expect(existsSync(join(data, 'node'))).toBe(false);
+    expect(existsSync(join(data, 'quorum-desktop.json'))).toBe(false);
+    expect(existsSync(join(data, 'leader', 'leader.db'))).toBe(true);
+    expect(live).toBe(0);
+
+    const { host: second } = await hosted('second');
+    const data2 = join(dir, 'second');
+    await second.reset({ deleteLeaderData: true });
+    expect(existsSync(join(data2, 'leader'))).toBe(false);
+  });
+
+  it('stops the agent and reports an auth error when the Leader rejects the daemon', async () => {
+    const { host } = await hosted();
+    expect(host.state()).toMatchObject({ authError: null, node: { running: true } });
+    rejects.at(-1)?.('agent token revoked');
+    await until(() => !host.state().node.running);
+    expect(host.state()).toMatchObject({
+      node: { running: false, error: expect.stringContaining('agent token revoked') },
+      authError: expect.stringContaining('agent token revoked'),
+    });
+    expect(live).toBe(0);
+  });
+
+  it('stops reconnecting the UI stream and reports an auth error when the Leader refuses the token', async () => {
+    const { port } = await hosted();
+    const joinCode = encodeJoinCode({ leaderUrl: `ws://127.0.0.1:${port}/ws/node`, agentId: 'bo-agent', ownerName: 'Bo', token: 'qrm_revoked', repoRemoteUrl: bare });
+    const member = make('member');
+    await member.setupJoin({ joinCode, settings: DEFAULT_SETTINGS });
+    await until(() => member.state().authError !== null);
+    expect(member.state()).toMatchObject({ connected: false, authError: expect.stringContaining('new join code') });
+  });
+
+  it('reports plain-text token storage and survives a token that can no longer be decrypted', async () => {
+    const { host } = await hosted();
+    expect(host.state().secretsEncrypted).toBe(false);
+    await host.stopAll();
+
+    const broken = new Services(join(dir, 'host'), {
+      ...deps(),
+      secrets: { encrypt: (s) => s, decrypt: () => { throw new Error('keychain locked'); }, isEncrypted: () => true },
+    });
+    services.push(broken);
+    const state = await broken.boot();
+    expect(state).toMatchObject({
+      configured: true,
+      secretsEncrypted: true,
+      authError: expect.stringContaining('keychain locked'),
+      node: { running: false, error: expect.stringContaining('keychain locked') },
+    });
+    expect(await broken.api('listAgents')).toMatchObject({ ok: false, error: 'TOKEN_UNREADABLE' });
   });
 });

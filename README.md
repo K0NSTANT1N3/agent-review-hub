@@ -1,6 +1,19 @@
+<p align="center">
+  <img src="docs/assets/quorum-logo.svg" width="96" height="96" alt="Quorum logo: two overlapping rings with a check where they meet">
+</p>
+
 # Agent Review Hub — Quorum
 
 **Your coding agent writes it. A teammate's agent reviews it. Only approved work reaches `main`.**
+
+**[Website](https://quorum-agent-review.lovable.app)** · **[Demo video](https://quorum-agent-review.lovable.app/#demo)** ·
+**[Download](https://github.com/K0NSTANT1N3/agent-review-hub/releases/latest)** · [All releases](https://github.com/K0NSTANT1N3/agent-review-hub/releases)
+
+[![Quorum demo: one task from prompt to main in 95 seconds](docs/media/quorum-demo-preview.jpg)](https://quorum-agent-review.lovable.app/#demo)
+
+*Watch the 95-second demo on the [website](https://quorum-agent-review.lovable.app/#demo), or open the
+ [video file](docs/media/quorum-demo.mp4). It was recorded in the real desktop app. Agent replies come from the built-in
+ mock adapter so the run is repeatable.*
 
 Quorum is a desktop app for teams where everyone uses a coding agent (Claude Code, or opencode). When you give your
 agent a task, the result isn't handed straight back to you: a small coordinator — the **Leader** — sends it to an
@@ -27,6 +40,53 @@ flowchart LR
 * **Human in control** — approve, send back with instructions, reassign, pause or cancel any task; answer an agent
   that is blocked on a decision.
 
+## Drive it from your agent: the `quorum` CLI
+
+The `quorum` CLI lets a coding agent (or a script) use Quorum from a terminal.
+The agent gives a task to your Quorum agent, waits for the review and the merge, and answers questions from the author agent.
+Each command has `--json` output and exit codes that do not change. An agent can make decisions from the result.
+
+```bash
+quorum login --url http://127.0.0.1:7420 --token qrq_…   # the token comes from Settings → Agent CLI access
+quorum agents                                              # who is online and available to review
+quorum task create --title "Rate-limit failed logins" --description-file task.md --wait --json
+quorum task answer 12 "Use Redis for the counters."       # reply to a blocked author agent
+quorum task wait 12 --json                                 # continue to wait after an answer or a timeout
+quorum task status 12                                      # state, reviewer, open issues
+quorum task diff 12                                        # the change as a unified diff
+quorum ask bob-agent "Where is the retry logic for payments?"
+```
+
+| Exit code | Meaning | What the agent does next |
+|---|---|---|
+| 0 | The task merged, or the agent answered. | Continue. `mergedCommit` is in the JSON. |
+| 3 | A person must act. If `question` is in the JSON, the author agent asked a question. | Get the answer from the user, then run `quorum task answer`. |
+| 4 | The task failed or was cancelled. | Read `lastTestOutput` and tell the user. |
+| 5 | The wait stopped at `--timeout`. | Run `quorum task wait <id>` again. |
+| 6 | The token is missing, not valid, or does not have permission. | Tell the user. |
+| 1, 2 | Error, or incorrect command. | Read the message on stderr. |
+
+**Safe by construction.** A CLI token is a requester token. It acts as you, but it can only read, create tasks, answer a blocked author and ask agents.
+It cannot approve, send back, cancel, pause or merge. Only a person in the app can do these actions.
+The Leader records CLI actions as `token:<owner>`. To stop a token, click **Revoke** in **Settings → Agent CLI access**.
+
+**Give the CLI to Claude Code.** Add text like this to the `CLAUDE.md` file of your project:
+
+```markdown
+To ship a change, do not push. Run:
+quorum task create --title "<summary>" --description-file <spec.md> --wait --json
+Exit 0: report mergedCommit. Exit 3: ask me the `question`, then `quorum task answer <id> "<answer>"`
+and `quorum task wait <id> --json`. Exit 4: show me lastTestOutput. Exit 5: run `quorum task wait <id>` again.
+```
+
+The installers do not include the CLI yet. To use it now, build the repository (see [Developing](#developing)), then:
+
+```bash
+alias quorum="node $PWD/packages/cli/dist/cli.js"
+```
+
+The full guide is in [INSTALL.md](docs/INSTALL.md#let-a-coding-agent-use-quorum-the-quorum-cli).
+
 ## Getting started
 
 👉 **[Install and use Quorum](docs/INSTALL.md)** — download, host a team, invite teammates, everyday workflow,
@@ -37,7 +97,7 @@ In short: one person clicks **Host a team** (their app runs the Leader) and send
 
 ## Status
 
-**v0.1 — feature complete.** Leader, agent Node, desktop app, installers and release pipeline are done; 27/27
+**v0.1 — feature complete.** Leader, agent Node, desktop app, installers and release pipeline are done; 32/32
 end-to-end scenarios pass in CI, and a real Claude Code → Claude Code review-and-merge was verified. See
 [tasks/STATUS.md](tasks/STATUS.md) for the build history and what's next.
 
@@ -48,6 +108,7 @@ end-to-end scenarios pass in CI, and a real Claude Code → Claude Code review-a
 | `packages/protocol` | Shared contract: config schemas, WebSocket frames, commands/events, agent output, REST routes (zod) |
 | `packages/leader` | The Leader: SQLite state, task state machine, scheduler, locks/leases, merge worker, REST + WebSocket server, CLI |
 | `packages/node` | The agent Node: git worktrees, journal, prompts, Claude Code / opencode / mock adapters, Leader client, CLI |
+| `packages/cli` | `quorum`, the CLI for coding agents and scripts (requester-scope API tokens) |
 | `packages/desktop` | Electron + React app (Host/Join, dashboard, tasks, diffs, invites) and installer packaging |
 | `e2e` | End-to-end scenarios running a real Leader and Nodes with scripted mock agents against real git |
 | `docs/implementation-spec.md` | The authoritative design spec (codename "Quorum") |
