@@ -1121,6 +1121,7 @@ Talks to an opencode server the owner already runs (e.g. `http://localhost:4096`
 - `createSession`: `POST {baseUrl}/session` → `nativeId` from the response `id`.
 - `runTurn`: `POST {baseUrl}/session/{nativeId}/message` with body `{ providerID, modelID, parts: [{ type: 'text', text: prompt }] }`. If the POST returns before completion, poll `GET {baseUrl}/session/{nativeId}/message` every 2s until the last message has `role: 'assistant'` and `finish: 'stop'`. Text = concatenation of that message's `text` parts. Usage comes from the message's token fields if present, else estimate as `ceil(chars/4)`.
 - On a retryable provider error, retry the POST up to 2 times.
+- On cancel or timeout, also send `POST {baseUrl}/session/{nativeId}/abort` (best effort, short timeout), then report `CANCELLED` or `TIMEOUT`. Dropping the HTTP request alone does not stop the opencode agent, and it would keep editing the worktree.
 - Tool restrictions can't be enforced by Quorum for opencode. The owner must configure opencode's permissions. Show a warning in Settings when this adapter is selected.
 - Verify endpoint shapes against the running opencode version before finalizing (`GET /doc` or the opencode SDK types).
 

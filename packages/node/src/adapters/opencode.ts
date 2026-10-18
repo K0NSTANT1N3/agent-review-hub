@@ -24,6 +24,7 @@ interface MessageEnvelope {
 const MAX_POST_RETRIES = 2;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const ABORT_REQUEST_TIMEOUT_MS = 5_000;
 
 /** Talks to an OpenCode server over its documented HTTP API. */
 export function createOpencodeAdapter(
@@ -112,6 +113,11 @@ export function createOpencodeAdapter(
           .join('');
         return { nativeId, ...turnUsage(finalMessage, prompt, text) };
       } catch (error) {
+        if (callerSignal.aborted || timeoutController.signal.aborted) {
+          // Dropping the HTTP request does not stop the OpenCode agent. Ask the server to abort
+          // the session so it stops editing the worktree after Quorum reports the turn as ended.
+          await abortSession(fetchImpl, endpoint('/session/' + encodeURIComponent(nativeId) + '/abort'));
+        }
         if (callerSignal.aborted) {
           throw new AdapterError('CANCELLED', 'OpenCode turn was cancelled.', { cause: error });
         }
@@ -202,6 +208,19 @@ async function getMessages(
     throw new AdapterError('ADAPTER_ERROR', 'OpenCode message-list response was not an array.');
   }
   return payload.map(asEnvelope).filter((message): message is MessageEnvelope => message !== null);
+}
+
+/** Best effort: a failed or slow abort request must not hide the CANCELLED or TIMEOUT result. */
+async function abortSession(fetchImpl: typeof fetch, url: string): Promise<void> {
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      signal: AbortSignal.timeout(ABORT_REQUEST_TIMEOUT_MS),
+    });
+    await response.text();
+  } catch {
+    // The turn already ended for Quorum; there is nothing more to do here.
+  }
 }
 
 async function request(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<Response> {
