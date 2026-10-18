@@ -37,6 +37,36 @@ afterEach(async () => {
 });
 
 describe('CommandRunner', () => {
+  it('moves an idle task branch off its lost session worktree before resuming in a replacement session', async () => {
+    const fixture = await createFixture({
+      author: [{ match: { any: true }, turns: [
+        { writeFiles: { 'src/recovered.txt': 'first turn\n' }, reply: { status: 'done', summary: 'first turn' } },
+        { reply: { status: 'done', summary: 'resumed turn' } },
+      ] }],
+    });
+    const task = taskBrief(84, 'Resume an existing branch');
+    await openSession(fixture, 'open-author-before-reconnect', 'sid-before-reconnect', 'author');
+    await sendCommand(fixture.connection, 'author-before-reconnect', {
+      type: 'author.start', sid: 'sid-before-reconnect', taskId: task.id, task,
+      branch: 'quorum/task-84', continueExisting: false, issues: [], estimated: 100,
+    });
+    await nextEvent(fixture.connection, (event) => event.type === 'author.checkpoint');
+    const first = await nextEvent(fixture.connection, (event) => event.type === 'author.submitted');
+    expect(first).toMatchObject({ type: 'author.submitted', status: 'done', summary: 'first turn' });
+
+    await openSession(fixture, 'open-author-after-reconnect', 'sid-after-reconnect', 'author');
+    await sendCommand(fixture.connection, 'author-after-reconnect', {
+      type: 'author.start', sid: 'sid-after-reconnect', taskId: task.id, task,
+      branch: 'quorum/task-84', continueExisting: true, issues: [], estimated: 100,
+    });
+    await nextEvent(fixture.connection, (event) => event.type === 'author.checkpoint');
+    const resumed = await nextEvent(fixture.connection, (event) => event.type === 'author.submitted');
+    expect(resumed).toMatchObject({ type: 'author.submitted', status: 'done', summary: 'first turn' });
+
+    const oldBranch = await git(join(fixture.repo.config.workspaceDir, 'worktrees', 'sid-before-reconnect'), ['branch', '--show-current']);
+    expect(oldBranch.stdout.trim()).toBe('');
+  }, 15_000);
+
   it('runs open, author start/revise, review/rereview, directive, and close commands', async () => {
     const fixture = await createFixture({
       author: [{

@@ -80,6 +80,7 @@ export interface CommandRunnerOptions {
   mainBranch: () => string;
   turnTimeoutSec: () => number;
   getContextWindow?: () => number;
+  onRateLimited?: (resetAt: number | undefined) => void;
   onError?: (error: Error) => void;
 }
 
@@ -160,6 +161,11 @@ export class CommandRunner {
     await Promise.all([...this.queues.values()].map((queue) => queue.catch(() => null)));
   }
 
+  /** Abort active model turns before a daemon disconnects; the Leader handles the node loss. */
+  abortActiveTurns(): void {
+    for (const active of this.activeTurns.values()) active.controller.abort();
+  }
+
   private async runCommand(msgId: string, command: Command): Promise<string | null> {
     try {
       this.options.journal.markRunning(msgId);
@@ -189,6 +195,8 @@ export class CommandRunner {
       const event = await this.executeTurnCommand(msgId, command, controller.signal, usage);
       return this.finish(msgId, event);
     } catch (error) {
+      const mapped = mapFailure(error);
+      if (mapped.code === 'RATE_LIMITED') this.options.onRateLimited?.(mapped.resetAt);
       const event = this.failureEvent(msgId, command, error, usage.value(session?.contextTokens ?? 0));
       const eventId = this.finish(msgId, event);
       if (controller.signal.aborted) this.cancelResultBySid.set(command.sid, eventId);
@@ -325,6 +333,7 @@ export class CommandRunner {
     usage: UsageAccumulator,
   ): Promise<Event> {
     const config = this.worktreeConfig();
+    if (command.continueExisting) await this.releasePreviousSessionBranch(config, command.sid, command.branch);
     const baseCommit = command.continueExisting
       ? await prepareAuthorExistingBranch(config, command.sid, command.branch)
       : await prepareAuthorNewBranch(config, command.sid, command.branch);
@@ -824,6 +833,20 @@ export class CommandRunner {
 
   private sessionContext(sid: string): number {
     return this.options.journal.getSession(sid)?.contextTokens ?? 0;
+  }
+
+  private async releasePreviousSessionBranch(config: WorktreeConfig, sid: string, branch: string): Promise<void> {
+    for (const session of this.options.journal.listSessions()) {
+      if (session.sid === sid || session.state === 'busy' || session.state === 'closed') continue;
+      const checkedOut = await git(session.worktree, ['branch', '--show-current']);
+      if (checkedOut.code !== 0 || checkedOut.stdout.trim() !== branch) continue;
+
+      await ensureCleanBeforeAuthorTurn(config, session.sid);
+      const pushed = await git(session.worktree, ['push', 'origin', branch]);
+      assertGitSuccess(pushed, `preserve recovered work from prior session ${session.sid}`);
+      const detached = await git(session.worktree, ['checkout', '--detach', 'HEAD']);
+      assertGitSuccess(detached, `release task branch ${branch} from prior session ${session.sid}`);
+    }
   }
 
   private worktree(sid: string): string {
