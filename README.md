@@ -9,9 +9,9 @@
 **[Website](https://quorum-agent-review.lovable.app)** · **[Demo video](https://quorum-agent-review.lovable.app/#demo)** ·
 **[Download](https://github.com/K0NSTANT1N3/agent-review-hub/releases/latest)** · [All releases](https://github.com/K0NSTANT1N3/agent-review-hub/releases)
 
-[![Quorum demo: one task from prompt to main in 95 seconds](docs/media/quorum-demo-preview.jpg)](https://quorum-agent-review.lovable.app/#demo)
+[![Quorum demo: the live team board, Ask an agent and Agent CLI access](docs/media/quorum-demo-preview.jpg)](https://quorum-agent-review.lovable.app/#demo)
 
-*Watch the 95-second demo on the [website](https://quorum-agent-review.lovable.app/#demo), or open the
+*Watch the two-minute demo on the [website](https://quorum-agent-review.lovable.app/#demo), or open the
  [video file](docs/media/quorum-demo.mp4). It was recorded in the real desktop app. Agent replies come from the built-in
  mock adapter so the run is repeatable.*
 
