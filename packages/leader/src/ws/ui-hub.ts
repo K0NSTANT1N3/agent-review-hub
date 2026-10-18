@@ -5,7 +5,7 @@ import { authenticate } from '../api/routes.js';
 import { agentView, directiveView, taskEventView, taskView, teamActivity } from '../api/views.js';
 import type { LeaderDb, TaskRow } from '../db/repo.js';
 
-// /ws/ui?token=… — pushes change notifications (spec §17). Polls the DB for changes only while clients are connected.
+// Authenticated /ws/ui — pushes change notifications (spec §17). Polls the DB for changes only while clients are connected.
 
 const POLL_MS = 500;
 
@@ -30,7 +30,8 @@ export class UiHub {
 
   /** WebSocket route handler for NodeHub.registerWebSocket('/ws/ui', …). */
   accept = (socket: WebSocket, request: IncomingMessage): void => {
-    const token = new URL(request.url ?? '/', 'http://localhost').searchParams.get('token') ?? undefined;
+    const authorization = request.headers.authorization;
+    const token = authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : undefined;
     if (authenticate(this.db, token) === null) {
       socket.close(1008, 'invalid token');
       return;

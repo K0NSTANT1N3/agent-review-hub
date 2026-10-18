@@ -160,7 +160,7 @@ describe('REST API (§17)', () => {
     const agents = (await api('GET', '/api/agents', 'alice')).body!.agents as { id: string; budgetRemaining: number }[];
     expect(agents.map((a) => a.id).sort()).toEqual(['admin-console', 'alice-claude', 'bob-claude']);
 
-    const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=${tokens.alice}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui`, { headers: { Authorization: `Bearer ${tokens.alice}` } });
     await new Promise((r) => ws.once('open', r));
     const waitForTaskUpdate = (matches: (event: Extract<UiEvent, { type: 'task.updated' }>) => boolean) => new Promise<Extract<UiEvent, { type: 'task.updated' }>>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('timed out waiting for task.updated')), 3_000);
@@ -182,7 +182,7 @@ describe('REST API (§17)', () => {
     expect(waitChanged.data.waitReason).toMatchObject({ role: 'author', blockers: [{ code: 'agent_paused', agentCount: 1 }] });
     ws.close();
 
-    const bad = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=nope`);
+    const bad = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui`, { headers: { Authorization: 'Bearer nope' } });
     expect(await new Promise((r) => bad.once('close', (code) => r(code)))).toBe(1008);
   });
 
@@ -239,7 +239,7 @@ describe('REST API (§17)', () => {
   });
 
   it('pushes team activity changes over /ws/ui', async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=${tokens.alice}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui`, { headers: { Authorization: `Bearer ${tokens.alice}` } });
     await new Promise((r) => ws.once('open', r));
     const got = new Promise<Extract<UiEvent, { type: 'team.activity.updated' }>>((resolve) => ws.on('message', (raw) => {
       const event = JSON.parse(raw.toString()) as UiEvent;

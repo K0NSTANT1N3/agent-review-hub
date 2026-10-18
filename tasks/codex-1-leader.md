@@ -175,7 +175,7 @@ Every work item must include vitest tests in `packages/leader/test/`. Use an in-
 ### L8 — REST API, UI WebSocket, directives, CLI · spec §17, §13
 - [ ] All endpoints in the §17 table, with request/response zod schemas from `@quorum/protocol` `api.ts`, bearer auth, permission checks (requester/admin), and error format.
 - [ ] `GET /api/tasks/:id/diff` computed in the Leader clone after `git fetch`.
-- [ ] `/ws/ui?token=` pushing the listed event types after each committed change.
+- [ ] `/ws/ui` authenticated with a bearer header, pushing the listed event types after each committed change.
 - [ ] Directives §13 including `409 SESSION_LOCKED` and read-only profile.
 - [ ] CLI `src/cli.ts` (bin `quorum-leader`): `start --config`, `add-agent --id --owner` (prints token once; stores sha256), `revoke-agent --id`, `list-agents`.
 - **Accept:** fastify `inject` tests for every endpoint, including 401/403/404/409 cases; scenario 18 at Leader level.

@@ -1204,7 +1204,7 @@ Auth: `Authorization: Bearer <agent token>` on every request. The token identifi
 
 Errors: JSON `{error: CODE, message}` with proper HTTP status (400 validation, 401, 403, 404, 409 for state conflicts such as an illegal transition or `SESSION_LOCKED`).
 
-**`/ws/ui`** (same bearer token as a `?token=` query param): the server pushes `{type, data}` where type ∈ `task.updated`, `task.event`, `agent.updated`, `session.updated`, `message.created`, `directive.updated`, `task.needs_attention`. The client refetches details via REST as needed.
+**`/ws/ui`** (same bearer token in the `Authorization` header): the server pushes `{type, data}` where type ∈ `task.updated`, `task.event`, `agent.updated`, `session.updated`, `message.created`, `directive.updated`, `task.needs_attention`. The client refetches details via REST as needed.
 
 **Leader CLI:**
 - `quorum-leader start --config quorum.leader.json`
