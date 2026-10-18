@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ProfileSchema } from './common.js';
 
 // Nested objects use .prefault({}) so that an omitted section still receives its inner defaults.
 
@@ -163,6 +164,7 @@ export const NodeConfigSchema = z.object({
   lendTokensPerDay: nonNegativeInt().default(2000000),
   paused: z.boolean().default(false),
   tags: z.array(z.string()).default([]),
+  supportedProfiles: z.array(ProfileSchema).default(['author', 'reviewer', 'directive']),
   authorBashAllow: z.array(z.string()).default([...DEFAULT_AUTHOR_BASH_ALLOW]),
   contextPressurePct: z.number().gt(0).max(1).default(0.75),
   maxInvalidOutputRetries: nonNegativeInt().default(2),
@@ -185,6 +187,7 @@ export const OwnerSettingsSchema = z.object({
   lendTokensPerDay: nonNegativeInt(),
   paused: z.boolean(),
   tags: z.array(z.string()),
+  supportedProfiles: z.array(ProfileSchema).default(['author', 'reviewer', 'directive']),
   contextWindow: positiveInt(),
   idleThresholdSec: nonNegativeInt(),
 });
@@ -197,6 +200,7 @@ export function ownerSettingsFromNodeConfig(config: NodeConfig): OwnerSettings {
     lendTokensPerDay: config.lendTokensPerDay,
     paused: config.paused,
     tags: [...config.tags],
+    supportedProfiles: [...config.supportedProfiles],
     contextWindow: config.adapter.contextWindow,
     idleThresholdSec: config.idleThresholdSec,
   };

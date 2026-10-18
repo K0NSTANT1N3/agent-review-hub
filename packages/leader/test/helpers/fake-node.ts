@@ -4,7 +4,7 @@ import { parseLeaderToNodeFrame, PROTOCOL_VERSION, type CmdFrame, type Event, ty
 
 export const DEFAULT_OWNER_SETTINGS: OwnerSettings = {
   maxSessions: 2, lendMode: 'when_idle', lendTokensPerDay: 2_000_000,
-  paused: false, tags: [], contextWindow: 200_000, idleThresholdSec: 300,
+  paused: false, tags: [], supportedProfiles: ['author', 'reviewer', 'directive'], contextWindow: 200_000, idleThresholdSec: 300,
 };
 
 export interface FakeNodeOptions {

@@ -102,9 +102,14 @@ describe.skipIf(!E2E_READY)('isolation and liveness', () => {
 
     await h.stopNode('alice-claude');
     // In pool mode any lending agent may take over authoring, so both helpers can author and review.
-    const helper = (tag: string): MockScript => ({ author: anyTask([authorDone(greetFile(tag))]), reviewer: anyTask([approve()]) });
-    await h.addAgent({ id: 'carol-claude', script: helper('carol') });
-    await h.addAgent({ id: 'bob-claude', script: helper('bob') });
+    await h.addAgent({
+      id: 'carol-claude', script: { author: anyTask([authorDone(greetFile('carol'))]) },
+      config: { supportedProfiles: ['author'] },
+    });
+    await h.addAgent({
+      id: 'bob-claude', script: { reviewer: anyTask([approve()]) },
+      config: { supportedProfiles: ['reviewer'] },
+    });
     const done = await waitForState(alice.api, task.id, 'MERGED', { timeoutMs: 60_000 });
 
     expect(stateHistory(done)).toEqual(expect.arrayContaining(['PAUSED', 'QUEUED']));

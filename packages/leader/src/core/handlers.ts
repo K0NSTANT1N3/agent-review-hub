@@ -269,10 +269,21 @@ export class EventHandlers {
   }
 
   private abandonReviewer(task: TaskRow, sid: string, reason: string): void {
+    let reviewerAgentId: string | undefined;
+    let conversationId: string | undefined;
     for (const conversation of this.db.conversations.find({ task_id: task.id, state: 'active' })) {
-      if (conversation.reviewer_session_id === sid) this.db.conversations.update(conversation.id, { state: 'abandoned', ended_at: this.now() });
+      if (conversation.reviewer_session_id === sid) {
+        reviewerAgentId = conversation.reviewer_agent_id;
+        conversationId = conversation.id;
+        this.db.conversations.update(conversation.id, { state: 'abandoned', ended_at: this.now() });
+      }
     }
-    if (task.state === 'IN_REVIEW' || task.state === 'AUTHORING') transition(this.db, task.id, task.state === 'IN_REVIEW' ? 'AWAITING_REVIEWER' : 'AUTHORING', { reason, actor: 'leader', at: this.now() });
+    if (task.state === 'IN_REVIEW' || task.state === 'AUTHORING') transition(this.db, task.id, task.state === 'IN_REVIEW' ? 'AWAITING_REVIEWER' : 'AUTHORING', {
+      reason,
+      actor: 'leader',
+      ...(reviewerAgentId === undefined ? {} : { data: { reviewerAgentId, ...(conversationId === undefined ? {} : { conversationId }) } }),
+      at: this.now(),
+    });
     if (task.state === 'PAUSED' && task.paused_from_state === 'IN_REVIEW') this.db.tasks.update(task.id, { paused_from_state: 'AWAITING_REVIEWER' });
   }
 

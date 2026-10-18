@@ -89,6 +89,7 @@ export async function startLeader(config: LeaderConfig, options: StartLeaderOpti
     handlers,
     logger: log,
     idleThresholdSec: (agentId) => late.hub?.ownerSettings(agentId)?.idleThresholdSec,
+    supportedProfiles: (agentId) => late.hub?.ownerSettings(agentId)?.supportedProfiles,
     onAttention: (taskId, reason, message) => late.ui?.attention(taskId, reason, message),
   });
   late.scheduler = scheduler;

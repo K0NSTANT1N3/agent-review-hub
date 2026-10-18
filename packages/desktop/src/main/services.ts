@@ -13,7 +13,7 @@ import {
   type OwnerSettings,
   type UiEvent,
 } from '@quorum/protocol';
-import type { ApiCallOptions, ApiResult, AppState, DesktopSettings, HostSetup, JoinSetup, Mode } from '../shared/ipc.js';
+import { DEFAULT_SETTINGS, type ApiCallOptions, type ApiResult, type AppState, type DesktopSettings, type HostSetup, type JoinSetup, type Mode } from '../shared/ipc.js';
 import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl } from './join-code.js';
 import { UiStream } from './ui-stream.js';
 
@@ -75,7 +75,11 @@ export class Services {
   async boot(): Promise<AppState> {
     if (existsSync(this.configPath)) {
       try {
-        this.config = JSON.parse(readFileSync(this.configPath, 'utf8')) as StoredConfig;
+        const stored = JSON.parse(readFileSync(this.configPath, 'utf8')) as StoredConfig;
+        this.config = {
+          ...stored,
+          settings: { ...DEFAULT_SETTINGS, ...stored.settings, supportedProfiles: stored.settings.supportedProfiles ?? DEFAULT_SETTINGS.supportedProfiles },
+        };
       } catch {
         this.config = null;
       }
@@ -321,6 +325,7 @@ export class Services {
       lendTokensPerDay: s.lendTokensPerDay,
       paused: s.paused,
       tags: s.tags,
+      supportedProfiles: s.supportedProfiles,
     });
   }
 
@@ -385,6 +390,7 @@ export function ownerSettings(s: DesktopSettings): Partial<OwnerSettings> {
     lendTokensPerDay: s.lendTokensPerDay,
     paused: s.paused,
     tags: s.tags,
+    supportedProfiles: s.supportedProfiles ?? DEFAULT_SETTINGS.supportedProfiles,
     idleThresholdSec: s.idleThresholdSec,
     contextWindow: s.adapter.contextWindow,
   };

@@ -113,6 +113,22 @@ export function SettingsForm({ value, onChange }: { value: DesktopSettings; onCh
           }
         />
       </label>
+      <fieldset className="span-2">
+        <legend>Agent profiles available to the Leader</legend>
+        {(['author', 'reviewer', 'directive'] as const).map((profile) => (
+          <label key={profile}>
+            <input
+              type="checkbox"
+              checked={value.supportedProfiles.includes(profile)}
+              onChange={(e) => set('supportedProfiles', e.target.checked
+                ? [...value.supportedProfiles, profile]
+                : value.supportedProfiles.filter((current) => current !== profile))}
+            />
+            {profile}
+          </label>
+        ))}
+        <span className="hint">Only supported profiles are considered for matching tasks.</span>
+      </fieldset>
     </div>
   );
 }

@@ -35,6 +35,7 @@ const settings: OwnerSettings = {
   lendTokensPerDay: 1000,
   paused: false,
   tags: [],
+  supportedProfiles: ['author', 'reviewer', 'directive'],
   contextWindow: 200000,
   idleThresholdSec: 300,
 };

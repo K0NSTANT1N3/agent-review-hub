@@ -87,6 +87,25 @@ describe('REST API (§17)', () => {
     expect((await api('POST', '/api/tasks', 'alice', { title: '' })).body).toMatchObject({ error: 'VALIDATION' });
   });
 
+  it('returns task conversations in insertion order when their creation timestamps tie', async () => {
+    const id = (await api('POST', '/api/tasks', 'alice', { title: 'Ordered', description: 'd' })).body!.id as number;
+    for (const [sid, agentId] of [['author', 'alice-claude'], ['reviewer-bob', 'bob-claude'], ['reviewer-admin', 'admin-console']] as const) {
+      side.sessions.insert({ id: sid, agent_id: agentId, state: 'idle', created_at: 10, last_used_at: 10 });
+    }
+    side.conversations.insert({
+      id: 'z-created-first', task_id: id, author_session_id: 'author', author_agent_id: 'alice-claude',
+      reviewer_session_id: 'reviewer-bob', reviewer_agent_id: 'bob-claude', state: 'abandoned', created_at: 20,
+    });
+    side.conversations.insert({
+      id: 'a-created-second', task_id: id, author_session_id: 'author', author_agent_id: 'alice-claude',
+      reviewer_session_id: 'reviewer-admin', reviewer_agent_id: 'admin-console', state: 'closed', created_at: 20,
+    });
+
+    const detail = await api('GET', `/api/tasks/${id}`, 'alice');
+    const conversations = detail.body!.conversations as { reviewerAgentId: string }[];
+    expect(conversations.map((conversation) => conversation.reviewerAgentId)).toEqual(['bob-claude', 'admin-console']);
+  });
+
   it('enforces requester-or-admin permissions and legal states', async () => {
     const id = (await api('POST', '/api/tasks', 'alice', { title: 't', description: 'd' })).body!.id as number;
     expect((await api('POST', `/api/tasks/${id}/cancel`, 'bob', {})).status).toBe(403);

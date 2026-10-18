@@ -15,6 +15,7 @@ let now: number;
 let commands: { agentId: string; frame: CmdFrame }[];
 let attention: { taskId: number; reason: string }[];
 let idleThreshold: Map<string, number>;
+let supportedProfiles: Map<string, ('author' | 'reviewer' | 'directive')[]>;
 
 function setup(overrides: Record<string, unknown> = {}) {
   config = parseLeaderConfig({ repo: { remoteUrl: 'file:///unused' }, ...overrides });
@@ -26,6 +27,7 @@ function setup(overrides: Record<string, unknown> = {}) {
   scheduler = new Scheduler({
     db, config, locks, handlers, now: () => now,
     idleThresholdSec: (id) => idleThreshold.get(id),
+    supportedProfiles: (id) => supportedProfiles.get(id),
     onAttention: (taskId, reason) => attention.push({ taskId, reason }),
   });
 }
@@ -67,6 +69,7 @@ beforeEach(() => {
   commands = [];
   attention = [];
   idleThreshold = new Map();
+  supportedProfiles = new Map();
   setup();
   agent('alice-claude', { lend_mode: 'never' });
 });
@@ -87,6 +90,27 @@ describe('budget helpers', () => {
 });
 
 describe('author assignment (§9.2)', () => {
+  it('skips agents that do not support the author profile during pool failover', () => {
+    setup({ timeouts: { authorReconnectGraceSec: 30 } });
+    agent('carol-claude');
+    agent('bob-claude');
+    session('c', 'carol-claude');
+    session('b', 'bob-claude');
+    session('a', 'alice-claude', { state: 'lost' });
+    supportedProfiles.set('carol-claude', ['author']);
+    supportedProfiles.set('bob-claude', ['reviewer']);
+    const t = task({ mode: 'pool', state: 'PAUSED', paused_from_state: 'AUTHORING', pause_reason: 'author_unavailable', author_agent_id: 'alice-claude', author_session_id: 'a', branch: 'quorum/task-1', head_commit: 'abcdef1', state_entered_at: now - 31_000 });
+    db.agents.update('alice-claude', { status: 'offline' });
+    now += 31_000;
+    db.agents.update('carol-claude', { last_heartbeat_at: now });
+    db.agents.update('bob-claude', { last_heartbeat_at: now });
+
+    scheduler.schedule();
+    scheduler.schedule();
+    expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_agent_id: 'carol-claude' });
+    expect(sent('author.start').at(-1)?.agentId).toBe('carol-claude');
+  });
+
   it('own mode binds an idle requester session: QUEUED → AUTHORING with author.start', () => {
     session('a', 'alice-claude');
     const t = task();
@@ -134,6 +158,28 @@ describe('author assignment (§9.2)', () => {
 });
 
 describe('reviewer assignment (§9.3)', () => {
+  it('does not assign a reviewer again after that agent exhausts invalid-output retries', () => {
+    setup({ limits: { maxTurnRetries: 0 } });
+    agent('bob-claude');
+    agent('carol-claude');
+    session('b', 'bob-claude');
+    session('c', 'carol-claude');
+    const t = awaitingReview();
+
+    scheduler.schedule();
+    const firstReview = sent('review.start')[0]!;
+    expect(firstReview.agentId).toBe('bob-claude');
+    handlers.handle('bob-claude', {
+      type: 'turn.failed', sid: 'b', taskId: t.id, inReplyTo: firstReview.frame.msgId,
+      code: 'INVALID_OUTPUT', message: 'no valid review output',
+    });
+
+    expect(db.tasks.require(t.id).state).toBe('AWAITING_REVIEWER');
+    expect(db.taskEvents.find({ task_id: t.id }).at(-1)?.data).toContain('bob-claude');
+    scheduler.schedule();
+    expect(db.conversationsForTask(t.id).at(-1)?.reviewer_agent_id).toBe('carol-claude');
+  });
+
   it('never picks the author agent; creates a conversation and sends review.start (round 1)', () => {
     agent('bob-claude');
     session('b', 'bob-claude');

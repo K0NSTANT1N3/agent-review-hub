@@ -91,7 +91,7 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
         contextTokens: session.contextTokens,
       }));
       return NodeStatusSchema.parse({
-        settings: { ...settings, tags: [...settings.tags] },
+        settings: { ...settings, tags: [...settings.tags], supportedProfiles: [...settings.supportedProfiles] },
         humanIdleSec,
         rateLimitedUntil: getRateLimitedUntil(),
         sessions,

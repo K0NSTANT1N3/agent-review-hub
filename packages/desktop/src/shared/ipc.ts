@@ -1,4 +1,4 @@
-import type { AdapterConfig, ApiResponse, ApiRouteName, LendMode, NodeStatus, UiEvent } from '@quorum/protocol';
+import type { AdapterConfig, ApiResponse, ApiRouteName, LendMode, NodeStatus, SessionProfile, UiEvent } from '@quorum/protocol';
 
 // Contract between the Electron main process, the preload bridge and the renderer.
 // The renderer never sees the agent token: REST calls and the /ws/ui stream are proxied by main.
@@ -13,6 +13,7 @@ export interface DesktopSettings {
   idleThresholdSec: number;
   paused: boolean;
   tags: string[];
+  supportedProfiles: SessionProfile[];
 }
 
 export interface AppState {
@@ -94,4 +95,5 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   idleThresholdSec: 300,
   paused: false,
   tags: [],
+  supportedProfiles: ['author', 'reviewer', 'directive'],
 };

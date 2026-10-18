@@ -134,7 +134,8 @@ describe.skipIf(!E2E_READY)('tests, merging and recovery', () => {
     const junk = { rawReply: 'still no block' };
     const { alice } = await aliceAndBob(h, {
       alice: { author: anyTask([authorDone({ 'src/greet.js': GREET.withDefault })]) },
-      bob: { reviewer: anyTask([junk, junk, junk, junk, junk, junk]) },
+      // Keep the first review open long enough for Carol to join after the test observes IN_REVIEW.
+      bob: { reviewer: anyTask([junk, junk, junk, junk, junk, junk]), behaviors: { delayMs: 1500 } },
     });
     const task = await alice.api.createTask({ title: 'Broken reviewer', description: 'x' });
     await waitForState(alice.api, task.id, 'IN_REVIEW');

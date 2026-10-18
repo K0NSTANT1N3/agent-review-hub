@@ -23,6 +23,8 @@ export interface SchedulerOptions {
   logger?: Logger;
   /** Owner idle threshold reported in hello/heartbeat (not stored in the DB). */
   idleThresholdSec?: (agentId: string) => number | undefined;
+  /** Profiles the connected Node can safely execute; missing settings imply the legacy defaults. */
+  supportedProfiles?: (agentId: string) => readonly SessionProfile[] | undefined;
   onAttention?: (taskId: number, reason: 'no_reviewer' | 'author_unavailable' | 'escalated', message: string) => void;
 }
 
@@ -149,6 +151,11 @@ export class Scheduler {
     return (this.openBackoff.get(agentId) ?? 0) > this.now();
   }
 
+  private supportsProfile(agentId: string, profile: SessionProfile): boolean {
+    const supported = this.options.supportedProfiles?.(agentId);
+    return supported === undefined || supported.includes(profile);
+  }
+
   private ownerOf(agentId: string): string {
     return this.db.agents.require(agentId).owner_name;
   }
@@ -218,11 +225,11 @@ export class Scheduler {
     let chosen: AgentRow | undefined;
     if (task.mode === 'own') {
       const a = requester;
-      if (this.isOnline(a) && a.paused === 0 && !this.isRateLimited(a) && this.hasSlot(a) && !this.backedOff(a.id)) chosen = a;
+      if (this.supportsProfile(a.id, 'author') && this.isOnline(a) && a.paused === 0 && !this.isRateLimited(a) && this.hasSlot(a) && !this.backedOff(a.id)) chosen = a;
     } else {
       const candidates: Candidate[] = [];
       for (const a of this.db.agents.all()) {
-        if (!this.isOnline(a) || this.isRateLimited(a) || !this.hasSlot(a) || this.backedOff(a.id)) continue;
+        if (!this.supportsProfile(a.id, 'author') || !this.isOnline(a) || this.isRateLimited(a) || !this.hasSlot(a) || this.backedOff(a.id)) continue;
         const own = a.owner_name === requester.owner_name;
         const estimate = estimateAuthor(a, this.config.costEstimate);
         if (own ? a.paused !== 0 : !this.mayLend(a) || budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) continue;
@@ -261,9 +268,19 @@ export class Scheduler {
     const task = this.db.tasks.require(taskId);
     if (task.state !== 'AWAITING_REVIEWER' || this.hasPendingOpen(task.id) || task.author_agent_id === null) return;
     const requesterOwner = this.ownerOf(task.requester_agent_id);
+    const failedReviewers = new Set(this.db.taskEvents.find({ task_id: task.id, to_state: 'AWAITING_REVIEWER' })
+      .filter((event) => event.reason.startsWith('reviewer_turn_failed:'))
+      .flatMap((event) => {
+        try {
+          const agentId = (JSON.parse(event.data) as { reviewerAgentId?: unknown }).reviewerAgentId;
+          return typeof agentId === 'string' ? [agentId] : [];
+        } catch {
+          return [];
+        }
+      }));
     const candidates: Candidate[] = [];
     for (const a of this.db.agents.all()) {
-      if (a.id === task.author_agent_id || !this.isOnline(a) || this.isRateLimited(a) || !this.hasSlot(a) || this.backedOff(a.id)) continue;
+      if (a.id === task.author_agent_id || !this.supportsProfile(a.id, 'reviewer') || failedReviewers.has(a.id) || !this.isOnline(a) || this.isRateLimited(a) || !this.hasSlot(a) || this.backedOff(a.id)) continue;
       const own = a.owner_name === requesterOwner;
       const estimate = estimateReview(a, task, this.config.costEstimate);
       if (own ? a.paused !== 0 : !this.mayLend(a) || budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) continue;
@@ -316,7 +333,7 @@ export class Scheduler {
     const d = this.db.directives.require(directiveId);
     if (d.state !== 'queued' || this.hasPendingOpen(undefined, d.id)) return;
     const agent = this.db.agents.get(d.agent_id);
-    if (agent === undefined || !this.isOnline(agent) || this.isRateLimited(agent) || !this.hasSlot(agent) || this.backedOff(agent.id)) return;
+    if (agent === undefined || !this.supportsProfile(agent.id, 'directive') || !this.isOnline(agent) || this.isRateLimited(agent) || !this.hasSlot(agent) || this.backedOff(agent.id)) return;
     if (agent.owner_name !== d.requester && !this.mayLend(agent)) return;
     const sid = this.pickSession(agent, []);
     if (sid !== null) this.bindDirective(d.id, sid);
