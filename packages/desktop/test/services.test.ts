@@ -135,6 +135,7 @@ describe('public Leader URL', () => {
     expect(publicLeaderUrl('http://box.tailnet.ts.net:7420', 7420)).toBe('ws://box.tailnet.ts.net:7420/ws/node');
     expect(isEncryptedLeaderUrl(publicLeaderUrl('https://x.example', 1))).toBe(true);
     expect(isEncryptedLeaderUrl(publicLeaderUrl('10.0.0.2', 1))).toBe(false);
+    expect(publicLeaderUrl('https://leader.example.com', 7420)).toBe('wss://leader.example.com/ws/node');
   });
 });
 
@@ -143,14 +144,47 @@ const lanIp = Object.values(networkInterfaces())
   .find((a) => a !== undefined && a.family === 'IPv4' && !a.internal)?.address;
 
 describe.skipIf(lanIp === undefined)('joining over the LAN with the real Node daemon', () => {
-  it('refuses to create remote join codes without TLS', async () => {
-    const host = make('lan-host');
+  it('invites and joins a teammate over the LAN address', async () => {
+    const host = new Services(join(dir, 'lan-host'), { ...deps(), startDaemon: (c, o) => startDaemon(c, o) });
+    services.push(host);
     const port = await freePort();
     await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: lanIp!, settings: DEFAULT_SETTINGS });
-    await expect(host.invite({ agentId: '', ownerName: 'Bo' })).rejects.toThrow(/unencrypted ws:\/\//);
-    const member = make('lan-member');
-    const insecureCode = encodeJoinCode({ leaderUrl: `ws://${lanIp}:${port}/ws/node`, agentId: 'bo-agent', ownerName: 'Bo', token: 'qrm_x', repoRemoteUrl: bare });
-    await expect(member.setupJoin({ joinCode: insecureCode, settings: DEFAULT_SETTINGS })).rejects.toThrow(/unencrypted ws:\/\//);
+    const { joinCode } = await host.invite({ agentId: '', ownerName: 'Bo' });
+    expect(decodeJoinCode(joinCode).leaderUrl).toBe(`ws://${lanIp}:${port}/ws/node`);
+    const member = new Services(join(dir, 'lan-member'), { ...deps(), startDaemon: (c, o) => startDaemon(c, o) });
+    services.push(member);
+    await member.setupJoin({ joinCode, settings: DEFAULT_SETTINGS });
+    let online = false;
+    for (let i = 0; i < 50 && !online; i += 1) {
+      const result = await host.api('listAgents');
+      online = result.ok && result.data.agents.some((a) => a.id === 'bo-agent' && a.status === 'online');
+      if (!online) await tick(100);
+    }
+    expect(online).toBe(true);
+    expect(member.state()).toMatchObject({ encrypted: false, connectionWarning: null, leaderNetwork: 'local' });
+  });
+});
+
+describe('plaintext public and encrypted tunnel connections', () => {
+  it('allows a public address and exposes a clear warning in app state', async () => {
+    const host = make('public-host');
+    const port = await freePort();
+    await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: '203.0.113.7', settings: DEFAULT_SETTINGS });
+    const { joinCode } = await host.invite({ agentId: '', ownerName: 'Bo' });
+    expect(decodeJoinCode(joinCode).leaderUrl).toBe(`ws://203.0.113.7:${port}/ws/node`);
+    const member = make('public-member');
+    await member.setupJoin({ joinCode, settings: DEFAULT_SETTINGS });
+    expect(member.state()).toMatchObject({ encrypted: false, leaderNetwork: 'public', connectionWarning: 'This public connection is not encrypted; prefer a VPN or TLS tunnel.' });
+  });
+
+  it('keeps tunnel join codes encrypted and warning free', async () => {
+    const host = make('tunnel-host');
+    await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port: await freePort(), publicHost: 'https://leader.example.com', settings: DEFAULT_SETTINGS });
+    const { joinCode } = await host.invite({ agentId: '', ownerName: 'Bo' });
+    expect(decodeJoinCode(joinCode).leaderUrl).toBe('wss://leader.example.com/ws/node');
+    const member = make('tunnel-member');
+    await member.setupJoin({ joinCode, settings: DEFAULT_SETTINGS });
+    expect(member.state()).toMatchObject({ encrypted: true, connectionWarning: null });
   });
 });
 

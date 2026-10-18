@@ -169,6 +169,7 @@ export function Team({ state }: { state: AppState }) {
 
   return (
     <div className="stack">
+      {state.connectionWarning !== null && <p className="note note-warn">{state.connectionWarning}</p>}
       {state.isAdmin ? (
         <Card title="Invite a teammate">
           <p className="muted">
@@ -198,7 +199,7 @@ export function Team({ state }: { state: AppState }) {
             {state.leader?.restrictedTo ? <> (only connections through {state.leader.restrictedTo} are accepted)</> : null}.{' '}
             {state.encrypted
               ? 'The connection is encrypted.'
-              : 'This connection is not encrypted: fine on the same network or a VPN; for teammates on the internet use a tunnel URL (Settings → Disconnect, then host again with the tunnel address).'}
+              : state.connectionWarning ?? 'This connection is not encrypted, but stays on your local network or VPN.'}
           </p>
         </Card>
       ) : (

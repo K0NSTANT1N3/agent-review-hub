@@ -45,6 +45,8 @@ export interface AppState {
   encrypted: boolean;
   /** Network the Leader is reached through, to explain connection problems. */
   leaderNetwork: AddressKind | 'tunnel' | 'loopback' | null;
+  /** Plaintext public connections are allowed and shown with this warning. */
+  connectionWarning: string | null;
   /** Set when the Leader refuses this computer's token (revoked or rotated) or the stored token cannot be read. */
   authError: string | null;
   /** False when the agent token is stored as plain text because the OS has no keychain; null before setup. */

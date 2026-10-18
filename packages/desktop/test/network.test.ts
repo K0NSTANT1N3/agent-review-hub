@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { addressOptionsFrom, classifyAddress, leaderNetworkKind } from '../src/main/network.js';
+import { isPrivateNetworkHost } from '@quorum/protocol/join-code';
+
+describe('isPrivateNetworkHost', () => {
+  it.each(['localhost', '127.0.0.1', '192.168.1.20', '10.0.0.3', '172.31.0.4', '100.64.0.1', '100.127.255.254', 'box.local', 'ana.tail1234.ts.net', 'fd7a:115c:a1e0::1'])('%s is private or VPN scoped', (host) => {
+    expect(isPrivateNetworkHost(host)).toBe(true);
+  });
+  it.each(['100.63.255.255', '100.128.0.1', '172.32.0.1', '203.0.113.7', 'example.com'])('%s is public', (host) => {
+    expect(isPrivateNetworkHost(host)).toBe(false);
+  });
+});
 
 describe('classifyAddress', () => {
   it.each([
@@ -58,6 +68,8 @@ describe('addressOptionsFrom', () => {
 describe('leaderNetworkKind', () => {
   it.each([
     ['ws://ana.tail1234.ts.net:7420/ws/node', 'tailscale'],
+    ['ws://box.local:7420/ws/node', 'local'],
+    ['ws://[fd7a:115c:a1e0::1]:7420/ws/node', 'vpn'],
     ['ws://100.101.102.103:7420/ws/node', 'tailscale'],
     ['ws://192.168.1.20:7420/ws/node', 'local'],
     ['wss://abc.trycloudflare.com/ws/node', 'tunnel'],

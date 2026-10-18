@@ -62,15 +62,22 @@ describe('quorum-node join', () => {
     expect(result.startCommand).toContain('--assume-idle');
   });
 
-  it('adds --insecure to the start command only for ws:// to a remote host', () => {
-    expect(needsInsecure('ws://10.0.0.5:7420/ws/node')).toBe(true);
+  it('warns only for public plaintext connections', () => {
+    expect(needsInsecure('ws://10.0.0.5:7420/ws/node')).toBe(false);
+    expect(needsInsecure('ws://ana.tail1234.ts.net:7420/ws/node')).toBe(false);
+    expect(needsInsecure('ws://100.101.102.103:7420/ws/node')).toBe(false);
+    expect(needsInsecure('ws://203.0.113.7:7420/ws/node')).toBe(true);
     expect(needsInsecure('ws://127.0.0.1:7420/ws/node')).toBe(false);
     expect(needsInsecure('ws://[::1]:7420/ws/node')).toBe(false);
     expect(needsInsecure('wss://x.trycloudflare.com/ws/node')).toBe(false);
     const lines: string[] = [];
-    const result = runJoin([code('ws://10.0.0.5:7420/ws/node')], (line) => lines.push(line), dir, home);
+    const result = runJoin([code('ws://203.0.113.7:7420/ws/node')], (line) => lines.push(line), dir, home);
     expect(result.startCommand).toMatch(/--insecure$/);
-    expect(lines.some((line) => line.startsWith('Warning: this Leader uses unencrypted ws://'))).toBe(true);
+    expect(lines.some((line) => line === 'Warning: this public connection uses unencrypted ws://; prefer a VPN or TLS tunnel.')).toBe(true);
+    const privateLines: string[] = [];
+    const lan = runJoin([code('ws://10.0.0.5:7420/ws/node'), '--force'], (line) => privateLines.push(line), dir, home);
+    expect(lan.startCommand).not.toMatch(/--insecure$/);
+    expect(privateLines.some((line) => line.startsWith('Warning:'))).toBe(false);
   });
 
   it('refuses to overwrite an existing config unless --force is given', async () => {

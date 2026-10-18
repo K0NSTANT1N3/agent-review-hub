@@ -86,3 +86,14 @@ export function isValidPublicHost(publicHost: string): boolean {
 export function isEncryptedLeaderUrl(leaderUrl: string): boolean {
   return leaderUrl.startsWith('wss://');
 }
+
+/** Private and mesh-VPN names/IPs keep plaintext traffic inside a local network or encrypted VPN. */
+export function isPrivateNetworkHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.ts.net')) return true;
+  if (host === '::1' || /^(fc|fd)[0-9a-f]{2}:/i.test(host) || /^fe[89ab][0-9a-f]:/i.test(host)) return true;
+  const parts = host.split('.');
+  if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) return false;
+  const [a, b] = parts.map(Number);
+  return a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168) || (a === 100 && b! >= 64 && b! <= 127) || a === 127;
+}

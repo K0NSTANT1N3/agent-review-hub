@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
+import { isPrivateNetworkHost } from '@quorum/protocol/join-code';
 import type { AddressKind, AddressOption } from '../shared/ipc.js';
 
 // Which addresses can teammates use to reach this computer? Quorum works with any VPN; it only labels the
@@ -107,7 +108,9 @@ export async function addressOptions(): Promise<AddressOption[]> {
 export function leaderNetworkKind(leaderUrl: string): AddressKind | 'tunnel' | 'loopback' {
   const host = new URL(leaderUrl).hostname.replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.startsWith('127.')) return 'loopback';
+  if (host.endsWith('.local')) return 'local';
   if (host.endsWith('.ts.net')) return 'tailscale';
+  if (host.includes(':') && isPrivateNetworkHost(host)) return 'vpn';
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
     if (isTailscaleRange(host)) return 'tailscale';
     if (isPrivateLan(host)) return 'local';
