@@ -287,7 +287,9 @@ If npm cannot install `better-sqlite3`, install Python 3 and a C/C++ compiler (o
 We recommend that you make a user account for Quorum. Do not run Quorum as `root`:
 
 ```bash
-sudo useradd --system --create-home --home-dir /var/lib/quorum --shell /usr/sbin/nologin quorum
+sudo useradd --system --user-group --create-home --home-dir /var/lib/quorum --shell /usr/sbin/nologin quorum
+sudo install -d -o root -g quorum -m 0750 /etc/quorum
+sudo install -d -o quorum -g quorum -m 0700 /var/lib/quorum
 ```
 
 ### 10.2 Run the Leader on a VPS
@@ -310,6 +312,13 @@ sudo useradd --system --create-home --home-dir /var/lib/quorum --shell /usr/sbin
    The Leader pushes the merged work to `main`. Thus the `quorum` user must have write access to the repository (for example, an SSH deploy key with write access).
    The owners in `admins` can do the human actions (for example, approve or cancel) on the tasks of all team members. All the fields are in [`docs/implementation-spec.md`](implementation-spec.md) §6.1.
 
+   Give the service account permission to read the configuration:
+
+   ```bash
+   sudo chown root:quorum /etc/quorum/quorum.leader.json
+   sudo chmod 640 /etc/quorum/quorum.leader.json
+   ```
+
 2. Select how the team members connect to the Leader. Use one of these three procedures:
 
    * **TLS certificate on the Leader.** Get a certificate for a domain name that points to the VPS (for example, with `certbot certonly --standalone -d quorum.example.com`). Add the two files to the configuration:
@@ -320,15 +329,19 @@ sudo useradd --system --create-home --home-dir /var/lib/quorum --shell /usr/sbin
 
      The `quorum` user must have permission to read the two files. The Leader reads the files when it starts. After you renew the certificate, restart the Leader.
    * **HTTPS tunnel.** Set `"host": "127.0.0.1"` in `listen`. Then run a tunnel on the VPS, for example `cloudflared tunnel --url http://localhost:7420`. A quick tunnel gets a new URL each time that it starts. For a permanent address, use a named tunnel.
-   * **VPN.** Use a VPN such as Tailscale and give the VPN address of the VPS to the team. Do not use `ws://` on a public network without a VPN. `ws://` does not encrypt the tokens or the code.
+   * **VPN.** Use a VPN such as Tailscale, set `listen.host` to the VPN address of the VPS, and give that address to the team. Do not use `ws://` on a public network without a VPN. `ws://` does not encrypt the tokens or the code.
 
-3. Configure the firewall. Open only the ports that you use:
+3. Configure the firewall. Keep SSH access open, then select the rule for your connection method before you enable the firewall:
 
    ```bash
    sudo ufw allow OpenSSH
-   sudo ufw allow 7420/tcp     # only for a TLS certificate on the Leader; not for a tunnel
-   sudo ufw enable
    ```
+
+   * **TLS certificate on the Leader:** `sudo ufw allow 7420/tcp`.
+   * **HTTPS tunnel:** no inbound rule for port 7420 is needed; the Leader listens on `127.0.0.1`.
+   * **VPN:** allow the Leader port only on the VPN interface. For example, `sudo ufw allow in on wg0 to any port 7420 proto tcp`. Replace `wg0` with your VPN interface name.
+
+   Then run `sudo ufw enable`.
 
 4. Start the Leader one time to make sure that the configuration is correct:
 
@@ -336,7 +349,15 @@ sudo useradd --system --create-home --home-dir /var/lib/quorum --shell /usr/sbin
    sudo -u quorum quorum-leader start --config /etc/quorum/quorum.leader.json
    ```
 
-   From a different computer, `curl https://quorum.example.com:7420/api/health` must show `{"ok":true}`. Then stop the Leader (Ctrl+C) and install the systemd service (see [10.5](#105-systemd-services)).
+   From a different computer, check the address for your connection method. The response must be `{"ok":true}`:
+
+   | Connection | Health check |
+   |---|---|
+   | TLS certificate | `curl https://quorum.example.com:7420/api/health` |
+   | HTTPS tunnel | `curl https://your-tunnel.example.com/api/health` |
+   | VPN (replace the example with the VPS VPN address) | `curl http://10.8.0.1:7420/api/health` |
+
+   Then stop the Leader (Ctrl+C) and install the systemd service (see [10.5](#105-systemd-services)).
 
 5. Make a join code for each team member:
 
@@ -345,7 +366,7 @@ sudo useradd --system --create-home --home-dir /var/lib/quorum --shell /usr/sbin
    ```
 
    The command writes the join code on stdout. Send the join code to the team member privately, because it contains a secret token.
-   For `--public-host`, use the domain name of the VPS, or the full `https://` URL of the tunnel. With a TLS certificate or a tunnel, the join code uses `wss://` (encrypted).
+   For `--public-host`, use the domain name of the TLS-enabled VPS, the full `https://` URL of the tunnel, or the VPN address. With a TLS certificate or a tunnel, the join code uses `wss://` (encrypted).
    The team member pastes the join code in the desktop app (**Join a team**), or uses `quorum-node join` on a server.
 
    The host must also have an agent. Make a join code for the host and use it in the desktop app or on a VPS.
@@ -359,11 +380,11 @@ sudo useradd --system --create-home --home-dir /var/lib/quorum --shell /usr/sbin
 2. On the VPS, change the join code into a Node configuration file:
 
    ```bash
-   sudo -u quorum quorum-node join 'quorum1.eyJ2Ijox...' --config /etc/quorum/quorum.node.json --data-dir /var/lib/quorum
+   sudo -u quorum quorum-node join 'quorum1.eyJ2Ijox...' --config /var/lib/quorum/quorum.node.json --data-dir /var/lib/quorum
    ```
 
    The command writes `quorum.node.json` with file mode 0600, because the file contains the agent token. Then the command shows the start command.
-   The Node keeps its data and git worktrees in the `--data-dir` directory.
+   The configuration is in the service account's writable data directory. The Node keeps its data and git worktrees in the `--data-dir` directory.
 
    On a server, the agent always does work for the team (`lendMode` is `always`). Other options:
 
@@ -379,7 +400,7 @@ sudo useradd --system --create-home --home-dir /var/lib/quorum --shell /usr/sbin
 4. Start the Node one time to make sure that the configuration is correct. Use the command that `quorum-node join` showed:
 
    ```bash
-   sudo -u quorum env ANTHROPIC_API_KEY=sk-ant-... quorum-node start --config /etc/quorum/quorum.node.json
+   sudo -u quorum env ANTHROPIC_API_KEY=sk-ant-... quorum-node start --config /var/lib/quorum/quorum.node.json
    ```
 
    The Leader shows the agent as `available` (for example, with `quorum agents`). Then stop the Node (Ctrl+C) and install the systemd service (see [10.5](#105-systemd-services)).
@@ -405,6 +426,7 @@ Sources: [Claude Code authentication](https://code.claude.com/docs/en/authentica
 ### 10.5 systemd services
 
 These services start Quorum when the VPS starts, and restart it after a failure. Use `command -v quorum-leader` and `command -v quorum-node` to find the paths for `ExecStart`.
+Install Node.js and the programs in locations that the `quorum` account can execute. The service's `PATH` must include the directory that contains `node`.
 
 `/etc/systemd/system/quorum-leader.service`:
 
@@ -437,7 +459,7 @@ Wants=network-online.target
 User=quorum
 WorkingDirectory=/var/lib/quorum
 EnvironmentFile=/etc/quorum/node.env
-ExecStart=/usr/local/bin/quorum-node start --config /etc/quorum/quorum.node.json
+ExecStart=/usr/local/bin/quorum-node start --config /var/lib/quorum/quorum.node.json
 Restart=on-failure
 RestartSec=5
 
@@ -452,12 +474,13 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' | sudo tee /etc/quorum/node.env >/dev/null
 sudo chmod 600 /etc/quorum/node.env
 ```
 
-Then start the services:
+Reload systemd, then enable each service that runs on this VPS:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now quorum-leader quorum-node
-journalctl -u quorum-node -f      # see the log
+sudo systemctl enable --now quorum-leader   # on the VPS that hosts the Leader
+sudo systemctl enable --now quorum-node     # on a VPS that runs an agent Node
+journalctl -u quorum-node -f                # see the Node log
 ```
 
 If the Leader is on a different VPS, remove `quorum-leader.service` from the `After=` line of the Node service. If the start command from `quorum-node join` contains `--insecure`, add `--insecure` to `ExecStart`.

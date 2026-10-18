@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseLeaderConfig, type LeaderConfig } from '@quorum/protocol';
 import { decodeJoinCode } from '@quorum/protocol/join-code';
-import { listAgents } from '../../src/index.js';
+import { addAgent, listAgents, revokeAgent } from '../../src/index.js';
 import { createInvite, inviteLeaderUrl } from '../../src/invite.js';
 import { openDatabase } from '../../src/db/repo.js';
 
@@ -61,10 +61,58 @@ describe('quorum-leader invite', () => {
     expect(invite.warnings.some((w) => w.includes('unencrypted'))).toBe(false);
   });
 
+  it.each([
+    ['::1', 'ws'],
+    ['2001:db8::7', 'ws'],
+    ['::1', 'wss'],
+    ['2001:db8::7', 'wss'],
+  ])('defaults to a bracketed IPv6 listen address %s over %s', async (host, scheme) => {
+    const ipv6 = configWith({
+      listen: { host, port: 7420 },
+      ...(scheme === 'wss' ? { tls: { certFile: '/etc/quorum/cert.pem', keyFile: '/etc/quorum/key.pem' } } : {}),
+    });
+    const invite = await createInvite(ipv6, { name: 'Bo' });
+    expect(decodeJoinCode(invite.joinCode).leaderUrl).toBe(`${scheme}://[${host}]:7420/ws/node`);
+  });
+
   it('refuses to rotate an existing agent token unless --rotate is given', async () => {
     const first = decodeJoinCode((await createInvite(config, { name: 'Bo', publicHost: 'h.example' })).joinCode);
     await expect(createInvite(config, { name: 'Bo', publicHost: 'h.example' })).rejects.toThrow(/already exists. Pass --rotate/);
     const second = decodeJoinCode((await createInvite(config, { name: 'Bo', publicHost: 'h.example', rotate: true })).joinCode);
+    expect(second.token).not.toBe(first.token);
+  });
+
+  it('accepts only one concurrent invite for a new agent without --rotate', async () => {
+    const results = await Promise.allSettled([
+      createInvite(config, { name: 'Bo', publicHost: 'h.example' }),
+      createInvite(config, { name: 'Bo', publicHost: 'h.example' }),
+    ]);
+    const accepted = results.filter((result) => result.status === 'fulfilled');
+    const rejected = results.filter((result) => result.status === 'rejected');
+    expect(accepted).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toMatchObject({ message: expect.stringMatching(/already exists. Pass --rotate/) });
+
+    const code = decodeJoinCode(accepted[0]!.value.joinCode);
+    const db = openDatabase(config.dbPath);
+    try {
+      expect(db.agents.get(code.agentId)?.token_hash).toBe(createHash('sha256').update(code.token).digest('hex'));
+    } finally {
+      db.close();
+    }
+  });
+
+  it('can invite a revoked agent again without --rotate', async () => {
+    const first = decodeJoinCode((await createInvite(config, { name: 'Bo', publicHost: 'h.example' })).joinCode);
+    await revokeAgent(config.dbPath, first.agentId);
+    const second = decodeJoinCode((await createInvite(config, { name: 'Bo', publicHost: 'h.example' })).joinCode);
+    expect(second.token).not.toBe(first.token);
+    expect(await listAgents(config.dbPath)).toMatchObject([{ id: first.agentId, revoked: false }]);
+  });
+
+  it('preserves addAgent token rotation by default for existing callers', async () => {
+    const first = await addAgent(config.dbPath, { id: 'bo-agent', owner: 'Bo' });
+    const second = await addAgent(config.dbPath, { id: 'bo-agent', owner: 'Bo' });
     expect(second.token).not.toBe(first.token);
   });
 
