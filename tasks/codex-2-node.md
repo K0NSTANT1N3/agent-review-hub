@@ -135,8 +135,8 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 - **Accept:** tests for passing, failing, timing out, missing config, and a config changed only on a branch being ignored.
 
 ### N3 — Node journal · spec §11.3
-- [ ] `src/journal.ts`: better-sqlite3 at `{dataDir}/node.db` with the `inbox`, `outbox`, `sessions` tables from §11.3. API: `recordCommand`, `markRunning`, `markDone(resultEvtMsgId)`, `enqueueEvent`, `markAcked`, `unackedEvents()`, `isProcessed(msgId)`, session CRUD.
-- [ ] `recoverOnStartup()`: every `running` inbox row → enqueue `turn.failed {code:'INTERRUPTED'}` and mark it done.
+- [x] `src/journal.ts`: better-sqlite3 at `{dataDir}/node.db` with the `inbox`, `outbox`, `sessions` tables from §11.3. API: `recordCommand`, `markRunning`, `markDone(resultEvtMsgId)`, `enqueueEvent`, `markAcked`, `unackedEvents()`, `isProcessed(msgId)`, session CRUD.
+- [x] `recoverOnStartup()`: every `running` inbox row → enqueue `turn.failed {code:'INTERRUPTED'}` and mark it done.
 - **Accept:** a restart-simulation test (open, write, close, reopen) proves recovery and dedupe.
 
 ### N4 — Prompts + output parsing · spec §12
