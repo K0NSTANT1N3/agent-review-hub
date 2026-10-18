@@ -104,6 +104,7 @@ export class Services {
           : null,
       node: { running: this.daemon !== null, error: this.nodeError, status: safeStatus(this.daemon) },
       connected: this.connected,
+      apiUrl: c === null ? null : httpBaseFromLeaderUrl(c.leaderUrl),
       settings: c?.settings ?? null,
       dataDir: this.dataDir,
     };
