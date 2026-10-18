@@ -27,6 +27,8 @@ export interface AppState {
   connected: boolean;
   /** http(s) base of the Leader this app talks to (what `quorum login --url` needs). */
   apiUrl: string | null;
+  /** Whether teammates' connections to the Leader are encrypted (wss://). */
+  encrypted: boolean;
   settings: DesktopSettings | null;
   dataDir: string;
 }

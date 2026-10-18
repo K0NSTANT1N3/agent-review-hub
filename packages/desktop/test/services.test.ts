@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addAgent, startLeader } from '@quorum/leader';
 import type { NodeConfig, OwnerSettings } from '@quorum/protocol';
 import { DEFAULT_SETTINGS } from '../src/shared/ipc.js';
-import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl } from '../src/main/join-code.js';
+import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, publicLeaderUrl } from '../src/main/join-code.js';
+import { networkInterfaces } from 'node:os';
+import { startDaemon } from '@quorum/node';
 import { Services, type DaemonHandleLike, type ServiceDeps } from '../src/main/services.js';
 
 let dir: string;
@@ -74,6 +76,48 @@ describe('join codes', () => {
     expect(() => decodeJoinCode('quorum1.!!!')).toThrow();
     expect(httpBaseFromLeaderUrl('wss://h.example:8443/ws/node')).toBe('https://h.example:8443');
     expect(agentIdFor('Ána Smith!')).toBe('ana-smith-agent');
+  });
+});
+
+describe('public Leader URL', () => {
+  it('builds ws:// for hosts/IPs and wss:// for tunnel URLs', () => {
+    expect(publicLeaderUrl('192.168.1.20', 7420)).toBe('ws://192.168.1.20:7420/ws/node');
+    expect(publicLeaderUrl('https://abc.trycloudflare.com', 7420)).toBe('wss://abc.trycloudflare.com/ws/node');
+    expect(publicLeaderUrl('https://abc.trycloudflare.com/', 7420)).toBe('wss://abc.trycloudflare.com/ws/node');
+    expect(publicLeaderUrl('http://box.tailnet.ts.net:7420', 7420)).toBe('ws://box.tailnet.ts.net:7420/ws/node');
+    expect(isEncryptedLeaderUrl(publicLeaderUrl('https://x.example', 1))).toBe(true);
+    expect(isEncryptedLeaderUrl(publicLeaderUrl('10.0.0.2', 1))).toBe(false);
+  });
+});
+
+const lanIp = Object.values(networkInterfaces())
+  .flat()
+  .find((a) => a !== undefined && a.family === 'IPv4' && !a.internal)?.address;
+
+describe.skipIf(lanIp === undefined)('joining over the LAN with the real Node daemon', () => {
+  it('a member connects to the host through its LAN address (plain ws://)', async () => {
+    const real: ServiceDeps = { ...deps(), startDaemon: (c, o) => startDaemon(c, o) };
+    const mock = join(dir, 'mock.json');
+    writeFileSync(mock, JSON.stringify({ author: [], reviewer: [] }));
+    const settings = { ...DEFAULT_SETTINGS, adapter: { type: 'mock' as const, scriptPath: mock, contextWindow: 200000 } };
+    const host = new Services(join(dir, 'lan-host'), real);
+    services.push(host);
+    const port = await freePort();
+    await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: lanIp!, settings });
+    const { joinCode } = await host.invite({ agentId: '', ownerName: 'Bo' });
+    expect(decodeJoinCode(joinCode).leaderUrl).toBe(`ws://${lanIp}:${port}/ws/node`);
+
+    const member = new Services(join(dir, 'lan-member'), real);
+    services.push(member);
+    const state = await member.setupJoin({ joinCode, settings });
+    expect(state.node).toMatchObject({ running: true, error: null });
+    let online = false;
+    for (let i = 0; i < 50 && !online; i += 1) {
+      const r = await host.api('listAgents');
+      online = r.ok && r.data.agents.find((a) => a.id === 'bo-agent')?.status === 'online';
+      if (!online) await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(online).toBe(true);
   });
 });
 

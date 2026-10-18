@@ -1,6 +1,6 @@
 # Project status — single source of truth
 
-> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1 feature complete.
+> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1.2 released.
 
 ## State
 
@@ -14,6 +14,30 @@ to end. The packaged Linux app (AppImage/deb) was smoke-tested: in-process Leade
 workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppImage`, `…-linux-amd64.deb`,
 `…-mac-arm64.dmg`, `…-win-x64.exe`.
 
+## Since v0.1.0 (in v0.1.1)
+
+* Every desktop screen was rendered against a live two-member team (real Leader/Nodes, mock agents, two review
+  rounds → merge); fixed blank timeline rows, an overflowing task board and the back link.
+* Reviewer failover now prefers a reviewer who hasn't already dropped the task (#32), with fallback; conversation
+  order is stable (#36).
+* Codex-1 was auto-resumed after its limit and opened #41; superseded by #44 and closed (see the PR for why).
+
+## In v0.1.2
+
+* **Fix:** teammates joining over a LAN (plain `ws://` to a non-localhost address) were refused by the Node's ws://
+  guard; the desktop app now allows the address the host chose. Covered by a real-daemon LAN join test.
+* **No VPN needed:** the host's address may be a tunnel URL (`cloudflared tunnel --url http://localhost:7420`, ngrok);
+  join codes then use encrypted `wss://`. Verified end to end through a live Cloudflare quick tunnel. The Team page
+  shows whether connections are encrypted. See docs/INSTALL.md → Connecting teammates.
+
+## Unreleased (PR from feat/agent-cli)
+
+| Change | Notes |
+|---|---|
+| Session profiles | Fixed: the Leader reused any idle session for any role, so after an agent reviewed, its own next task or any directive went to the reviewer session and failed. Sessions now keep their profile (schema v2). e2e #18b, #18c. |
+| macOS worktree paths | Fixed: session worktree reuse failed when the data path contained a symlink (macOS `/var` → `/private/var`). |
+| `quorum` CLI + API tokens | `packages/cli`; requester-scope tokens (create in Settings → Agent CLI access, or `quorum-leader add-token`). e2e #22–#24. |
+
 ## Who did what
 
 | Agent | Work |
@@ -22,21 +46,13 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 | Codex-1 | Leader L1 (DB), L2 (state machine), L3 (locks), L4 (node hub), most of L5 (handlers; adopted by Claude at handoff) — stopped at its usage limit |
 | Codex-2 | Node N1–N9 (worktrees, project tests runner, journal, prompts/parser, adapter interface + mock, Leader client, command runner, daemon/CLI, opencode adapter) |
 
-## Since v0.1
-
-| Change | Notes |
-|---|---|
-| Session profiles | Fixed: the Leader reused any idle session for any role, so after an agent reviewed, its own next task or any directive went to the reviewer session and failed. Sessions now keep their profile (schema v2). e2e #18b, #18c. |
-| macOS worktree paths | Fixed: session worktree reuse failed when the data path contained a symlink (macOS `/var` → `/private/var`). |
-| `quorum` CLI + API tokens | `packages/cli`; requester-scope tokens (create in Settings → Agent CLI access, or `quorum-leader add-token`). e2e #22–#24. |
-
 ## Remaining / next ideas (not required for v0.1)
 
 | Item | Notes |
 |---|---|
 | Code signing | Installers are unsigned (macOS: right-click → Open; Windows: More info → Run anyway). Add certificates to the Release workflow when available. |
 | macOS Intel build | The Release workflow builds on `macos-latest` (Apple Silicon). Add an `macos-13` matrix entry for x64 if needed. |
-| TLS for the Leader | Supported headless (`tls.certFile/keyFile`); the desktop host mode uses plain WS — use a VPN (e.g. Tailscale) or a TLS proxy. |
+| Built-in tunnel | Remote teammates currently use a tunnel URL (cloudflared/ngrok) or Tailscale; the app could start a tunnel itself. |
 | Ship the CLI | Bundle `quorum` with the installers or publish it to npm; today it runs from a source checkout. |
 | Second-opinion reviews, GitHub PR integration, task decomposition | Out of scope for v0.1 (spec §23). |
 

@@ -53,3 +53,24 @@ export function agentIdFor(ownerName: string): string {
     .slice(0, 40);
   return `${slug || 'member'}-agent`;
 }
+
+/**
+ * Leader URL teammates connect to. `publicHost` may be a host name / IP (plain ws on `port`, fine on a LAN or VPN)
+ * or a full URL such as a tunnel "https://xyz.trycloudflare.com" (encrypted wss, no port needed).
+ */
+export function publicLeaderUrl(publicHost: string, port: number): string {
+  const value = publicHost.trim();
+  if (/^(https?|wss?):\/\//i.test(value)) {
+    const u = new URL(value);
+    u.protocol = u.protocol === 'https:' || u.protocol === 'wss:' ? 'wss:' : 'ws:';
+    u.pathname = '/ws/node';
+    u.search = '';
+    u.hash = '';
+    return u.toString();
+  }
+  return `ws://${value || '127.0.0.1'}:${port}/ws/node`;
+}
+
+export function isEncryptedLeaderUrl(leaderUrl: string): boolean {
+  return leaderUrl.startsWith('wss://');
+}
