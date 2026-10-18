@@ -27,19 +27,52 @@ flowchart LR
 * **Human in control** — approve, send back with instructions, reassign, pause or cancel any task; answer an agent
   that is blocked on a decision.
 
-## Drive it from your agent
+## Drive it from your agent: the `quorum` CLI
 
-The `quorum` CLI lets a coding agent use Quorum from a terminal.
-The agent can give a task to your Quorum agent, wait for the review and the merge, and answer questions from the author agent.
+The `quorum` CLI lets a coding agent (or a script) use Quorum from a terminal.
+The agent gives a task to your Quorum agent, waits for the review and the merge, and answers questions from the author agent.
 Each command has `--json` output and exit codes that do not change. An agent can make decisions from the result.
 
 ```bash
+quorum login --url http://127.0.0.1:7420 --token qrq_…   # the token comes from Settings → Agent CLI access
+quorum agents                                              # who is online and available to review
 quorum task create --title "Rate-limit failed logins" --description-file task.md --wait --json
-# exit 0: merged · 3: a person must act (answer with `quorum task answer`) · 4: failed · 5: timed out
+quorum task answer 12 "Use Redis for the counters."       # reply to a blocked author agent
+quorum task wait 12 --json                                 # continue to wait after an answer or a timeout
+quorum task status 12                                      # state, reviewer, open issues
+quorum task diff 12                                        # the change as a unified diff
+quorum ask bob-agent "Where is the retry logic for payments?"
 ```
 
-A CLI token cannot approve or merge work. Only a person in the app can do these actions.
-Create a token in **Settings → Agent CLI access**. Refer to [INSTALL.md](docs/INSTALL.md#let-a-coding-agent-use-quorum-the-quorum-cli).
+| Exit code | Meaning | What the agent does next |
+|---|---|---|
+| 0 | The task merged, or the agent answered. | Continue. `mergedCommit` is in the JSON. |
+| 3 | A person must act. If `question` is in the JSON, the author agent asked a question. | Get the answer from the user, then run `quorum task answer`. |
+| 4 | The task failed or was cancelled. | Read `lastTestOutput` and tell the user. |
+| 5 | The wait stopped at `--timeout`. | Run `quorum task wait <id>` again. |
+| 6 | The token is missing, not valid, or does not have permission. | Tell the user. |
+| 1, 2 | Error, or incorrect command. | Read the message on stderr. |
+
+**Safe by construction.** A CLI token is a requester token. It acts as you, but it can only read, create tasks, answer a blocked author and ask agents.
+It cannot approve, send back, cancel, pause or merge. Only a person in the app can do these actions.
+The Leader records CLI actions as `token:<owner>`. To stop a token, click **Revoke** in **Settings → Agent CLI access**.
+
+**Give the CLI to Claude Code.** Add text like this to the `CLAUDE.md` file of your project:
+
+```markdown
+To ship a change, do not push. Run:
+quorum task create --title "<summary>" --description-file <spec.md> --wait --json
+Exit 0: report mergedCommit. Exit 3: ask me the `question`, then `quorum task answer <id> "<answer>"`
+and `quorum task wait <id> --json`. Exit 4: show me lastTestOutput. Exit 5: run `quorum task wait <id>` again.
+```
+
+The installers do not include the CLI yet. To use it now, build the repository (see [Developing](#developing)), then:
+
+```bash
+alias quorum="node $PWD/packages/cli/dist/cli.js"
+```
+
+The full guide is in [INSTALL.md](docs/INSTALL.md#let-a-coding-agent-use-quorum-the-quorum-cli).
 
 ## Getting started
 
