@@ -572,6 +572,12 @@ Implement as a table in `state-machine.ts`. `transition(task, to, reason, actor,
 
 When the author is needed (entering AUTHORING or SYNCING) and the author session is `lost` or the agent is offline, go **directly** to PAUSED with `paused_from_state` set to the intended state.
 
+Clarifications (resolved in issue #2):
+- T20 includes its AWAITING_REVIEWER fallback, and T21 its ESCALATED fallback.
+- T23/T33 are dynamic edges. PAUSED may resume only to the persisted `paused_from_state`, which must be a non-terminal state other than PAUSED.
+- The direct-pause rule above validates the intended edge first, then writes **one** audit event for the actual transition to PAUSED. No synthetic intermediate event is written.
+- On Leader startup, MERGING → MERGE_QUEUED is a named, audited recovery operation (L9). It is not an ordinary transition.
+
 ### 8.3 Effective verdict and issue bookkeeping
 
 The reviewer's stated `verdict` is logged but **not trusted**. The Leader computes:
@@ -738,9 +744,10 @@ All frames are JSON text messages validated with zod in `packages/protocol`.
 
 ```ts
 type Frame =
-  | { kind: 'hello';    agentId: string; token: string; nodeVersion: string;
+  | { kind: 'hello';    agentId: string; token: string; nodeVersion: string; protocolVersion: number;
       settings: OwnerSettings; sessions: SessionReport[]; adapterType: 'claude-code'|'opencode'|'mock' }
-  | { kind: 'welcome';  serverTime: number; heartbeatIntervalSec: number }
+  | { kind: 'welcome';  serverTime: number; heartbeatIntervalSec: number;
+      resendUnackedSec: number; turnTimeoutSec: number; mainBranch: string }
   | { kind: 'reject';   reason: 'bad_token' | 'revoked' | 'version_mismatch' | 'already_connected' }
   | { kind: 'heartbeat'; status: NodeStatus }
   | { kind: 'cmd';      msgId: string; cmd: Command }        // Leader → Node
@@ -795,7 +802,7 @@ type Command =
       task: TaskBrief; fromCommit: string; headCommit: string; baseCommit: string;
       openIssues: (IssueBrief & { authorResponse: string|null; authorNote: string|null })[];
       authorSummary: string; reason: 'revision'|'sync_conflicts'; estimated: number }
-  | { type: 'directive.run'; sid: string; directiveId: string; text: string; estimated: number }
+  | { type: 'directive.run'; sid: string; directiveId: string; requester: string; text: string; estimated: number }
   | { type: 'task.cancel';   sid: string; taskId?: number; directiveId?: string }
 
 type TaskBrief  = { id: number; title: string; description: string; tags: string[]; requester: string }
