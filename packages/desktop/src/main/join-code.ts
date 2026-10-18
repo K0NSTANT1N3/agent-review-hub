@@ -29,7 +29,7 @@ export function decodeJoinCode(text: string): JoinCode {
   for (const key of ['leaderUrl', 'agentId', 'ownerName', 'token', 'repoRemoteUrl'] as const) {
     if (typeof c[key] !== 'string' || c[key] === '') throw new Error(`The join code is missing ${key}`);
   }
-  if (!/^wss?:\/\//.test(c.leaderUrl!)) throw new Error('The join code has an invalid Leader URL');
+  if (!/^wss?:\/\//.test(c.leaderUrl!) || !URL.canParse(c.leaderUrl!)) throw new Error('The join code has an invalid Leader URL');
   return c as JoinCode;
 }
 

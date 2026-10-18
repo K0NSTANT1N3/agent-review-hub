@@ -105,6 +105,7 @@ handle(IPC.api, (route: ApiRouteName, options?: ApiCallOptions) => services.api(
 /** OS notifications for the user's own tasks: merged, escalated, or needing attention. */
 function createNotifier(): (event: UiEvent, state: AppState) => void {
   const lastState = new Map<number, string>();
+  let lastRateLimit: number | null = null;
   return (event, state) => {
     if (!Notification.isSupported()) return;
     if (event.type === 'task.updated') {
@@ -116,8 +117,13 @@ function createNotifier(): (event: UiEvent, state: AppState) => void {
       if (t.state === 'ESCALATED') new Notification({ title: 'Needs your decision', body: `#${t.id} ${t.title}: ${t.escalationReason ?? ''}` }).show();
     } else if (event.type === 'task.needs_attention') {
       new Notification({ title: `Task #${event.data.taskId} needs attention`, body: event.data.message }).show();
-    } else if (event.type === 'agent.updated' && event.data.id === state.agentId && event.data.rateLimitedUntil !== null) {
-      const until = new Date(event.data.rateLimitedUntil).toLocaleTimeString();
+    } else if (event.type === 'agent.updated' && event.data.id === state.agentId) {
+      // agent.updated fires on every heartbeat; notify once per new limit.
+      const limit = event.data.rateLimitedUntil;
+      if (limit === lastRateLimit) return;
+      lastRateLimit = limit;
+      if (limit === null) return;
+      const until = new Date(limit).toLocaleTimeString();
       new Notification({ title: 'Your agent is rate-limited', body: `Usage resets around ${until}.` }).show();
     }
   };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { html as diffHtml } from 'diff2html';
 import 'diff2html/bundles/css/diff2html.min.css';
 import { call } from '../bridge';
@@ -31,6 +31,11 @@ export function DiffView({ taskId, ranges }: { taskId: number; ranges: DiffRange
   }, [taskId, range?.from, range?.to]);
 
   if (range === undefined) return <div className="empty">No commits yet.</div>;
+  // diff2html is expensive on large diffs; TaskDetail re-renders every few seconds while polling.
+  const rendered = useMemo(
+    () => (diff !== null && diff.trim() !== '' ? diffHtml(diff, { drawFileList: true, matching: diff.length > 200_000 ? 'none' : 'lines', outputFormat: view }) : null),
+    [diff, view],
+  );
   return (
     <div>
       <div className="row diff-toolbar">
@@ -52,9 +57,7 @@ export function DiffView({ taskId, ranges }: { taskId: number; ranges: DiffRange
       {error !== null && <div className="note note-danger">{error}</div>}
       {diff === null && error === null && <div className="empty">Loading diff…</div>}
       {diff !== null && diff.trim() === '' && <div className="empty">No changes in this range.</div>}
-      {diff !== null && diff.trim() !== '' && (
-        <div className="diff" dangerouslySetInnerHTML={{ __html: diffHtml(diff, { drawFileList: true, matching: 'lines', outputFormat: view }) }} />
-      )}
+      {rendered !== null && <div className="diff" dangerouslySetInnerHTML={{ __html: rendered }} />}
     </div>
   );
 }
