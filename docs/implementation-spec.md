@@ -1177,22 +1177,28 @@ The mock writes files directly into the worktree, and replies with the `reply` o
 
 Auth: `Authorization: Bearer <agent token>` on every request. The token identifies the agent and its owner. Admin actions require `owner_name ∈ admins`.
 
+**API tokens (requester scope).** An owner can mint extra tokens (`qrq_` + 32 bytes base64url, sha256 stored in `api_tokens`) for scripts and coding agents, used by the `quorum` CLI (`packages/cli`). A requester token acts as its owner but may call only the routes marked ✓ below: read, create tasks, answer a blocked author, and ask agents. Everything else, including approve, send back, cancel, pause, reassign and token management, answers 403. The Node hub never accepts API tokens. Actions taken with one are audited as `token:<owner>`. Revoking or rotating the agent's own token revokes its API tokens.
+
 | Method & path | Who | Description |
 |---|---|---|
-| `GET /api/agents` | any | Agents with status, settings, locked/idle session counts, lent today, budget remaining, rate limit |
-| `GET /api/sessions?agentId=` | any | Sessions with state, lock, context tokens, files |
-| `GET /api/tasks?state=&mine=` | any | Task list |
-| `POST /api/tasks` | any | Body `{title, description, tags?, priority?, mode?}`. Requester = the caller's agent. Creates the task in QUEUED and returns it |
-| `GET /api/tasks/:id` | any | Task + conversations + issues + events + messages (transcript) |
-| `GET /api/tasks/:id/diff?from=&to=` | any | Unified diff, computed in the Leader clone after `git fetch` |
+| `GET /api/agents` | any ✓ | Agents with status, settings, locked/idle session counts, lent today, budget remaining, rate limit |
+| `GET /api/sessions?agentId=` | any ✓ | Sessions with state, lock, context tokens, files |
+| `GET /api/tasks?state=&mine=` | any ✓ | Task list |
+| `POST /api/tasks` | any ✓ | Body `{title, description, tags?, priority?, mode?}`. Requester = the caller's agent. Creates the task in QUEUED and returns it |
+| `GET /api/tasks/:id` | any ✓ | Task + conversations + issues + events + messages (transcript) |
+| `GET /api/tasks/:id/diff?from=&to=` | any ✓ | Unified diff, computed in the Leader clone after `git fetch` |
 | `POST /api/tasks/:id/cancel` | requester/admin | T28 |
 | `POST /api/tasks/:id/approve` | requester/admin | T26/T30 |
 | `POST /api/tasks/:id/send-back` | requester/admin | Body `{comment}` → T27 |
 | `POST /api/tasks/:id/reassign-reviewer` | requester/admin | T31 |
 | `POST /api/tasks/:id/pause` / `resume` | requester/admin | T32/T33 |
 | `PATCH /api/tasks/:id` | requester/admin | Change `priority`, `tags`, `mode` (allowed only while QUEUED or PAUSED for `mode`) |
-| `POST /api/directives` | any | §13 |
-| `GET /api/directives/:id` | any | Directive with result |
+| `POST /api/directives` | any ✓ | §13 |
+| `GET /api/directives/:id` | any ✓ | Directive with result |
+| `POST /api/tasks/:id/answer` | requester/admin ✓ | Body `{answer}`. Only while ESCALATED with `author_blocked`: records the answer as a human issue and resumes the author (T27) |
+| `POST /api/tokens` | any (agent token) | Body `{label?}`. Mints a requester token for the caller's agent; the plaintext is returned once |
+| `GET /api/tokens` | any (agent token) | The caller's API tokens (never the plaintext) |
+| `POST /api/tokens/:id/revoke` | any (agent token) | Revokes one of the caller's API tokens |
 | `GET /api/health` | none | `{ok:true}` |
 
 Errors: JSON `{error: CODE, message}` with proper HTTP status (400 validation, 401, 403, 404, 409 for state conflicts such as an illegal transition or `SESSION_LOCKED`).
@@ -1204,6 +1210,7 @@ Errors: JSON `{error: CODE, message}` with proper HTTP status (400 validation, 4
 - `quorum-leader add-agent --id alice-claude --owner alice` → prints a new random token (`qrm_` + 32 bytes base64url). Only the sha256 is stored.
 - `quorum-leader revoke-agent --id …`
 - `quorum-leader list-agents`
+- `quorum-leader add-token --id alice-claude [--label …]` → prints a new requester-scope API token for that agent
 
 ---
 
