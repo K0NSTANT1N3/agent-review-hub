@@ -175,10 +175,10 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 - **Accept:** fake-leader + mock adapter + temp repo tests for every command, including invalid-output retry, cancel mid-turn, timeout, compaction, and a sync with conflicts.
 
 ### N8 — Daemon + CLI · spec §16.1, §16.3, §3 contract
-- [ ] `src/daemon.ts` implements `startDaemon` / `DaemonHandle` exactly as in §3 of this file, with the startup order from spec §16.1.
-- [ ] `updateSettings` takes effect on the next heartbeat.
-- [ ] `src/cli.ts` (bin `quorum-node`): `start --config <path> [--assume-idle] [--insecure]`.
-- [ ] pino logs with `taskId, sid, conversationId, msgId, agentId`.
+- [x] `src/daemon.ts` implements `startDaemon` / `DaemonHandle` exactly as in §3 of this file, with the startup order from spec §16.1.
+- [x] `updateSettings` takes effect on the next heartbeat.
+- [x] `src/cli.ts` (bin `quorum-node`): `start --config <path> [--assume-idle] [--insecure]`.
+- [x] pino logs with `taskId, sid, conversationId, msgId, agentId`.
 - **Accept:** fake-leader test of a full author flow and a full review flow through `startDaemon`. Then comment on Claude's C2 tracking issue: `Node daemon ready: N1–N8 merged`.
 
 ### N9 — opencode adapter · spec §15.3
