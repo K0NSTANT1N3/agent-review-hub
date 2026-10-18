@@ -4,6 +4,7 @@ import { dayStart, dirsOf, overlap } from '../../src/core/budget.js';
 import { EventHandlers } from '../../src/core/handlers.js';
 import { LockManager } from '../../src/core/locks.js';
 import { Scheduler } from '../../src/core/scheduler.js';
+import { transition } from '../../src/core/state-machine.js';
 import { openDatabase, type LeaderDb, type TaskRow } from '../../src/db/repo.js';
 
 let db: LeaderDb;
@@ -39,6 +40,11 @@ function agent(id: string, patch: Partial<Parameters<typeof db.agents.insert>[0]
 
 function session(id: string, agentId: string, patch: Partial<Parameters<typeof db.sessions.insert>[0]> = {}) {
   return db.sessions.insert({ id, agent_id: agentId, state: 'idle', created_at: now, last_used_at: now, ...patch });
+}
+
+/** An idle session that the Leader opened with `profile`. */
+function openedSession(id: string, agentId: string, profile: 'author' | 'reviewer' | 'directive', patch: Partial<Parameters<typeof db.sessions.insert>[0]> = {}) {
+  return session(id, agentId, { profile, ...patch });
 }
 
 function task(patch: Partial<Parameters<typeof db.tasks.insert>[0]> = {}): TaskRow {
@@ -275,6 +281,18 @@ describe('liveness (§10.3–§10.5)', () => {
     expect(sent('author.start').at(-1)!.frame.cmd).toMatchObject({ continueExisting: true });
   });
 
+  it('session.opened for a task a human paused meanwhile leaves the session idle and does not throw', () => {
+    const t = task();
+    scheduler.schedule();
+    const open = sent('session.open')[0]!;
+    transition(db, t.id, 'PAUSED', { reason: 'human', actor: 'human:alice', at: now });
+
+    expect(() => handlers.handle('alice-claude', { type: 'session.opened', inReplyTo: open.frame.msgId, sid: open.frame.cmd.sid, ok: true })).not.toThrow();
+    expect(db.tasks.require(t.id)).toMatchObject({ state: 'PAUSED', pause_reason: 'human', paused_from_state: 'QUEUED', author_session_id: null });
+    expect(db.sessions.require(open.frame.cmd.sid)).toMatchObject({ state: 'idle', lock_ref: null, profile: 'author' });
+    expect(sent('author.start')).toEqual([]);
+  });
+
   it('own task paused by a rate limit resumes on the same session when the limit clears', () => {
     session('a', 'alice-claude', { profile: 'author' });
     const t = task({ state: 'AUTHORING', author_agent_id: 'alice-claude', author_session_id: 'a', branch: 'quorum/task-1' });
@@ -332,6 +350,30 @@ describe('sessions and directives', () => {
     scheduler.schedule();
     expect(db.sessions.require('a').state).toBe('closing');
     expect(sent('session.close')[0]!.frame.cmd.sid).toBe('a');
+  });
+
+  it('never reuses an idle session opened for another role', () => {
+    agent('bob-claude');
+    openedSession('b-review', 'bob-claude', 'reviewer');
+    db.directives.insert({ id: 'd1', requester: 'alice', agent_id: 'bob-claude', text: 'Where is X?', state: 'queued', created_at: now });
+    scheduler.schedule();
+    expect(db.directives.require('d1')).toMatchObject({ state: 'queued', session_id: null });
+    expect(sent('directive.run')).toHaveLength(0);
+    expect(sent('session.open').at(-1)!.frame.cmd).toMatchObject({ profile: 'directive' });
+  });
+
+  it('reviews on a reviewer session even when the agent has an idle author session on the same files', () => {
+    agent('bob-claude');
+    openedSession('b-author', 'bob-claude', 'author', { files: JSON.stringify(['src/auth/login.ts']), task_history: '[7]' });
+    const t = awaitingReview();
+    scheduler.schedule();
+    expect(db.tasks.require(t.id).state).toBe('AWAITING_REVIEWER');
+    expect(sent('review.start')).toHaveLength(0);
+    const open = sent('session.open').at(-1)!;
+    expect(open).toMatchObject({ agentId: 'bob-claude', frame: { cmd: { profile: 'reviewer' } } });
+    handlers.handle('bob-claude', { type: 'session.opened', inReplyTo: open.frame.msgId, sid: open.frame.cmd.sid, ok: true });
+    expect(db.tasks.require(t.id).state).toBe('IN_REVIEW');
+    expect(sent('review.start')[0]!.frame.cmd).toMatchObject({ sid: open.frame.cmd.sid });
   });
 
   it('runs a queued directive on an idle session with the requester name', () => {

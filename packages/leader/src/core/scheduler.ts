@@ -103,8 +103,9 @@ export class Scheduler {
       const task = this.db.tasks.get(request.task_id);
       if (task === undefined) return;
       if (profile.profile === 'author' && task.state === 'QUEUED') this.bindAuthor(task, session.id);
-      else if (profile.profile === 'author' && task.state === 'PAUSED') this.replaceAuthorSession(task, session.id);
+      else if (profile.profile === 'author' && this.awaitsAuthorSession(task, session.agent_id)) this.replaceAuthorSession(task, session.id);
       else if (profile.profile === 'reviewer' && task.state === 'AWAITING_REVIEWER') this.bindReviewer(task, session.id);
+      // Otherwise the task moved on (e.g. a human paused it) while the session opened: it stays idle for reuse.
     } else if (request.directive_id !== null) {
       const directive = this.db.directives.get(request.directive_id);
       if (directive?.state === 'queued') this.bindDirective(directive.id, session.id);
@@ -293,6 +294,7 @@ export class Scheduler {
       const current = this.db.tasks.require(task.id);
       if (current.author_agent_id === null || current.author_session_id === null) throw new Error('task has no author');
       const session = this.db.sessions.require(sid);
+      this.db.tasks.update(task.id, { turn_retries: 0 });
       const conversationId = randomUUID();
       this.db.conversations.insert({
         id: conversationId,
@@ -348,7 +350,6 @@ export class Scheduler {
   // Sessions — spec §9.4
   // ---------------------------------------------------------------------------
 
-  /** Best reusable idle session for these files, or null to open a new one. */
   /** An idle session of `profile` worth reusing, or null to open a new one. Nodes fix a session's profile at open. */
   private pickSession(agent: AgentRow, files: string[], profile: SessionProfile): string | null {
     const maxContext = this.config.scheduler.sessionReuseMaxContextPct * agent.context_window;
@@ -522,6 +523,12 @@ export class Scheduler {
       transition(this.db, taskId, from, { reason: 'author_available', actor: 'leader', at: this.now() });
       this.reissueAuthorCommand(taskId, from);
     });
+  }
+
+  /** A PAUSED task that handlePaused would resume on a new session of this agent (never one a human paused). */
+  private awaitsAuthorSession(task: TaskRow, agentId: string): boolean {
+    return task.state === 'PAUSED' && task.pause_reason !== 'human' && task.author_agent_id === agentId
+      && (task.paused_from_state === 'AUTHORING' || task.paused_from_state === 'SYNCING');
   }
 
   /** The author's session was lost: bind a new session on the same agent, drop the old pairing, resume (spec §10.4). */

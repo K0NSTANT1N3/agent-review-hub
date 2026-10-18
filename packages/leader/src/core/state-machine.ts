@@ -128,6 +128,25 @@ export function transition(db: LeaderDb, taskId: number, to: TaskState, options:
   });
 }
 
+/**
+ * MERGING → MERGE_QUEUED is a named, audited recovery operation (spec §8.2 clarifications, L9),
+ * deliberately not an ordinary state-machine edge: startup recovery and transient merge failures.
+ */
+export function requeueMerge(db: LeaderDb, taskId: number, options: Omit<TransitionOptions, 'pause'> & { at: number }): TaskRow {
+  return db.withTx(() => {
+    const task = db.tasks.require(taskId);
+    if (task.state !== 'MERGING') throw new IllegalTransitionError(taskId, task.state, 'MERGE_QUEUED');
+    const { at } = options;
+    const updated = db.tasks.update(taskId, { state: 'MERGE_QUEUED', state_entered_at: at, updated_at: at });
+    db.taskEvents.insert({
+      task_id: taskId, from_state: 'MERGING', to_state: 'MERGE_QUEUED',
+      reason: options.reason, actor: options.actor, data: JSON.stringify(options.data ?? {}), at,
+    });
+    if (db.mergeQueue.get(taskId) === undefined) db.mergeQueue.insert({ task_id: taskId, enqueued_at: at });
+    return updated;
+  });
+}
+
 export interface TaskWithAuthor extends TaskRow {
   authorAgent: AgentRow | undefined;
   authorSession: SessionRow | undefined;

@@ -234,6 +234,8 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
       const t = task(ctx.id);
       requireRequesterOrAdmin(ctx, t);
       if (isTerminalTaskState(t.state as TaskState)) throw new ApiHttpError('ILLEGAL_TRANSITION', 'task is finished');
+      // The worker may already be pushing to main; a cancel now could leave the code merged under a CANCELLED task.
+      if (t.state === 'MERGING') throw new ApiHttpError('CONFLICT', 'the task is being merged; wait for it to finish');
       handlers.finishTask(t.id, 'CANCELLED', 'cancelled_by_human', actor(ctx));
       scheduler.trigger();
       return taskView(db, db.tasks.require(t.id));
@@ -341,6 +343,10 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
           if (s.state === 'locked') throw new ApiHttpError('SESSION_LOCKED', 'session is locked to other work');
           if (s.state !== 'idle') throw new ApiHttpError('CONFLICT', `session is ${s.state}`);
           if (s.profile !== 'directive') throw new ApiHttpError('CONFLICT', `session is a ${s.profile ?? 'legacy'} session; directives need a directive session`);
+          // Targeting a session skips the scheduler's lending checks (spec §13 queued path), so restrict it to the owner.
+          if (db.agents.require(body.agentId).owner_name !== ctx.agent!.owner_name) {
+            throw new ApiHttpError('FORBIDDEN', "only the agent's owner can target a specific session; omit sessionId to queue the directive");
+          }
         }
         const id = randomUUID();
         db.directives.insert({ id, requester: ctx.agent!.owner_name, agent_id: body.agentId, text: body.text, state: 'queued', created_at: now() });

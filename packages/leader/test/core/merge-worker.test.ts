@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseLeaderConfig, type CmdFrame, type LeaderConfig } from '@quorum/protocol';
 import { EventHandlers } from '../../src/core/handlers.js';
 import { LockManager } from '../../src/core/locks.js';
-import { MergeWorker } from '../../src/core/merge-worker.js';
+import { MAX_RETRYABLE_MERGE_FAILURES, MERGE_RETRY_BASE_MS, MERGE_RETRY_MAX_MS, MergeWorker } from '../../src/core/merge-worker.js';
 import { openDatabase, type LeaderDb, type TaskRow } from '../../src/db/repo.js';
 import { LeaderGit } from '../../src/git/leader-git.js';
 
@@ -32,9 +32,15 @@ function commitTo(branch: string, files: Record<string, string>, from = 'origin/
   git(seed, 'push', '-f', 'origin', `${branch}:${branch}`);
 }
 
-function worker(beforePush?: () => Promise<void>) {
-  const leaderGit = new LeaderGit(config.repo);
+function worker(beforePush?: () => Promise<void>, leaderGit = new LeaderGit(config.repo)) {
   return new MergeWorker({ db, config, git: leaderGit, handlers, now: () => now, ...(beforePush ? { beforePush } : {}) });
+}
+
+/** Makes the remote unreachable (as during a network blip) until the returned function restores it. */
+function takeRemoteOffline(): () => void {
+  const away = `${bare}.offline`;
+  renameSync(bare, away);
+  return () => renameSync(away, bare);
 }
 
 function queuedTask(branch: string, patch: Partial<Parameters<typeof db.tasks.insert>[0]> = {}): TaskRow {
@@ -164,5 +170,66 @@ describe('merge worker (§14.3)', () => {
     await run(worker());
     const log = git(bare, 'log', '--format=%s', 'main').split('\n');
     expect(log.slice(0, 2)).toEqual([`Add feature (quorum #${late.id})`, `Early (quorum #${early.id})`]);
+  });
+
+  it('a transient fetch failure requeues with backoff, stops draining, then merges without escalating', async () => {
+    commitTo('quorum/task-1', { 'x.txt': '1\n' });
+    commitTo('quorum/task-2', { 'y.txt': '2\n' });
+    const first = queuedTask('quorum/task-1');
+    db.sessions.insert({ id: 'a2', agent_id: 'alice', state: 'idle', created_at: now, last_used_at: now });
+    const second = db.tasks.insert({
+      title: 'Second', description: 'd', requester_agent_id: 'alice', author_agent_id: 'alice', author_session_id: 'a2',
+      state: 'MERGE_QUEUED', branch: 'quorum/task-2', approved_at: now + 1, created_at: now, updated_at: now, state_entered_at: now,
+    });
+    db.mergeQueue.insert({ task_id: second.id, enqueued_at: now });
+    const w = worker();
+
+    const restore = takeRemoteOffline();
+    await run(w);
+    expect(db.tasks.require(first.id)).toMatchObject({ state: 'MERGE_QUEUED', escalation_reason: null });
+    expect(db.tasks.require(second.id).state).toBe('MERGE_QUEUED');
+    expect(db.taskEvents.find({ task_id: first.id }).map((e) => e.reason)).toEqual(['merge_started', 'merge_retry']);
+    expect(db.taskEvents.find({ task_id: second.id })).toEqual([]);
+    expect(db.mergeQueue.all().map((q) => q.task_id).sort()).toEqual([first.id, second.id]);
+
+    restore();
+    now += MERGE_RETRY_BASE_MS - 1;
+    await run(w);
+    expect(db.tasks.require(first.id).state).toBe('MERGE_QUEUED');
+
+    now += 1;
+    await run(w);
+    expect(db.tasks.require(first.id).state).toBe('MERGED');
+    expect(db.tasks.require(second.id).state).toBe('MERGED');
+    expect(git(bare, 'show', 'main:x.txt')).toBe('1');
+    expect(git(bare, 'show', 'main:y.txt')).toBe('2');
+  });
+
+  it('escalates after repeated retryable failures', async () => {
+    commitTo('quorum/task-1', { 'x.txt': '1\n' });
+    const t = queuedTask('quorum/task-1');
+    const w = worker();
+    takeRemoteOffline();
+    for (let i = 1; i < MAX_RETRYABLE_MERGE_FAILURES; i += 1) {
+      await run(w);
+      expect(db.tasks.require(t.id).state).toBe('MERGE_QUEUED');
+      now += MERGE_RETRY_MAX_MS;
+    }
+    await run(w);
+    expect(db.tasks.require(t.id)).toMatchObject({ state: 'ESCALATED', escalation_reason: 'merge_fetch_failed' });
+  });
+
+  it('a non-retryable error escalates at once and still leaves the clone clean', async () => {
+    commitTo('quorum/task-1', { 'a.txt': 'two\n' });
+    const t = queuedTask('quorum/task-1');
+    const leaderGit = new LeaderGit(config.repo);
+    leaderGit.projectConfig = () => Promise.reject(new Error('boom after the squash'));
+    await run(worker(undefined, leaderGit));
+
+    expect(db.tasks.require(t.id)).toMatchObject({ state: 'ESCALATED', escalation_reason: 'merge_error' });
+    const clone = config.repo.clonePath;
+    expect(git(clone, 'status', '--porcelain')).toBe('');
+    expect(git(clone, 'rev-parse', 'HEAD')).toBe(git(bare, 'rev-parse', 'main'));
+    expect(git(bare, 'show', 'main:a.txt')).toBe('one');
   });
 });

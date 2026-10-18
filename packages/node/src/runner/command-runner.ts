@@ -130,6 +130,7 @@ export class CommandRunner {
   private readonly cancelledWork = new Set<string>();
   private readonly cancelWorkByMessage = new Map<string, string | null>();
   private readonly cancelResultBySid = new Map<string, string>();
+  private stopping = false;
 
   constructor(private readonly options: CommandRunnerOptions) {}
 
@@ -166,7 +167,17 @@ export class CommandRunner {
     for (const active of this.activeTurns.values()) active.controller.abort();
   }
 
+  /**
+   * Begin daemon shutdown: abort active turns and never start another one. Queued turn commands
+   * stay 'received' in the journal, so startup recovery reports them as INTERRUPTED.
+   */
+  stop(): void {
+    this.stopping = true;
+    this.abortActiveTurns();
+  }
+
   private async runCommand(msgId: string, command: Command): Promise<string | null> {
+    if (this.stopping && isTurnCommand(command)) return null;
     try {
       this.options.journal.markRunning(msgId);
     } catch (error) {
@@ -869,6 +880,12 @@ export class CommandRunner {
   private reportError(error: unknown): void {
     this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
   }
+}
+
+function isTurnCommand(
+  command: Command,
+): command is Exclude<Command, { type: 'session.open' | 'session.close' | 'task.cancel' }> {
+  return command.type !== 'session.open' && command.type !== 'session.close' && command.type !== 'task.cancel';
 }
 
 function commandWorkKey(command: Command): string | null {
