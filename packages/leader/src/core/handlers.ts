@@ -210,7 +210,15 @@ export class EventHandlers {
   }
 
   private turnFailed(session: SessionRow, event: Extract<Event, { type: 'turn.failed' }>): void {
-    if (event.code === 'CANCELLED') return;
+    if (event.code === 'CANCELLED') {
+      // The Node confirms a cancel only after its turn stopped, i.e. after any push of the task branch. Run the
+      // finished-task cleanup (branch deletion) again so a push racing the first deletion can't leave a stale branch.
+      const task = event.taskId === undefined ? undefined : this.db.tasks.get(event.taskId);
+      if (task !== undefined && (task.state === 'CANCELLED' || task.state === 'FAILED')) {
+        this.db.afterCommit(() => this.options.onFinished?.(task));
+      }
+      return;
+    }
     const request = this.validReply(session, event.inReplyTo, ['author.start', 'author.revise', 'author.sync', 'review.start', 'review.rereview', 'directive.run']);
     if (request === undefined || session.state !== 'locked') return;
     const original = (JSON.parse(request.payload) as CmdFrame).cmd;
