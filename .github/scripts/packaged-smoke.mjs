@@ -33,7 +33,11 @@ const deps = {
   startLeader: (config) => startLeader(config),
   addAgent,
   startDaemon: (config, opts) => startDaemon(config, opts),
-  secrets: { encrypt: (plain) => `plain:${plain}`, decrypt: (stored) => stored.slice(6) },
+  secrets: {
+    encrypt: (plain) => `plain:${plain}`,
+    decrypt: (stored) => stored.slice(6),
+    isEncrypted: () => false,
+  },
 };
 const fixture = mkdtempSync(join(shotsDir, 'fixture-'));
 const host = new Services(hostDir, deps);
