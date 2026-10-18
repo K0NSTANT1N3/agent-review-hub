@@ -32,10 +32,10 @@ export function Setup() {
       .networkAddresses()
       .then((a) => {
         setAddresses(a);
-        const best = a.findIndex((o) => o.recommended);
-        setChoice(best);
-        // Restricting is the safe default for VPN addresses; a LAN-only team usually wants every interface.
-        setRestrict(best >= 0 && a[best]!.kind !== 'local' && a[best]!.kind !== 'public');
+        // Teammates on other computers need an https:// address (TLS proxy or tunnel); plain addresses only carry
+        // credentials on this computer, so the tunnel option is the default.
+        setChoice(-1);
+        setRestrict(false);
       });
   }, []);
 
@@ -113,33 +113,30 @@ export function Setup() {
           <div className="span-2 stack-sm">
             <strong>Address teammates use to reach this computer</strong>
             <span className="hint">
-              It goes into every join code. Remote connections require an https:// TLS proxy or tunnel URL; plain host addresses are limited to local connections.
+              It goes into every join code. Teammates on other computers need an https:// address, so their tokens travel
+              encrypted: a TLS proxy or a tunnel such as <code>cloudflared tunnel --url http://localhost:{port}</code>.
+              This applies on a LAN and on a VPN too.
             </span>
-            {addresses.map((o, i) => (
-              <label key={`${o.address}-${o.interfaceName}`} className="radio">
-                <input type="radio" checked={choice === i} onChange={() => setChoice(i)} />
-                <code>{o.address}</code>
-                <span className={`badge badge-${o.kind === 'local' || o.kind === 'public' ? 'muted' : 'info'}`}>{o.label}</span>
-                {o.recommended && <span className="tag">recommended</span>}
-              </label>
-            ))}
             <label className="radio">
               <input type="radio" checked={choice === -1} onChange={() => setChoice(-1)} />
-              Custom address or tunnel URL
+              https:// tunnel or TLS proxy URL
+              <span className="tag">needed for teammates</span>
               {choice === -1 && (
                 <input className="grow" value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="https://name.trycloudflare.com" />
               )}
             </label>
-            {addresses.every((o) => o.kind === 'local' || o.kind === 'public') && (
-              <div className="note note-warn">
-                No VPN found. That is fine if everyone is on this network. For teammates elsewhere, connect a VPN such as Tailscale (free) on
-                every computer, then come back — its address will appear here.
-              </div>
-            )}
+            {addresses.length > 0 && <span className="hint">Plain addresses (no TLS): only for an agent on this computer. Teammates cannot join through them.</span>}
+            {addresses.map((o, i) => (
+              <label key={`${o.address}-${o.interfaceName}`} className="radio">
+                <input type="radio" checked={choice === i} onChange={() => setChoice(i)} />
+                <code>{o.address}</code>
+                <span className="badge badge-muted">{o.label}</span>
+              </label>
+            ))}
             <label className="radio">
               <input type="checkbox" checked={restrict && choice >= 0} disabled={choice < 0} onChange={(e) => setRestrict(e.target.checked)} />
               Only accept connections through this address
-              <span className="hint">(e.g. only from your VPN — other networks you join can't even reach the Leader)</span>
+              <span className="hint">(other networks this computer joins cannot reach the Leader)</span>
             </label>
           </div>
         </div>

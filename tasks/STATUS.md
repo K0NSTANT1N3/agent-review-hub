@@ -42,6 +42,8 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 
 ## In v0.1.3
 
+> Superseded in v0.2.0: remote teammates now need an `https://` address; plain LAN/VPN join codes stop working (#81).
+
 * **Works with any VPN, no external server required.** Host a team lists the computer's addresses labelled by
   network (local, Tailscale incl. its stable MagicDNS name, ZeroTier, WireGuard, other VPN; container bridges hidden).
 * **Only accept connections through this address**: the Leader binds to the chosen VPN/LAN address only; the host's

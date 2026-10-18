@@ -59,9 +59,8 @@ Building it yourself instead: see [§7](#7-building-from-source).
 
 1. Open Quorum → **Host a team**.
 2. Fill in your name, the **team repository** URL and its main branch.
-3. **Leader port** (default 7420) and **the address teammates use to reach you** — see
-   [Connecting teammates](#connecting-teammates) below. On the same Wi-Fi/office network just keep the suggested
-   local address.
+3. **Leader port** (default 7420) and **the address teammates use to reach you**: an `https://` address. See
+   [Connecting teammates](#connecting-teammates) below.
 4. Choose your agent settings (see [§5](#5-agent-settings)) → **Start hosting**.
 5. **Team → Invite a teammate**: type their name → **Create join code** → send the code privately (it contains
    their secret token). Inviting the same name again replaces their token.
@@ -71,33 +70,49 @@ The host's computer must be on (with Quorum running) for the team to work. Its d
 
 ### Connecting teammates
 
-There is no automatic discovery: **join codes are the only way in**. A join code contains the host's address; a
-teammate's app connects to exactly that address. So the host's computer must be reachable at it. In **Host a team**
-Quorum lists every address this computer has, labelled by network, and you pick one:
+There is no automatic discovery: **join codes are the only way in**. A join code contains the host's address. A
+teammate's app connects to exactly that address.
 
-| Option in the list | Who can reach the host | Encrypted | What you need |
-|---|---|---|---|
-| **Local network** (e.g. `192.168.1.20`) | people on the same Wi-Fi / office | no (stays in your network) | nothing |
-| **Tailscale** (e.g. `ana-laptop.tail1234.ts.net`) — recommended for remote teams | everyone on your tailnet, from anywhere | yes | Tailscale on every computer (free plan) |
-| **ZeroTier / WireGuard / other VPN** | everyone on that VPN | yes (by the VPN) | the VPN on every computer |
-| **Custom address or tunnel URL** | depends | a `https://` tunnel URL → yes | e.g. `cloudflared tunnel --url http://localhost:7420` |
+**Teammates on other computers need an `https://` address.** The join code then uses `wss://`, and the teammate's
+token travels encrypted. Since v0.2.0, Quorum refuses to send a token to another computer over plain `ws://`, also on a
+LAN or a VPN. A plain address (for example `192.168.1.20` or a Tailscale IP) works only for an agent on the host's own
+computer.
 
-Quorum works with **any** VPN — it doesn't install or control one; it only shows the addresses your computer already
-has. If no VPN shows up, connect it and reopen Host a team.
+Use one of these to get an `https://` address:
 
-**Only accept connections through this address** (on by default for VPN addresses): the Leader listens on that
-address only, so other networks you're on (café, office Wi-Fi) can't reach it at all. If the VPN isn't connected when
-Quorum starts, the dashboard says so — connect it and click **Restart**.
+| Option | Who can reach the host | What you need |
+|---|---|---|
+| **Tailscale Serve** (e.g. `https://ana-laptop.tail1234.ts.net`) | everyone on your tailnet | Tailscale on every computer (free plan), HTTPS certificates turned on for the tailnet |
+| **Tunnel URL** (e.g. `https://name.trycloudflare.com`) | anyone with the join code | `cloudflared tunnel --url http://localhost:7420`, or ngrok |
+| **Your own TLS proxy** (e.g. `https://quorum.example.com`) | depends on your network | a reverse proxy with a certificate in front of the Leader port |
 
-#### Setting up Tailscale (free)
+In **Host a team**, select **https:// tunnel or TLS proxy URL** and type the address.
 
-1. **Host:** install [Tailscale](https://tailscale.com/download), sign in (Google / Microsoft / GitHub / Apple account).
-2. **Host:** in the Tailscale admin page, **share** your computer with each teammate (or invite them to your tailnet).
-3. **Teammates:** install Tailscale, sign in, accept the share.
-4. **Host:** open Quorum → **Host a team** → pick the Tailscale name (it's pre-selected) → Start hosting → invite
-   teammates as usual. The name never changes, so join codes keep working.
+**Only accept connections through this address** applies to plain addresses only: the Leader then listens on that
+address and other networks cannot reach it.
 
-If a teammate can't connect, their dashboard explains which network the team uses and what to check.
+#### Setting up Tailscale Serve (free)
+
+1. **Host:** install [Tailscale](https://tailscale.com/download) and sign in.
+2. **Host:** in the Tailscale admin page, turn on **HTTPS certificates** (DNS settings). Then **share** your computer
+   with each teammate, or invite them to your tailnet.
+3. **Teammates:** install Tailscale, sign in and accept the share.
+4. **Host:** run `tailscale serve --bg 7420`. Tailscale shows an address such as `https://ana-laptop.tail1234.ts.net`.
+5. **Host:** open Quorum → **Host a team** → select **https:// tunnel or TLS proxy URL** → type that address →
+   **Start hosting** → invite teammates. The name does not change, so the join codes stay valid.
+
+#### Upgrade from v0.1.x
+
+Join codes from v0.1.x that use a plain LAN or VPN address stop working in v0.2.0: the teammate's dashboard says that
+the join code is not encrypted.
+
+1. **Host:** set up an `https://` address (see above).
+2. **Host:** **Settings → Disconnect**, then **Host a team** again with the `https://` address. The team data stays in
+   the app data folder.
+3. **Host:** **Team → Invite a teammate** for each teammate, and send the new join codes.
+4. **Teammates:** **Settings → Disconnect**, then **Join a team** with the new join code.
+
+If a teammate cannot connect, their dashboard shows what to check.
 
 ## 4. Join a team (everyone else)
 
@@ -240,9 +255,9 @@ folder: `QUORUM_USER_DATA=/tmp/quorum-2 ./Quorum.AppImage`.
 * Agent-to-agent text is treated as untrusted data; tool permissions are enforced in code, not just in prompts.
 * The author Bash allow-list is not a sandbox: test and script commands run code that the author agent can edit.
   See [§5](#5-agent-settings).
-* The Leader itself speaks plain HTTP/WebSocket. That is fine on a LAN or VPN; for teammates on the internet use an
-  HTTPS tunnel (cloudflared/ngrok), a TLS reverse proxy, or `tls.certFile`/`tls.keyFile` in headless mode, so
-  connections use `wss://`. Avoid raw port forwarding.
+* The Leader itself speaks plain HTTP/WebSocket. The desktop app sends tokens to another computer only over TLS, so
+  teammates need an HTTPS tunnel (cloudflared/ngrok), Tailscale Serve, a TLS reverse proxy, or `tls.certFile`/`tls.keyFile`
+  in headless mode, so connections use `wss://`. Avoid raw port forwarding.
 
 ## 10. Run on a VPS
 

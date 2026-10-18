@@ -1,6 +1,6 @@
 # Architecture
 
-How Quorum is built, as of v0.1.3. The normative design (every rule, limit and edge case) is
+How Quorum is built, as of v0.2.0. The normative design (every rule, limit and edge case) is
 [`implementation-spec.md`](implementation-spec.md); this page is the map. User-facing setup is in [`INSTALL.md`](INSTALL.md).
 
 ## The idea in one paragraph

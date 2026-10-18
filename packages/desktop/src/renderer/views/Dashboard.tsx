@@ -185,12 +185,16 @@ const HINTS: Record<string, string> = {
   vpn: 'This team is reached through a VPN. Make sure you are connected to it.',
   local: 'The host is on a local network. You must be on the same Wi-Fi / office network as the host.',
   tunnel: 'The host shares the Leader through a tunnel URL. If the host restarted the tunnel, its address changed — ask for a new join code.',
-  public: 'Check that the host\'s app is running and their router forwards the Leader port.',
+  public: 'Check that the host\'s app and its TLS proxy are running.',
   loopback: 'The Leader runs on this computer; it may still be starting. Try Restart if this persists.',
 };
 
+/** Join codes from before 0.2 may point at a plain ws:// address, which Quorum now refuses for remote Leaders. */
+const NEEDS_TLS = 'This team\'s join code uses an unencrypted address. Quorum sends tokens to another computer only over TLS. Ask the host to set an https:// tunnel or TLS proxy address and send you a new join code.';
+
 function ConnectionHint({ state }: { state: AppState }) {
   if (state.leaderNetwork === null) return null;
+  if (state.mode === 'join' && !state.encrypted && state.leaderNetwork !== 'loopback') return <div className="note note-warn small">{NEEDS_TLS}</div>;
   const hint = state.mode === 'host' && state.leaderNetwork !== 'loopback' ? HINTS.loopback : HINTS[state.leaderNetwork];
   return <div className="note note-warn small">{hint}</div>;
 }
