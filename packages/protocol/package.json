@@ -1,7 +1,26 @@
 {
   "name": "@quorum/protocol",
   "version": "0.1.0",
-  "private": true,
+  "description": "Quorum wire protocol: shared schemas, config parsing and join codes",
+  "license": "MIT",
+  "keywords": [
+    "quorum",
+    "code-review",
+    "coding-agents",
+    "claude-code"
+  ],
+  "homepage": "https://github.com/K0NSTANT1N3/agent-review-hub#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/K0NSTANT1N3/agent-review-hub.git",
+    "directory": "packages/protocol"
+  },
+  "bugs": {
+    "url": "https://github.com/K0NSTANT1N3/agent-review-hub/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -15,14 +34,32 @@
       "default": "./dist/*.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "prepack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm run build"
   },
   "dependencies": {
     "zod": "^4.6.7"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./*": {
+        "types": "./dist/*.d.ts",
+        "default": "./dist/*.js"
+      }
+    }
   }
 }

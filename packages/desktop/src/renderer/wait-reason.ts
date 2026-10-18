@@ -17,6 +17,7 @@ const BLOCKER_LABEL: Record<WaitBlocker, string> = {
   paused: 'paused',
   rate_limited: 'rate-limited',
   busy: 'all sessions busy',
+  review_capacity: 'reserving capacity for reviews',
   session_backoff: 'session start failed, retrying',
   not_lending: 'not lending now',
   budget_exhausted: "today's lending budget used",
@@ -70,6 +71,8 @@ function describe(w: TaskWaitReason, me: string | null | undefined): WaitText {
         action: null,
         tone: 'muted',
       };
+    case 'review_capacity':
+      return { short: 'Waiting for review capacity', detail: 'The Leader is keeping sessions available to review work already in progress. Authoring starts when that capacity frees up.', action: null, tone: 'muted' };
     case 'session_backoff':
       return { short: 'Retrying session start', detail: `Opening a session failed recently. The Leader retries${until || ' shortly'}.`, action: 'If this repeats, check the agent’s logs.', tone: 'warn' };
     case 'rate_limited':

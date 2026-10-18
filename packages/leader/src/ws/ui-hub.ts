@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type WebSocket from 'ws';
-import type { LeaderConfig, UiEvent } from '@quorum/protocol';
+import type { LeaderConfig, QueueEntryView, TeamActivityResponse, UiEvent } from '@quorum/protocol';
 import { authenticate } from '../api/routes.js';
 import { agentView, directiveView, taskEventView, taskView, teamActivity, type WaitExplainer } from '../api/views.js';
 import type { LeaderDb } from '../db/repo.js';
@@ -24,6 +24,8 @@ export class UiHub {
     private readonly db: LeaderDb,
     private readonly config: LeaderConfig,
     private readonly now: () => number = Date.now,
+    /** Scheduler queue explanation, pushed with team activity. */
+    private readonly queue: () => QueueEntryView[] = () => [],
     private readonly explain?: WaitExplainer,
   ) {}
 
@@ -63,7 +65,7 @@ export class UiHub {
     for (const d of this.db.directives.all()) this.directiveHashes.set(d.id, JSON.stringify(d));
     this.waitHashes.clear();
     for (const t of this.db.tasks.all()) this.waitHashes.set(t.id, JSON.stringify(this.explain?.(t) ?? null));
-    this.activityHash = JSON.stringify(teamActivity(this.db, this.now()));
+    this.activityHash = JSON.stringify(this.activity());
   }
 
   private poll(): void {
@@ -94,15 +96,19 @@ export class UiHub {
         this.directiveHashes.set(d.id, hash);
         this.broadcast({ type: 'directive.updated', data: directiveView(d) });
       }
-      const activities = teamActivity(this.db, this.now());
-      const activityHash = JSON.stringify(activities);
+      const activity = this.activity();
+      const activityHash = JSON.stringify(activity);
       if (activityHash !== this.activityHash) {
         this.activityHash = activityHash;
-        this.broadcast({ type: 'team.activity.updated', data: { activities } });
+        this.broadcast({ type: 'team.activity.updated', data: activity });
       }
     } catch {
       // A transient DB error must not kill the poller; the next tick retries.
     }
+  }
+
+  private activity(): TeamActivityResponse {
+    return { activities: teamActivity(this.db, this.now()), queue: this.queue() };
   }
 
   private broadcast(event: UiEvent): void {

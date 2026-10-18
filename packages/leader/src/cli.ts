@@ -4,11 +4,14 @@ import { parseArgs } from 'node:util';
 import pino from 'pino';
 import { parseLeaderConfig, type LeaderConfig } from '@quorum/protocol';
 import { addAgent, addApiToken, listAgents, revokeAgent, startLeader } from './index.js';
+import { createInvite } from './invite.js';
 
 const USAGE = `quorum-leader <command> --config <quorum.leader.json> [options]
 
 Commands:
   start                          run the Leader
+  invite --name <owner> [--public-host <host or https:// tunnel URL>] [--port <n>] [--id <agent id>] [--rotate]
+                                 register a teammate's agent; prints a join code for the desktop app or quorum-node join
   add-agent --id <id> --owner <name>   register an agent (or rotate its token); prints the token once
   revoke-agent --id <id>         revoke an agent's token
   list-agents                    list registered agents
@@ -23,7 +26,16 @@ async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   const { values } = parseArgs({
     args: rest,
-    options: { config: { type: 'string' }, id: { type: 'string' }, owner: { type: 'string' }, label: { type: 'string' } },
+    options: {
+      config: { type: 'string' },
+      id: { type: 'string' },
+      owner: { type: 'string' },
+      label: { type: 'string' },
+      name: { type: 'string' },
+      'public-host': { type: 'string' },
+      port: { type: 'string' },
+      rotate: { type: 'boolean' },
+    },
     allowPositionals: false,
   });
   switch (command) {
@@ -42,6 +54,21 @@ async function main(): Promise<void> {
       if (values.id === undefined || values.owner === undefined) throw new Error('--id and --owner are required');
       const { token } = await addAgent(config.dbPath, { id: values.id, owner: values.owner });
       process.stdout.write(`${token}\n`);
+      return;
+    }
+    case 'invite': {
+      const config = loadConfig(values.config);
+      if (values.name === undefined) throw new Error('--name is required');
+      const invite = await createInvite(config, {
+        name: values.name,
+        ...(values.id !== undefined ? { id: values.id } : {}),
+        ...(values['public-host'] !== undefined ? { publicHost: values['public-host'] } : {}),
+        ...(values.port !== undefined ? { port: Number(values.port) } : {}),
+        ...(values.rotate === true ? { rotate: true } : {}),
+      });
+      for (const warning of invite.warnings) process.stderr.write(`Warning: ${warning}\n`);
+      process.stderr.write(`Join code for ${invite.agentId} (Leader ${invite.leaderUrl}). It holds a secret token: send it privately.\n`);
+      process.stdout.write(`${invite.joinCode}\n`);
       return;
     }
     case 'revoke-agent': {

@@ -76,6 +76,8 @@ export const TaskWaitCodeSchema = z.enum([
   'no_agent_online',
   /** Every online candidate has all its session slots in use. */
   'agents_busy',
+  /** Author admission is waiting so in-flight tasks retain enough reviewer capacity. */
+  'review_capacity',
   /** Opening a session failed recently on the remaining candidates; the Leader retries after a back-off. */
   'session_backoff',
   'rate_limited',
@@ -91,7 +93,7 @@ export const TaskWaitCodeSchema = z.enum([
 export type TaskWaitCode = z.infer<typeof TaskWaitCodeSchema>;
 
 /** Why one candidate agent cannot take the task now. */
-export const WaitBlockerSchema = z.enum(['offline', 'paused', 'rate_limited', 'busy', 'session_backoff', 'not_lending', 'budget_exhausted', 'unknown']);
+export const WaitBlockerSchema = z.enum(['offline', 'paused', 'rate_limited', 'busy', 'review_capacity', 'session_backoff', 'not_lending', 'budget_exhausted', 'unknown']);
 export type WaitBlocker = z.infer<typeof WaitBlockerSchema>;
 
 export const WaitNextStepSchema = z.enum(['wait', 'connect_agent', 'resume_agent', 'adjust_settings', 'human_action']);
@@ -244,8 +246,11 @@ export const TeamActivityViewSchema = z.object({
   sessionState: SessionStateSchema.nullable(),
   role: z.enum(['author', 'reviewer', 'directive', 'idle']),
   activityState: z.enum(['working', 'waiting', 'paused', 'offline', 'idle']),
-  waitingOn: z.enum(['agent', 'human', 'scheduler']).nullable(),
+  waitingOn: z.enum(['agent', 'human', 'scheduler', 'rate_limit']).nullable(),
   waitingReason: z.string().nullable(),
+  /** Who this row waits for: the paired agent's owner (waitingOn 'agent') or the requester (waitingOn 'human'). */
+  waitingForName: z.string().nullable().default(null),
+  rateLimitedUntil: nullableTs.default(null),
   taskId: z.number().int().nullable(),
   taskTitle: z.string().nullable(),
   pairedAgentId: z.string().nullable(),
@@ -257,6 +262,34 @@ export const TeamActivityViewSchema = z.object({
 });
 export type TeamActivityView = z.infer<typeof TeamActivityViewSchema>;
 
+/** Why one agent cannot take a queued task right now (null = it could). */
+export const QueueCandidateViewSchema = z.object({
+  agentId: z.string(),
+  ownerName: z.string(),
+  blocker: z.string().nullable(),
+});
+export type QueueCandidateView = z.infer<typeof QueueCandidateViewSchema>;
+
+/**
+ * A task that waits for the scheduler, the merge worker or a human. `position` is the pickup order
+ * (reviewers first, then authors, then merges, as one scheduler pass runs them); null for tasks that wait on a human.
+ */
+export const QueueEntryViewSchema = z.object({
+  taskId: z.number().int(),
+  title: z.string(),
+  state: TaskStateSchema,
+  position: z.number().int().positive().nullable(),
+  needs: z.enum(['author', 'reviewer', 'merge', 'human']),
+  requesterOwner: z.string(),
+  authorOwnerName: z.string().nullable(),
+  priority: z.number().int(),
+  waitingSince: ts,
+  waitingOn: z.enum(['agent', 'human', 'scheduler', 'rate_limit', 'merge']),
+  reason: z.string(),
+  candidates: z.array(QueueCandidateViewSchema),
+});
+export type QueueEntryView = z.infer<typeof QueueEntryViewSchema>;
+
 // ---------------------------------------------------------------------------
 // Requests / responses
 // ---------------------------------------------------------------------------
@@ -264,7 +297,11 @@ export type TeamActivityView = z.infer<typeof TeamActivityViewSchema>;
 export const ListAgentsResponseSchema = z.object({ agents: z.array(AgentViewSchema) });
 export type ListAgentsResponse = z.infer<typeof ListAgentsResponseSchema>;
 
-export const TeamActivityResponseSchema = z.object({ activities: z.array(TeamActivityViewSchema) });
+export const TeamActivityResponseSchema = z.object({
+  activities: z.array(TeamActivityViewSchema),
+  /** Older Leaders omit the queue. */
+  queue: z.array(QueueEntryViewSchema).default([]),
+});
 export type TeamActivityResponse = z.infer<typeof TeamActivityResponseSchema>;
 
 export const ListSessionsQuerySchema = z.object({ agentId: z.string().optional() });

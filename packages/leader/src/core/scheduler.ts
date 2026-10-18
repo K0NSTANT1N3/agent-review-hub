@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CmdFrame, LeaderConfig, SessionOpenedEvent, SessionProfile, TaskState, TaskWaitCode, TaskWaitReason, WaitBlocker, WaitNextStep } from '@quorum/protocol';
+import type { CmdFrame, LeaderConfig, QueueEntryView, SessionOpenedEvent, SessionProfile, TaskState, TaskWaitCode, TaskWaitReason, WaitBlocker, WaitNextStep } from '@quorum/protocol';
 import type { AgentRow, LeaderDb, MessageRow, SessionRow, TaskRow } from '../db/repo.js';
 import { silentLogger, type Logger } from '../logging.js';
 import { budgetRemaining, dayStart, estimateAuthor, estimateReview, overlap, taskFiles } from './budget.js';
@@ -35,6 +35,7 @@ interface Candidate {
 
 /** Headline order when every candidate is blocked: the blocker most likely to clear soonest wins. */
 const HEADLINE: [WaitBlocker, TaskWaitCode][] = [
+  ['review_capacity', 'review_capacity'],
   ['busy', 'agents_busy'],
   ['session_backoff', 'session_backoff'],
   ['rate_limited', 'rate_limited'],
@@ -48,6 +49,7 @@ const NEXT_STEP: Record<TaskWaitCode, WaitNextStep> = {
   assigning: 'wait',
   no_agent_online: 'connect_agent',
   agents_busy: 'wait',
+  review_capacity: 'wait',
   session_backoff: 'wait',
   rate_limited: 'wait',
   budget_exhausted: 'adjust_settings',
@@ -108,8 +110,8 @@ export class Scheduler {
   /** One full pass — spec §9 steps 1–5. Each item runs in its own savepoint so one failure doesn't block the rest. */
   schedule(): void {
     this.expire();
-    for (const task of this.byPriority(['QUEUED'])) this.guard(`assign author ${task.id}`, () => this.assignAuthor(task.id));
     for (const task of this.byPriority(['AWAITING_REVIEWER'])) this.guard(`assign reviewer ${task.id}`, () => this.assignReviewer(task.id));
+    for (const task of this.byPriority(['QUEUED'])) this.guard(`assign author ${task.id}`, () => this.assignAuthor(task.id));
     for (const d of this.db.directives.find({ state: 'queued' }).sort((a, b) => a.created_at - b.created_at)) {
       this.guard(`directive ${d.id}`, () => this.runDirective(d.id));
     }
@@ -184,10 +186,15 @@ export class Scheduler {
     if (this.isRateLimited(a)) return 'rate_limited';
     if (!this.hasSlot(a)) return 'busy';
     if (this.backedOff(a.id)) return 'session_backoff';
-    if (own) return null;
+    if (own) return role === 'author' && !this.canAdmitAuthor(task, a.id) ? 'review_capacity' : null;
     if (!this.mayLend(a)) return 'not_lending';
     if (budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < this.estimate(a, task, role)) return 'budget_exhausted';
+    if (role === 'author' && !this.canAdmitAuthor(task, a.id)) return 'review_capacity';
     return null;
+  }
+
+  private ownerOf(agentId: string): string {
+    return this.db.agents.require(agentId).owner_name;
   }
 
   private estimate(a: AgentRow, task: TaskRow, role: Role): number {
@@ -301,15 +308,15 @@ export class Scheduler {
   private assignReviewer(taskId: number): void {
     const task = this.db.tasks.require(taskId);
     if (task.state !== 'AWAITING_REVIEWER' || this.hasPendingOpen(task.id) || task.author_agent_id === null) return;
-    const candidates: Candidate[] = [];
-    for (const { agent: a, own } of this.candidatesFor(task, 'reviewer')) {
-      if (this.blocker(a, task, 'reviewer', own) !== null) continue;
-      candidates.push({ agent: a, score: this.score(a, task, 'reviewer', own, this.estimate(a, task, 'reviewer')) });
-    }
+    const candidates = this.eligibleReviewers(task, task.author_agent_id).filter(({ agent }) => this.hasSlot(agent));
     // Agents whose earlier review of this task was abandoned (crash, invalid output, rate limit, …) are a last resort.
     const dropped = new Set(this.db.conversations.find({ task_id: task.id, state: 'abandoned' }).map((c) => c.reviewer_agent_id));
     const fresh = candidates.filter((c) => !dropped.has(c.agent.id));
-    const chosen = this.best(fresh.length > 0 ? fresh : candidates);
+    const ranked = (fresh.length > 0 ? fresh : candidates).sort(
+      (a, b) => b.score - a.score || (a.agent.last_assigned_at ?? -1) - (b.agent.last_assigned_at ?? -1) || a.agent.id.localeCompare(b.agent.id),
+    );
+    const remaining = this.pendingReviewDemands().filter((demand) => demand.task.id !== task.id);
+    const chosen = ranked.find(({ agent }) => this.canMatchReviewDemands(remaining, agent.id)) ?? ranked[0];
     if (chosen === undefined) {
       const waited = this.now() - task.state_entered_at;
       const key = `no_reviewer:${task.id}:${task.state_entered_at}`;
@@ -319,9 +326,84 @@ export class Scheduler {
       }
       return;
     }
-    const sid = this.pickSession(chosen, taskFiles(task), 'reviewer');
+    const sid = this.pickSession(chosen.agent, taskFiles(task), 'reviewer');
     if (sid !== null) this.bindReviewer(task, sid);
-    else this.openSession(chosen.id, 'reviewer', { taskId: task.id });
+    else this.openSession(chosen.agent.id, 'reviewer', { taskId: task.id });
+  }
+
+  /** Agents eligible to review this task, without filtering out agents that are currently full. */
+  private eligibleReviewers(task: TaskRow, authorAgentId: string): Candidate[] {
+    const requesterOwner = this.ownerOf(task.requester_agent_id);
+    const candidates: Candidate[] = [];
+    for (const agent of this.db.agents.all()) {
+      if (agent.id === authorAgentId || !this.isOnline(agent) || this.isRateLimited(agent) || this.backedOff(agent.id)) continue;
+      const own = agent.owner_name === requesterOwner;
+      const estimate = estimateReview(agent, task, this.config.costEstimate);
+      if (own ? agent.paused !== 0 : !this.mayLend(agent) || budgetRemaining(this.db, agent, this.now(), this.config.dayBoundaryTz) < estimate) continue;
+      candidates.push({ agent, score: this.score(agent, task, 'reviewer', own, estimate) });
+    }
+    return candidates;
+  }
+
+  /**
+   * Keep enough free reviewer slots to match every task already in the author/review queue, plus
+   * the author we are about to admit. Each author lock lasts through review, so assigning authors
+   * without this check can consume every slot before any review starts.
+   */
+  private canAdmitAuthor(task: TaskRow, authorAgentId: string): boolean {
+    return this.canMatchReviewDemands([...this.pendingReviewDemands(), { task, authorAgentId }], authorAgentId);
+  }
+
+  private pendingReviewDemands(): { task: TaskRow; authorAgentId: string }[] {
+    return this.db.tasks.all().flatMap((task) => {
+      const needsReviewer = ['AUTHORING', 'SYNCING', 'AWAITING_REVIEWER'].includes(task.state) ||
+        (task.state === 'PAUSED' && ['AUTHORING', 'SYNCING', 'AWAITING_REVIEWER'].includes(task.paused_from_state ?? ''));
+      return needsReviewer && task.author_agent_id !== null ? [{ task, authorAgentId: task.author_agent_id }] : [];
+    });
+  }
+
+  /** Capacity-aware bipartite matching prevents a flexible task from taking the sole reviewer slot another task needs. */
+  private canMatchReviewDemands(
+    demands: { task: TaskRow; authorAgentId: string }[],
+    consumeAgentId?: string,
+  ): boolean {
+    const eligible = demands
+      .map(({ task, authorAgentId }) => ({
+        task,
+        reviewers: this.eligibleReviewers(task, authorAgentId).map(({ agent }) => agent.id),
+      }))
+      // Tasks with no eligible reviewer cannot be helped by reserving capacity; keep their existing
+      // behavior (author, then surface the no-reviewer attention state).
+      .filter(({ reviewers }) => reviewers.length > 0)
+      .sort((a, b) => a.reviewers.length - b.reviewers.length);
+    if (eligible.length === 0) return true;
+
+    const slots: string[] = [];
+    for (const agent of this.db.agents.all()) {
+      // Reviewer sessions are temporary demand on a slot: once that review finishes, the slot
+      // becomes available to the next task. Author/directive locks are the work that can starve
+      // reviews if every session is consumed, so only those locks reduce projected capacity.
+      const occupied = this.db.sessions.find({ agent_id: agent.id, state: 'locked' })
+        .filter((session) => session.lock_role !== 'reviewer').length +
+        this.db.sessions.find({ agent_id: agent.id, state: 'opening' })
+          .filter((session) => session.profile !== 'reviewer').length;
+      const free = Math.max(0, agent.max_sessions - occupied - (agent.id === consumeAgentId ? 1 : 0));
+      for (let i = 0; i < free; i += 1) slots.push(agent.id);
+    }
+    const assigned = new Array<number>(slots.length).fill(-1);
+    const match = (demandIndex: number, visited: Set<number>): boolean => {
+      const reviewers = new Set(eligible[demandIndex]!.reviewers);
+      for (let slot = 0; slot < slots.length; slot += 1) {
+        if (!reviewers.has(slots[slot]!) || visited.has(slot)) continue;
+        visited.add(slot);
+        if (assigned[slot] === -1 || match(assigned[slot]!, visited)) {
+          assigned[slot] = demandIndex;
+          return true;
+        }
+      }
+      return false;
+    };
+    return eligible.every((_, index) => match(index, new Set()));
   }
 
   /** AWAITING_REVIEWER → IN_REVIEW with a new conversation (T7). */
@@ -662,6 +744,127 @@ export class Scheduler {
       if (reviewer?.state === 'locked' && reviewer.lock_ref === String(taskId)) this.options.locks.releaseSession(reviewer.id, 'idle');
       this.log.info({ taskId, conversationId: c.id, reason }, 'conversation abandoned');
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Queue explanation (read-only) — mirrors assignAuthor / assignReviewer / MergeWorker.next
+  // ---------------------------------------------------------------------------
+
+  /** Tasks waiting for an author, a reviewer, a merge or a human, in pickup order, with why each still waits. */
+  queueSnapshot(): QueueEntryView[] {
+    const entries: QueueEntryView[] = [];
+    let position = 0;
+    for (const task of this.byPriority(['AWAITING_REVIEWER'])) entries.push(this.explainAssignment(task, 'reviewer', ++position));
+    for (const task of this.byPriority(['QUEUED'])) entries.push(this.explainAssignment(task, 'author', ++position));
+    const merging = this.db.tasks.all().find((t) => t.state === 'MERGING');
+    const merges = this.db.tasks.all()
+      .filter((t) => t.state === 'MERGE_QUEUED')
+      .sort((a, b) => (a.approved_at ?? 0) - (b.approved_at ?? 0) || a.id - b.id);
+    merges.forEach((task, index) => {
+      const ahead = index + (merging === undefined ? 0 : 1);
+      entries.push({
+        ...this.entryBase(task, ++position),
+        needs: 'merge',
+        waitingOn: 'merge',
+        reason: ahead === 0 ? 'Next to merge' : index === 0 && merging !== undefined ? `Merging #${merging.id} first` : `${ahead} merges ahead`,
+      });
+    });
+    const human: QueueEntryView[] = [];
+    for (const task of this.db.tasks.all()) {
+      if (task.state === 'ESCALATED') {
+        human.push({ ...this.entryBase(task, null), needs: 'human', waitingOn: 'human', reason: task.escalation_reason ?? 'Needs a human decision' });
+      } else if (task.state === 'PAUSED' && task.pause_reason === 'human') {
+        human.push({ ...this.entryBase(task, null), needs: 'human', waitingOn: 'human', reason: 'Paused by a human' });
+      } else if (task.state === 'PAUSED') {
+        const author = task.author_agent_id === null ? undefined : this.db.agents.get(task.author_agent_id);
+        const blocker = author === undefined ? null : this.agentBlocker(author, task, 'author', true);
+        const rest = author === undefined ? '' : `; resumes when ${author.owner_name}'s agent is back${blocker === null ? '' : ` (${blocker})`}`;
+        human.push({
+          ...this.entryBase(task, null),
+          needs: 'author',
+          waitingOn: author !== undefined && this.isRateLimited(author) ? 'rate_limit' : 'agent',
+          reason: `Paused: ${(task.pause_reason ?? 'unknown').replaceAll('_', ' ')}${rest}`,
+          candidates: author === undefined ? [] : [{ agentId: author.id, ownerName: author.owner_name, blocker }],
+        });
+      }
+    }
+    return [...entries, ...human.sort((a, b) => a.waitingSince - b.waitingSince || a.taskId - b.taskId)];
+  }
+
+  private entryBase(task: TaskRow, position: number | null): Omit<QueueEntryView, 'needs' | 'waitingOn' | 'reason'> {
+    return {
+      taskId: task.id,
+      title: task.title,
+      state: task.state as TaskState,
+      position,
+      requesterOwner: this.db.agents.get(task.requester_agent_id)?.owner_name ?? task.requester_agent_id,
+      authorOwnerName: task.author_agent_id === null ? null : this.db.agents.get(task.author_agent_id)?.owner_name ?? task.author_agent_id,
+      priority: task.priority,
+      waitingSince: task.state_entered_at,
+      candidates: [],
+    };
+  }
+
+  private explainAssignment(task: TaskRow, role: Role, position: number): QueueEntryView {
+    const base = this.entryBase(task, position);
+    const opening = this.pendingOpenAgent(task.id);
+    if (opening !== undefined) {
+      return { ...base, needs: role, waitingOn: 'scheduler', reason: `Opening a ${role} session on ${opening.owner_name}'s agent` };
+    }
+    if (role === 'reviewer' && task.author_agent_id === null) {
+      return { ...base, needs: role, waitingOn: 'scheduler', reason: 'Waiting for its author' };
+    }
+    const requester = this.db.agents.get(task.requester_agent_id);
+    const pool = role === 'author' && task.mode === 'own' ? (requester === undefined ? [] : [requester]) : this.db.agents.all().filter((a) => a.revoked === 0);
+    const candidates = pool.map((a) => ({
+      agentId: a.id,
+      ownerName: a.owner_name,
+      blocker: this.agentBlocker(a, task, role, a.owner_name === requester?.owner_name),
+    }));
+    const blocked = candidates.filter((c) => c.blocker !== null);
+    if (blocked.length < candidates.length) {
+      return { ...base, needs: role, waitingOn: 'scheduler', reason: 'Being assigned on the next scheduler pass', candidates };
+    }
+    const others = blocked.filter((c) => c.blocker !== `wrote #${task.id}`);
+    const waitingOn = others.length > 0 && others.every((c) => c.blocker === 'rate-limited') ? 'rate_limit' : 'agent';
+    if (role === 'author' && task.mode === 'own') {
+      const own = blocked[0];
+      const reason = own === undefined ? 'Requester agent is unknown' : `Own-only task: ${own.ownerName}'s agent is ${own.blocker}`;
+      return { ...base, needs: role, waitingOn, reason, candidates };
+    }
+    const summary = others.slice(0, 3).map((c) => `${c.ownerName} ${c.blocker}`).join(', ');
+    const more = others.length > 3 ? `, +${others.length - 3} more` : '';
+    return {
+      ...base,
+      needs: role,
+      waitingOn,
+      reason: others.length === 0 ? `No other agent can ${role === 'author' ? 'write' : 'review'} it` : `No free ${role}: ${summary}${more}`,
+      candidates,
+    };
+  }
+
+  /** Why `a` is not eligible for `role` on `task` right now, as a short phrase; null when it is eligible. */
+  private agentBlocker(a: AgentRow, task: TaskRow, role: Role, own: boolean): string | null {
+    if (role === 'reviewer' && a.id === task.author_agent_id) return `wrote #${task.id}`;
+    if (!this.isOnline(a)) return 'offline';
+    if (this.isRateLimited(a)) return 'rate-limited';
+    if (!this.hasSlot(a)) return `busy (${this.usedSlots(a.id)}/${a.max_sessions} sessions)`;
+    if (this.backedOff(a.id)) return 'failed to open a session; retrying soon';
+    if (a.paused !== 0) return 'paused';
+    if (role === 'author' && !this.canAdmitAuthor(task, a.id)) return 'reserving capacity for reviews';
+    if (own) return null;
+    if (a.lend_mode === 'never') return 'does not lend';
+    if (!this.mayLend(a)) return 'in use by its owner (lends when idle)';
+    const estimate = role === 'author' ? estimateAuthor(a, this.config.costEstimate) : estimateReview(a, task, this.config.costEstimate);
+    if (budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) return 'out of lending budget';
+    return null;
+  }
+
+  private pendingOpenAgent(taskId: number): AgentRow | undefined {
+    for (const s of this.db.sessions.find({ state: 'opening' })) {
+      if (this.db.openRequestFor(s.id)?.task_id === taskId) return this.db.agents.get(s.agent_id);
+    }
+    return undefined;
   }
 
   // ---------------------------------------------------------------------------

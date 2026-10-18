@@ -17,6 +17,13 @@ describe('waitText', () => {
     }
   });
 
+  it('explains reserved review capacity as a wait without suggesting settings changes', () => {
+    expect(waitText({ state: 'QUEUED', waitReason: reason({ code: 'review_capacity' }) })).toMatchObject({
+      short: 'Waiting for review capacity', action: null, tone: 'muted',
+    });
+    expect(blockerLabel({ agentId: 'a', ownerName: 'a', blocker: 'review_capacity', until: null })).toBe('reserving capacity for reviews');
+  });
+
   it('names the agent and the next step for the viewer', () => {
     const offline = reason({ code: 'no_agent_online', nextStep: 'connect_agent', agentId: 'alice-claude', ownerName: 'alice' });
     expect(waitText({ state: 'QUEUED', waitReason: offline }, 'alice')).toMatchObject({ short: 'alice-claude is offline', action: 'Start your agent from the Dashboard.', tone: 'warn' });

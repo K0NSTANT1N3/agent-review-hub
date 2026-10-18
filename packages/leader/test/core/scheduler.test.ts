@@ -145,10 +145,12 @@ describe('author assignment (§9.2)', () => {
     db.agents.update('alice-claude', { max_sessions: 1 });
     session('x', 'alice-claude', { profile: 'author', state: 'opening' });
     agent('carol-claude');
+    agent('bob-claude');
+    session('b', 'bob-claude', { profile: 'author' });
     session('c', 'carol-claude', { profile: 'author' });
     const t = task({ mode: 'pool' });
     scheduler.schedule();
-    expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_agent_id: 'carol-claude' });
+    expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_agent_id: expect.stringMatching(/^(bob|carol)-claude$/) });
   });
 });
 
@@ -190,6 +192,31 @@ describe('reviewer assignment (§9.3)', () => {
     const t = awaitingReview();
     scheduler.schedule();
     expect(db.conversations.find({ task_id: t.id })[0]?.reviewer_agent_id).toBe('bob-claude');
+  });
+
+  it('preserves constrained reviewer capacity for another waiting task', () => {
+    db.agents.update('alice-claude', { status: 'offline' });
+    agent('bob-claude', { max_sessions: 2 });
+    agent('carol-claude', { max_sessions: 2 });
+    session('bob-author', 'bob-claude', { profile: 'author' });
+    session('carol-author', 'carol-claude', { profile: 'author' });
+    const flexible = task({
+      requester_agent_id: 'alice-claude', state: 'AWAITING_REVIEWER', author_agent_id: 'bob-claude',
+      author_session_id: 'bob-author', branch: 'quorum/task-flexible', base_commit: 'aaaaaaa', head_commit: 'bbbbbbb',
+    });
+    const constrained = task({
+      requester_agent_id: 'bob-claude', state: 'AWAITING_REVIEWER', author_agent_id: 'carol-claude',
+      author_session_id: 'carol-author', branch: 'quorum/task-constrained', base_commit: 'aaaaaaa', head_commit: 'bbbbbbb',
+    });
+    locks.lockSession('bob-author', 'task', String(flexible.id), 'author');
+    locks.lockSession('carol-author', 'task', String(constrained.id), 'author');
+    session('bob-reviewer', 'bob-claude', { profile: 'reviewer' });
+    session('carol-reviewer', 'carol-claude', { profile: 'reviewer' });
+
+    scheduler.schedule();
+
+    expect(db.conversations.find({ task_id: flexible.id, state: 'active' })[0]?.reviewer_agent_id).toBe('carol-claude');
+    expect(db.conversations.find({ task_id: constrained.id, state: 'active' })[0]?.reviewer_agent_id).toBe('bob-claude');
   });
 
   it('prefers a reviewer who has not already dropped this task, but falls back to them', () => {
@@ -385,8 +412,86 @@ describe('sessions and directives', () => {
   });
 });
 
+describe('queue explanation', () => {
+  it('explains an own-only task blocked by its rate-limited requester, without assigning anything', () => {
+    db.agents.update('alice-claude', { rate_limited_until: now + 60_000 });
+    const t = task();
+    const queue = scheduler.queueSnapshot();
+    expect(queue).toEqual([expect.objectContaining({
+      taskId: t.id, position: 1, needs: 'author', waitingOn: 'rate_limit', requesterOwner: 'alice',
+      reason: "Own-only task: alice's agent is rate-limited",
+      candidates: [{ agentId: 'alice-claude', ownerName: 'alice', blocker: 'rate-limited' }],
+    })]);
+    expect(commands).toHaveLength(0);
+    expect(db.tasks.require(t.id).state).toBe('QUEUED');
+  });
+
+  it('lists reviewers before authors and names why each agent cannot review', () => {
+    agent('bob-claude', { status: 'offline' });
+    agent('carol-claude', { lend_mode: 'when_idle' });
+    agent('dave-claude', { lend_tokens_per_day: 0 });
+    const review = awaitingReview();
+    const write = task({ mode: 'pool', priority: 0 });
+    const queue = scheduler.queueSnapshot();
+    expect(queue.map((e) => [e.taskId, e.position, e.needs])).toEqual([[review.id, 1, 'reviewer'], [write.id, 2, 'author']]);
+    expect(queue[0]).toMatchObject({
+      waitingOn: 'agent', authorOwnerName: 'alice',
+      reason: 'No free reviewer: bob offline, carol in use by its owner (lends when idle), dave out of lending budget',
+    });
+    expect(queue[0]!.candidates.find((c) => c.agentId === 'alice-claude')).toMatchObject({ blocker: `wrote #${review.id}` });
+  });
+
+  it('explains reviewer capacity reservations instead of promising assignment', () => {
+    db.agents.update('alice-claude', { max_sessions: 1 });
+    agent('bob-claude', { max_sessions: 1 });
+    const t = task({ requester_agent_id: 'bob-claude', mode: 'own' });
+    awaitingReview();
+    const queued = scheduler.queueSnapshot().find((entry) => entry.taskId === t.id);
+    expect(queued).toMatchObject({
+      waitingOn: 'agent',
+      candidates: [{ agentId: 'bob-claude', ownerName: 'bob', blocker: 'reserving capacity for reviews' }],
+    });
+    expect(commands).toHaveLength(0);
+  });
+
+  it('reports a task an eligible agent will pick up on the next pass', () => {
+    agent('bob-claude');
+    const t = task({ mode: 'pool' });
+    expect(scheduler.queueSnapshot()[0]).toMatchObject({ taskId: t.id, waitingOn: 'scheduler', reason: 'Being assigned on the next scheduler pass' });
+  });
+
+  it('orders merges like the merge worker and lists human decisions without a position', () => {
+    const merging = task({ state: 'MERGING', approved_at: now - 3000 });
+    const second = task({ state: 'MERGE_QUEUED', approved_at: now - 1000 });
+    const first = task({ state: 'MERGE_QUEUED', approved_at: now - 2000 });
+    const escalated = task({ state: 'ESCALATED', escalation_reason: 'Reviewer and author disagree', state_entered_at: now - 5000 });
+    const paused = task({ state: 'PAUSED', pause_reason: 'human', paused_from_state: 'AUTHORING', state_entered_at: now - 1000 });
+    const queue = scheduler.queueSnapshot();
+    expect(queue.map((e) => [e.taskId, e.position, e.needs, e.reason])).toEqual([
+      [first.id, 1, 'merge', `Merging #${merging.id} first`],
+      [second.id, 2, 'merge', '2 merges ahead'],
+      [escalated.id, null, 'human', 'Reviewer and author disagree'],
+      [paused.id, null, 'human', 'Paused by a human'],
+    ]);
+    expect(queue[2]).toMatchObject({ waitingOn: 'human', requesterOwner: 'alice' });
+  });
+});
+
 describe('wait reasons (issue #51)', () => {
   const why = (id: number) => scheduler.explainWait(db.tasks.require(id));
+
+  it('reports reviewer capacity reservation for an otherwise eligible author', () => {
+    db.agents.update('alice-claude', { max_sessions: 1 });
+    agent('bob-claude', { max_sessions: 1 });
+    const t = task({ requester_agent_id: 'bob-claude', mode: 'own' });
+    awaitingReview();
+    expect(why(t.id)).toMatchObject({
+      role: 'author', code: 'review_capacity', nextStep: 'wait', agentId: 'bob-claude',
+      blockers: [{ agentId: 'bob-claude', blocker: 'review_capacity' }],
+    });
+    expect(scheduler.queueSnapshot().find((entry) => entry.taskId === t.id)?.candidates[0]?.blocker).toBe('reserving capacity for reviews');
+    expect(commands).toHaveLength(0);
+  });
 
   it('explains an own-mode author wait: offline, paused, rate-limited, busy, then assignment', () => {
     const t = task();
