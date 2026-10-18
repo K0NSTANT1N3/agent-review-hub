@@ -262,7 +262,7 @@ export class EventHandlers {
     if (this.db.mergeQueue.get(taskId) === undefined) this.db.mergeQueue.insert({ task_id: taskId, enqueued_at: this.now() });
   }
 
-  private escalate(taskId: number, reason: string): void {
+  escalate(taskId: number, reason: string): void {
     this.db.tasks.update(taskId, { escalation_reason: reason });
     transition(this.db, taskId, 'ESCALATED', { reason, actor: 'leader', at: this.now() });
     this.attention(taskId, 'escalated', reason);
