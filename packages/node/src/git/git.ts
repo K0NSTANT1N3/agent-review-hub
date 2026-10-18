@@ -31,8 +31,19 @@ export class GitTimeoutError extends GitExecutionError {
   }
 }
 
+// Session worktrees share one clone's remote-tracking refs. Serialize fetches and pushes to avoid ref lock races.
+const REF_UPDATING = new Set(['fetch', 'push']);
+let refUpdates: Promise<unknown> = Promise.resolve();
+
 /** Run git without a shell. Non-zero git exit codes are returned to the caller. */
 export function git(cwd: string, args: readonly string[], options: GitOptions = {}): Promise<GitResult> {
+  if (!REF_UPDATING.has(args[0] ?? '')) return runGit(cwd, args, options);
+  const run = refUpdates.then(() => runGit(cwd, args, options));
+  refUpdates = run.catch(() => undefined);
+  return run;
+}
+
+function runGit(cwd: string, args: readonly string[], options: GitOptions): Promise<GitResult> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const commandArgs = [...args];
 
