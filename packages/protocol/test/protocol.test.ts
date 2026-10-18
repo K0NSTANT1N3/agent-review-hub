@@ -267,3 +267,14 @@ describe('api routes', () => {
     expect(() => apiPath('getTask')).toThrow(/requires an id/);
   });
 });
+
+describe('join codes', () => {
+  it('round-trips through encode and decode and maps tunnel URLs to wss://', async () => {
+    const { decodeJoinCode, encodeJoinCode, publicLeaderUrl } = await import('../src/join-code.js');
+    const fields = { leaderUrl: publicLeaderUrl('https://abc.trycloudflare.com', 7420), agentId: 'bo-agent', ownerName: 'Bo', token: 'qrm_x', repoRemoteUrl: 'git@x:y.git' };
+    expect(fields.leaderUrl).toBe('wss://abc.trycloudflare.com/ws/node');
+    expect(publicLeaderUrl('10.0.0.5', 7420)).toBe('ws://10.0.0.5:7420/ws/node');
+    expect(decodeJoinCode(encodeJoinCode(fields))).toEqual({ v: 1, ...fields });
+    expect(() => decodeJoinCode(encodeJoinCode({ ...fields, leaderUrl: 'http://x' }))).toThrow(/invalid Leader URL/);
+  });
+});

@@ -271,7 +271,7 @@ function normalizeLeaderUrl(value: string, insecure: boolean): string {
   return url.toString();
 }
 
-function isLocalhost(hostname: string): boolean {
+export function isLocalhost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127(?:\.\d{1,3}){3}$/.test(host);
 }

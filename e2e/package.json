@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
-    "e2e": "vitest run --passWithNoTests"
+    "e2e": "vitest run --passWithNoTests",
+    "load": "vitest run --config vitest.load.config.ts"
   },
   "dependencies": {
     "@quorum/leader": "workspace:*",
