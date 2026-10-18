@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -15,11 +15,30 @@ let dir: string;
 let bare: string;
 let started: NodeConfig[];
 let updates: Partial<OwnerSettings>[];
+let live: number;
+let maxLive: number;
+let rejects: ((reason: string) => void)[];
 const services: Services[] = [];
 
-const fakeDaemon = (): ServiceDeps['startDaemon'] => async (config) => {
+const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Slow start and stop widen the window in which overlapping lifecycle calls used to race.
+const fakeDaemon = (): ServiceDeps['startDaemon'] => async (config, opts) => {
+  await tick(20);
   started.push(config);
-  const handle: DaemonHandleLike = { stop: async () => {}, status: () => null, updateSettings: (p) => updates.push(p) };
+  if (opts.onReject !== undefined) rejects.push(opts.onReject);
+  live += 1;
+  maxLive = Math.max(maxLive, live);
+  let stopped = false;
+  const handle: DaemonHandleLike = {
+    stop: async () => {
+      await tick(20);
+      if (!stopped) live -= 1;
+      stopped = true;
+    },
+    status: () => null,
+    updateSettings: (p) => updates.push(p),
+  };
   return handle;
 };
 
@@ -28,7 +47,7 @@ function deps(): ServiceDeps {
     startLeader: (c) => startLeader(c, { logger: { debug() {}, info() {}, warn() {}, error() {} } }),
     addAgent,
     startDaemon: fakeDaemon(),
-    secrets: { encrypt: (s) => `plain:${s}`, decrypt: (s) => s.slice(6) },
+    secrets: { encrypt: (s) => `plain:${s}`, decrypt: (s) => s.slice(6), isEncrypted: (s) => !s.startsWith('plain:') },
   };
 }
 
@@ -60,7 +79,25 @@ beforeEach(() => {
   execFileSync('git', ['push', bare, 'main'], { cwd: seed });
   started = [];
   updates = [];
+  live = 0;
+  maxLive = 0;
+  rejects = [];
 });
+
+async function until(check: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting for condition');
+    await tick(25);
+  }
+}
+
+async function hosted(name = 'host'): Promise<{ host: Services; port: number }> {
+  const host = make(name);
+  const port = await freePort();
+  await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: '127.0.0.1', settings: DEFAULT_SETTINGS });
+  return { host, port };
+}
 
 afterEach(async () => {
   for (const s of services.splice(0)) await s.stopAll();
@@ -229,5 +266,90 @@ describe('Services', () => {
     const state = await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port: await freePort(), publicHost: '127.0.0.1', settings: DEFAULT_SETTINGS });
     expect(state.node).toMatchObject({ running: false, error: expect.stringContaining('not implemented') });
     expect(state.leader?.running).toBe(true);
+  });
+
+  it('runs lifecycle calls one at a time: concurrent restarts start exactly one daemon and one Leader', async () => {
+    const { host } = await hosted();
+    const before = started.length;
+    const states = await Promise.all([host.restart(), host.restart(), host.restart()]);
+    expect(started.length).toBe(before + 1);
+    expect(live).toBe(1);
+    expect(maxLive).toBe(1);
+    for (const state of states) expect(state).toMatchObject({ busy: false, leader: { running: true, error: null }, node: { running: true } });
+  });
+
+  it('serializes boot, settings and restart so two daemons never run at once', async () => {
+    const { host } = await hosted();
+    await host.stopAll();
+    const again = new Services(join(dir, 'host'), deps());
+    services.push(again);
+    const booting = again.boot();
+    expect(again.state().busy).toBe(true);
+    const restarting = again.restart();
+    const updating = again.updateSettings({ ...DEFAULT_SETTINGS, adapter: { type: 'mock', scriptPath: '/tmp/s.json', contextWindow: 1000 } });
+    await Promise.all([booting, restarting, updating]);
+    expect(maxLive).toBe(1);
+    expect(live).toBe(1);
+    expect(again.state()).toMatchObject({ busy: false, leader: { running: true, error: null }, node: { running: true } });
+  });
+
+  it('reset deletes the Node clone and journal but keeps Leader data unless asked', async () => {
+    const { host } = await hosted();
+    const data = join(dir, 'host');
+    for (const sub of ['workspace', 'node']) mkdirSync(join(data, sub), { recursive: true });
+    expect(existsSync(join(data, 'leader', 'leader.db'))).toBe(true);
+    const state = await host.reset();
+    expect(state).toMatchObject({ configured: false, node: { running: false } });
+    expect(existsSync(join(data, 'workspace'))).toBe(false);
+    expect(existsSync(join(data, 'node'))).toBe(false);
+    expect(existsSync(join(data, 'quorum-desktop.json'))).toBe(false);
+    expect(existsSync(join(data, 'leader', 'leader.db'))).toBe(true);
+    expect(live).toBe(0);
+
+    const { host: second } = await hosted('second');
+    const data2 = join(dir, 'second');
+    await second.reset({ deleteLeaderData: true });
+    expect(existsSync(join(data2, 'leader'))).toBe(false);
+  });
+
+  it('stops the agent and reports an auth error when the Leader rejects the daemon', async () => {
+    const { host } = await hosted();
+    expect(host.state()).toMatchObject({ authError: null, node: { running: true } });
+    rejects.at(-1)?.('agent token revoked');
+    await until(() => !host.state().node.running);
+    expect(host.state()).toMatchObject({
+      node: { running: false, error: expect.stringContaining('agent token revoked') },
+      authError: expect.stringContaining('agent token revoked'),
+    });
+    expect(live).toBe(0);
+  });
+
+  it('stops reconnecting the UI stream and reports an auth error when the Leader refuses the token', async () => {
+    const { port } = await hosted();
+    const joinCode = encodeJoinCode({ leaderUrl: `ws://127.0.0.1:${port}/ws/node`, agentId: 'bo-agent', ownerName: 'Bo', token: 'qrm_revoked', repoRemoteUrl: bare });
+    const member = make('member');
+    await member.setupJoin({ joinCode, settings: DEFAULT_SETTINGS });
+    await until(() => member.state().authError !== null);
+    expect(member.state()).toMatchObject({ connected: false, authError: expect.stringContaining('new join code') });
+  });
+
+  it('reports plain-text token storage and survives a token that can no longer be decrypted', async () => {
+    const { host } = await hosted();
+    expect(host.state().secretsEncrypted).toBe(false);
+    await host.stopAll();
+
+    const broken = new Services(join(dir, 'host'), {
+      ...deps(),
+      secrets: { encrypt: (s) => s, decrypt: () => { throw new Error('keychain locked'); }, isEncrypted: () => true },
+    });
+    services.push(broken);
+    const state = await broken.boot();
+    expect(state).toMatchObject({
+      configured: true,
+      secretsEncrypted: true,
+      authError: expect.stringContaining('keychain locked'),
+      node: { running: false, error: expect.stringContaining('keychain locked') },
+    });
+    expect(await broken.api('listAgents')).toMatchObject({ ok: false, error: 'TOKEN_UNREADABLE' });
   });
 });

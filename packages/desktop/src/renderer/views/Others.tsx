@@ -244,7 +244,8 @@ export function Settings({ state }: { state: AppState }) {
 
   const reset = async () => {
     if (!window.confirm('Disconnect this computer from the team? You will need a new join code (or to host again).')) return;
-    await bridge().reset();
+    const deleteLeaderData = state.mode === 'host' && window.confirm("Also delete this team's Leader data (tasks and history)?");
+    await bridge().reset({ deleteLeaderData });
   };
 
   return (
@@ -271,6 +272,12 @@ export function Settings({ state }: { state: AppState }) {
         <p className="muted">
           Data folder <code>{state.dataDir}</code>
         </p>
+        {state.secretsEncrypted === false && (
+          <p className="muted">
+            This computer has no OS keychain, so your agent token is stored unencrypted in <code>{state.dataDir}</code>.
+          </p>
+        )}
+        <ErrorNote error={state.authError} />
         <button className="danger" onClick={() => void reset()}>
           Disconnect this computer
         </button>

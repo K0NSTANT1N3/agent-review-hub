@@ -61,9 +61,11 @@ export function App() {
         ))}
         <div className="grow" />
         <div className="status small">
-          <div>
-            <Dot tone={state.connected ? 'ok' : 'warn'} /> {state.connected ? 'connected' : 'connecting…'}
+          <div title={state.authError ?? undefined}>
+            <Dot tone={state.connected ? 'ok' : state.authError !== null ? 'danger' : 'warn'} />{' '}
+            {state.connected ? 'connected' : state.authError !== null ? 'token rejected' : 'connecting…'}
           </div>
+          {state.authError !== null && <div className="warn-text">Ask the host for a new join code.</div>}
           <div>
             <Dot tone={state.node.running ? 'ok' : 'danger'} /> agent {state.node.running ? (state.settings?.paused ? 'paused' : 'running') : 'stopped'}
           </div>

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { AppState } from '../../shared/ipc';
 import { bridge, call, formatTokens, timeAgo, useLive } from '../bridge';
 import { Bar, Card, Dot, Empty, ErrorNote } from '../components/common';
@@ -6,11 +7,23 @@ export function Dashboard({ state }: { state: AppState }) {
   const agents = useLive(() => call('listAgents'), [], { events: ['agent.updated', 'session.updated'], pollMs: 10_000 });
   const tasks = useLive(() => call('listTasks', { query: { mine: 'true' } }), [], { events: ['task.updated'] });
   const settings = state.settings;
+  // Local flag covers the gap before main reports `busy`, so a double click cannot queue a second restart.
+  const [clicked, setClicked] = useState(false);
+  const busy = clicked || state.busy;
 
-  const togglePause = async () => {
+  const lifecycle = async (fn: () => Promise<unknown>) => {
+    setClicked(true);
+    try {
+      await fn();
+    } finally {
+      setClicked(false);
+    }
+  };
+
+  const togglePause = () => lifecycle(async () => {
     if (settings === null) return;
     await bridge().updateSettings({ ...settings, paused: !settings.paused });
-  };
+  });
 
   const open = (tasks.data?.tasks ?? []).filter((t) => !['MERGED', 'CANCELLED', 'FAILED'].includes(t.state));
   const attention = open.filter((t) => t.state === 'ESCALATED' || t.state === 'PAUSED');
@@ -31,12 +44,18 @@ export function Dashboard({ state }: { state: AppState }) {
           </p>
           <ErrorNote error={state.node.error} />
           <p>
-            <Dot tone={state.connected ? 'ok' : 'warn'} /> {state.connected ? 'Connected to the Leader' : 'Connecting to the Leader…'}
+            <Dot tone={state.connected ? 'ok' : state.authError !== null ? 'danger' : 'warn'} />{' '}
+            {state.connected ? 'Connected to the Leader' : state.authError !== null ? 'Not connected to the Leader' : 'Connecting to the Leader…'}
           </p>
           {!state.connected && <ConnectionHint state={state} />}
+          <ErrorNote error={state.authError} />
           <div className="row">
-            <button onClick={() => void togglePause()}>{settings?.paused ? 'Resume my agent' : 'Pause my agent'}</button>
-            <button onClick={() => void bridge().restart()}>Restart</button>
+            <button disabled={busy} onClick={() => void togglePause()}>
+              {settings?.paused ? 'Resume my agent' : 'Pause my agent'}
+            </button>
+            <button disabled={busy} onClick={() => void lifecycle(() => bridge().restart())}>
+              {state.busy ? 'Working…' : 'Restart'}
+            </button>
           </div>
         </Card>
         <Card title="My open tasks">

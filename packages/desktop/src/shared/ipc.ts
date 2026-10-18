@@ -45,6 +45,12 @@ export interface AppState {
   encrypted: boolean;
   /** Network the Leader is reached through, to explain connection problems. */
   leaderNetwork: AddressKind | 'tunnel' | 'loopback' | null;
+  /** Set when the Leader refuses this computer's token (revoked or rotated) or the stored token cannot be read. */
+  authError: string | null;
+  /** False when the agent token is stored as plain text because the OS has no keychain; null before setup. */
+  secretsEncrypted: boolean | null;
+  /** A start, stop, restart or setup is in progress. */
+  busy: boolean;
   settings: DesktopSettings | null;
   dataDir: string;
 }
@@ -66,6 +72,11 @@ export interface JoinSetup {
   settings: DesktopSettings;
 }
 
+export interface ResetOptions {
+  /** Host only: also delete the Leader database and clone (all tasks and history). */
+  deleteLeaderData?: boolean;
+}
+
 export interface ApiCallOptions {
   id?: number | string;
   query?: Record<string, string>;
@@ -83,7 +94,7 @@ export interface QuorumBridge {
   invite(args: { agentId: string; ownerName: string }): Promise<{ joinCode: string }>;
   updateSettings(settings: DesktopSettings): Promise<AppState>;
   restart(): Promise<AppState>;
-  reset(): Promise<AppState>;
+  reset(options?: ResetOptions): Promise<AppState>;
   networkAddresses(): Promise<AddressOption[]>;
   checkAgent(): Promise<{ ok: boolean; detail: string }>;
   openExternal(url: string): Promise<void>;
