@@ -71,6 +71,16 @@ export function publicLeaderUrl(publicHost: string, port: number): string {
   return `ws://${value || '127.0.0.1'}:${port}/ws/node`;
 }
 
+/** True when the host's address is a bare host name/IP (IPv6 in brackets) or a full http(s)/ws(s) tunnel URL. */
+export function isValidPublicHost(publicHost: string): boolean {
+  const value = publicHost.trim();
+  if (value === '') return true;
+  if (/^(https?|wss?):\/\//i.test(value)) return URL.canParse(value);
+  // A bare host must not carry a port, path or spaces: the Leader port is appended separately.
+  if (/[/\s]/.test(value) || (value.includes(':') && !/^\[[0-9a-f:.]+\]$/i.test(value))) return false;
+  return URL.canParse(`ws://${value}:1/`);
+}
+
 export function isEncryptedLeaderUrl(leaderUrl: string): boolean {
   return leaderUrl.startsWith('wss://');
 }

@@ -14,7 +14,7 @@ import {
   type UiEvent,
 } from '@quorum/protocol';
 import type { ApiCallOptions, ApiResult, AppState, DesktopSettings, HostSetup, JoinSetup, Mode } from '../shared/ipc.js';
-import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, publicLeaderUrl } from './join-code.js';
+import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, isValidPublicHost, publicLeaderUrl } from './join-code.js';
 import { leaderNetworkKind } from './network.js';
 import { UiStream } from './ui-stream.js';
 
@@ -124,8 +124,8 @@ export class Services {
     const restrictToIp = setup.restrictToIp?.trim() || null;
     if (restrictToIp !== null && !/^\d+\.\d+\.\d+\.\d+$/.test(restrictToIp)) throw new Error('Choose an address from the list to restrict connections to it');
     const host = { mainBranch: setup.mainBranch.trim() || 'main', port: setup.port, publicHost: setup.publicHost.trim() || restrictToIp || '127.0.0.1', restrictToIp };
-    if (!URL.canParse(`ws://${host.publicHost}:${host.port}/ws/node`) || new URL(`ws://${host.publicHost}:${host.port}/ws/node`).port !== String(host.port)) {
-      throw new Error('The address must be a host name or IP only, without "ws://" or a port (wrap IPv6 addresses in [ ])');
+    if (!isValidPublicHost(host.publicHost)) {
+      throw new Error('The address must be a host name or IP without a port (wrap IPv6 addresses in [ ]), or a full https:// tunnel URL');
     }
     const draft: StoredConfig = {
       version: 1,
