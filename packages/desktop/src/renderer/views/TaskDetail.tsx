@@ -7,9 +7,9 @@ import { DiffView, type DiffRange } from '../components/DiffView';
 
 type Tab = 'timeline' | 'issues' | 'diff' | 'description';
 
-export function TaskDetail({ id, state, onBack }: { id: number; state: AppState; onBack: () => void }) {
+export function TaskDetail({ id, state, onBack, initialTab }: { id: number; state: AppState; onBack: () => void; initialTab?: string | null }) {
   const detail = useLive(() => call('getTask', { id }), [id], { events: ['task.updated', 'task.event'], pollMs: 5000 });
-  const [tab, setTab] = useState<Tab>('timeline');
+  const [tab, setTab] = useState<Tab>((['timeline', 'issues', 'diff', 'description'] as const).find((t) => t === initialTab) ?? 'timeline');
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
@@ -178,7 +178,10 @@ type Entry = { at: number; key: string; node: ReactNode };
 function Timeline({ detail }: { detail: Detail }) {
   const entries: Entry[] = [
     ...detail.events.map((e) => ({ at: e.at, key: `e${e.id}`, node: <EventLine e={e} /> })),
-    ...detail.messages.map((m) => ({ at: m.createdAt, key: `m${m.id}`, node: <MessageLine m={m} /> })).filter((x) => x.node !== null),
+    ...detail.messages.flatMap((m) => {
+      const node = describeMessage(m);
+      return node === null ? [] : [{ at: m.createdAt, key: `m${m.id}`, node }];
+    }),
   ].sort((a, b) => a.at - b.at);
   if (entries.length === 0) return <Empty>Nothing yet.</Empty>;
   return (
@@ -212,7 +215,8 @@ function EventLine({ e }: { e: TaskEventView }) {
   );
 }
 
-function MessageLine({ m }: { m: MessageView }) {
+/** One timeline line per meaningful message; plumbing (checkpoints, session opens, acks) is omitted. */
+function describeMessage(m: MessageView): ReactNode | null {
   const p = (m.payload ?? {}) as Record<string, unknown>;
   const who = m.agentId;
   switch (m.type) {
@@ -247,7 +251,10 @@ function MessageLine({ m }: { m: MessageView }) {
     case 'author.synced':
       return <span><b>{who}</b> merged main {p.hadConflicts ? 'and resolved conflicts' : 'cleanly'}</span>;
     case 'turn.failed':
+      if (p.code === 'CANCELLED') return <span className="muted"><b>{who}</b> stopped its current turn (cancelled)</span>;
       return <span className="warn-text"><b>{who}</b> turn failed: {String(p.code)} — {String(p.message)}</span>;
+    case 'session.compacted':
+      return <span className="muted"><b>{who}</b> compacted its session to free context</span>;
     default:
       return null;
   }
