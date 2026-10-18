@@ -1,0 +1,29 @@
+{
+  "name": "@quorum/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "quorum: drive Quorum from a terminal, a script or a coding agent",
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "quorum": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@quorum/protocol": "workspace:*"
+  }
+}
