@@ -160,8 +160,8 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 - **Accept:** reconnect after a server restart resends unacked events; duplicate command executed once; reject handling.
 
 ### N7 — Command runner · spec §16.2, §11.4, §11.5, §11.6
-- [ ] `src/runner/command-runner.ts`: per-sid FIFO queue (one command at a time per sid, concurrent across sids).
-- [ ] A handler for every command in §11.4 that produces exactly the events in §11.5:
+- [x] `src/runner/command-runner.ts`: per-sid FIFO queue (one command at a time per sid, concurrent across sids).
+- [x] A handler for every command in §11.4 that produces exactly the events in §11.5:
   - `session.open` → worktree + setup + `adapter.createSession` → `session.opened`
   - `author.start` / `author.revise` → prepare branch → turn → parse/retry → commit+push (+ `author.checkpoint` after **every** turn, including retries) → `diffInfo` → tests → `author.submitted`
   - `author.sync` → `syncWithMain` → (conflicts? agent turn §12.8 → `finishSync`) → tests → `author.synced`
@@ -169,9 +169,9 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
   - `directive.run` → `directive.completed`
   - `task.cancel` → abort the in-flight turn → `turn.failed {CANCELLED}` → release worktree
   - `session.close` → remove worktree + `closeSession` → `session.closed`
-- [ ] Usage is summed across retry turns and reported in the result event. `contextTokens` is persisted per session.
-- [ ] Compaction §11.6 runs before any command when over `contextPressurePct` (same sid, new nativeId) → `session.compacted`.
-- [ ] Turn timeout `turnTimeoutSec` → abort → `turn.failed {TIMEOUT}`. Adapter errors map to `turn.failed` codes. Git failures map to `GIT_ERROR`.
+- [x] Usage is summed across retry turns and reported in the result event. `contextTokens` is persisted per session.
+- [x] Compaction §11.6 runs before any command when over `contextPressurePct` (same sid, new nativeId) → `session.compacted`.
+- [x] Turn timeout `turnTimeoutSec` → abort → `turn.failed {TIMEOUT}`. Adapter errors map to `turn.failed` codes. Git failures map to `GIT_ERROR`.
 - **Accept:** fake-leader + mock adapter + temp repo tests for every command, including invalid-output retry, cancel mid-turn, timeout, compaction, and a sync with conflicts.
 
 ### N8 — Daemon + CLI · spec §16.1, §16.3, §3 contract
