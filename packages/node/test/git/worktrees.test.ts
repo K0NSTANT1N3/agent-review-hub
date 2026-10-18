@@ -96,6 +96,18 @@ describe('git helper and worktree operations', () => {
     expect(pushed.stdout.trim()).toBe(commit);
   });
 
+  it('release discards tracked edits left by an aborted author turn', async () => {
+    const { config } = fixture;
+    const sid = 'cancelled-session';
+    const cwd = await createWorktree(config, sid);
+    await prepareAuthorNewBranch(config, sid, 'quorum/task-44');
+    await writeFile(join(cwd, 'README.md'), 'half-written edit from a cancelled turn\n');
+    await writeFile(join(cwd, 'scratch.txt'), 'untracked\n');
+    await releaseWorktree(config, sid);
+    const status = await git(cwd, ['status', '--porcelain']);
+    expect(status.stdout.trim()).toBe('');
+  });
+
   it('checks out a reviewer commit and resets reviewer-created changes', async () => {
     const { config } = fixture;
     const sid = 'review-session';
