@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { migrate, SCHEMA_VERSION } from './migrations.js';
-import type { Inserts, KeyColumn, Patch, RowKey, Tables } from './types.js';
+import type { Inserts, KeyColumn, MessageRow, Patch, RowKey, Tables } from './types.js';
 
 type Value = string | number | null;
 type SyncResult<T> = T & ({ readonly then?: never } | null | undefined | void);
@@ -151,6 +151,13 @@ export class LeaderDb {
     const hooks = this.commitHooks.at(-1);
     if (hooks === undefined) fn();
     else hooks.push(fn);
+  }
+
+  unackedMessages(agentId?: string): MessageRow[] {
+    const clause = agentId === undefined ? '' : ' AND agent_id = ?';
+    // rowid preserves command issue order when timestamps have millisecond ties.
+    return this.sql.prepare(`SELECT * FROM messages WHERE direction = 'to_node' AND acked_at IS NULL${clause} ORDER BY created_at, rowid`)
+      .all(...(agentId === undefined ? [] : [agentId])) as MessageRow[];
   }
 
   get schemaVersion(): number {

@@ -136,12 +136,12 @@ Every work item must include vitest tests in `packages/leader/test/`. Use an in-
 - **Accept:** tests for each rejection in spec §21.1 bullet 2; `seq` strictly increasing per conversation; invariants §3.1–§3.4 hold under random interleavings (property-style test with 200 random operations).
 
 ### L4 — Node hub (WebSocket `/ws/node`) · spec §11.1, §11.2, §10.2
-- [ ] fastify + `ws` server on `config.listen` (supports `port: 0`). Optional TLS from `config.tls`.
-- [ ] `hello` auth: sha256(token) == `agents.token_hash` and not revoked → `welcome`, else `reject`. A new connection for the same agentId wins, and the old one gets `reject {already_connected}`.
-- [ ] On `hello`: store settings, mark online, reconcile sessions (a locked session not reported alive → loss handler from L6 via an injected callback), resend all unacked `to_node` messages for that agent.
-- [ ] Reliable delivery: resend unacked every `resendUnackedSec`; `sent_at`/`acked_at` bookkeeping; inbound `evt` dedupe by `msgId` (store `from_node` rows); **ack only after the handler's transaction commits**.
-- [ ] Heartbeat processing per §10.2 (settings, `human_idle_sec`, `rate_limited_until`, lease extension, missing-session loss).
-- [ ] `test/helpers/fake-node.ts`: a scriptable WS client speaking the protocol, used by L4–L9 tests.
+- [x] fastify + `ws` server on `config.listen` (supports `port: 0`). Optional TLS from `config.tls`.
+- [x] `hello` auth: sha256(token) == `agents.token_hash` and not revoked → `welcome`, else `reject`. A new connection for the same agentId wins, and the old one gets `reject {already_connected}`.
+- [x] On `hello`: store settings, mark online, reconcile sessions (a locked session not reported alive → loss handler from L6 via an injected callback), resend all unacked `to_node` messages for that agent.
+- [x] Reliable delivery: resend unacked every `resendUnackedSec`; `sent_at`/`acked_at` bookkeeping; inbound `evt` dedupe by `msgId` (store `from_node` rows); **ack only after the handler's transaction commits**.
+- [x] Heartbeat processing per §10.2 (settings, `human_idle_sec`, `rate_limited_until`, lease extension, missing-session loss).
+- [x] `test/helpers/fake-node.ts`: a scriptable WS client speaking the protocol, used by L4–L9 tests.
 - **Accept:** duplicate `evt` applied once; leader restart → node reconnect → unacked commands redelivered; bad token rejected; heartbeat extends leases.
 
 ### L5 — Event handlers · spec §8.2, §8.3, §11.5
