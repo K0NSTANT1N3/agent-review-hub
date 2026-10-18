@@ -30,12 +30,15 @@ export function DiffView({ taskId, ranges }: { taskId: number; ranges: DiffRange
     };
   }, [taskId, range?.from, range?.to]);
 
-  if (range === undefined) return <div className="empty">No commits yet.</div>;
-  // diff2html is expensive on large diffs; TaskDetail re-renders every few seconds while polling.
+  // Hooks stay above any return. Skipping useMemo when there are no commits changes the hook count
+  // once a commit arrives and React unmounts the whole window (error 310).
+  const from = range?.from;
+  const to = range?.to;
   const rendered = useMemo(
-    () => (diff !== null && diff.trim() !== '' ? diffHtml(diff, { drawFileList: true, matching: diff.length > 200_000 ? 'none' : 'lines', outputFormat: view }) : null),
-    [diff, view],
+    () => (from !== undefined && to !== undefined && diff !== null && diff.trim() !== '' ? diffHtml(diff, { drawFileList: true, matching: diff.length > 200_000 ? 'none' : 'lines', outputFormat: view }) : null),
+    [diff, view, from, to],
   );
+  if (range === undefined) return <div className="empty">No commits yet.</div>;
   return (
     <div>
       <div className="row diff-toolbar">
