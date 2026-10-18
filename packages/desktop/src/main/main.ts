@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BrowserWindow, Notification, app, ipcMain, powerMonitor, safeStorage, shell } from 'electron';
 import { addAgent, startLeader } from '@quorum/leader';
-import { startDaemon } from '@quorum/node';
+import { resolveClaudeExecutable, startDaemon } from '@quorum/node';
 import type { ApiRouteName, UiEvent } from '@quorum/protocol';
 import { IPC, type ApiCallOptions, type AppState, type DesktopSettings, type HostSetup, type JoinSetup } from '../shared/ipc.js';
 import { Services } from './services.js';
@@ -35,6 +35,7 @@ const services = new Services(
     startDaemon: (config, opts) => startDaemon(config, opts),
     secrets,
     idleSeconds: () => powerMonitor.getSystemIdleTime(),
+    claudeExecutable: resolveClaudeExecutable,
   },
   (state) => window?.webContents.send(IPC.state, state),
   (event) => {
@@ -95,6 +96,7 @@ handle(IPC.updateSettings, (settings: DesktopSettings) => services.updateSetting
 handle(IPC.restart, () => services.restart());
 handle(IPC.reset, () => services.reset());
 handle(IPC.networkAddresses, () => lanAddresses());
+handle(IPC.checkAgent, () => services.checkAgent());
 handle(IPC.openExternal, async (url: string) => {
   if (/^https?:\/\//.test(url)) await shell.openExternal(url);
 });

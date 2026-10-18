@@ -224,6 +224,7 @@ export function Settings({ state }: { state: AppState }) {
   const [draft, setDraft] = useState<DesktopSettings | null>(state.settings);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [check, setCheck] = useState<{ ok: boolean; detail: string } | null>(null);
   if (draft === null) return null;
 
   const save = async () => {
@@ -251,7 +252,9 @@ export function Settings({ state }: { state: AppState }) {
           <button className="primary" onClick={() => void save()}>
             {saved ? 'Saved ✓' : 'Save'}
           </button>
+          <button onClick={() => void bridge().checkAgent().then(setCheck)}>Check agent</button>
         </div>
+        {check !== null && <div className={check.ok ? 'note note-ok' : 'note note-danger'}>{check.detail}</div>}
       </Card>
       <Card title="This computer">
         <p>

@@ -1,77 +1,70 @@
-# Agent Review Hub
+# Agent Review Hub — Quorum
 
-A multiplayer desktop app where developers' coding agents review each other's work before delivering a final result.
+**Your coding agent writes it. A teammate's agent reviews it. Only approved work reaches `main`.**
 
-Five people can work on one project with their own coding agents. A coordinator queues completed work, assigns a teammate's available agent to review it, and sends criticism back to the original author session. Each review keeps its own author and reviewer sessions until it finishes.
-
-**Status:** in active development. Live progress, owners and the remaining plan are in [tasks/STATUS.md](tasks/STATUS.md) — agents and contributors should read it first. The implementation follows [docs/implementation-spec.md](docs/implementation-spec.md) (codename "Quorum").
-
-## The workflow
-
-1. A developer gives their agent a task.
-2. The agent produces a candidate result: summary, changes, and verification evidence. The coordinator reserves its author session as the candidate enters the review queue. The app holds final delivery while review is pending.
-3. The coordinator reserves an eligible teammate's reviewer session, creating a fresh session when needed.
-4. The reviewer returns `approve`, `request_changes`, or `blocked` with findings.
-5. Findings return to the exact author session. Revisions return to the same reviewer session.
-6. Approval delivers the reviewed result to the developer. A round, time, or spending limit instead produces a human escalation. Both outcomes release the session reservations and preserve history.
+Quorum is a desktop app for teams where everyone uses a coding agent (Claude Code, or opencode). When you give your
+agent a task, the result isn't handed straight back to you: a small coordinator — the **Leader** — sends it to an
+available teammate's agent for review, routes the critique back to *the same* author session, repeats until the
+reviewer approves, then runs the tests and squash-merges into `main`.
 
 ```mermaid
 flowchart LR
-    D[Developer] --> A[Author agent]
-    A --> Q[Coordinator and review queue]
-    Q --> R[Teammate reviewer agent]
-    R --> Q
-    Q -->|Request changes| A
-    Q -->|Approved result or escalation| D
+    D[You: new task] --> A[Your agent<br/>writes code on a branch]
+    A -->|submission + tests| L{Leader}
+    L -->|review request| R[Teammate's idle agent<br/>read-only review]
+    R -->|approve / issues| L
+    L -->|issues| A
+    L -->|approved: test + squash merge| M[(main)]
+    L -->|stuck: needs a decision| D
 ```
 
-## What the leader does
+* **Strict pairing** — each review is a conversation between exactly one author session and one reviewer session;
+  messages never leak between tasks, and a busy session never receives unrelated work.
+* **Uses idle capacity** — reviewers are picked by availability, idle time, file familiarity, expertise tags, remaining
+  token budget and fairness; your own work always comes first.
+* **Safe by construction** — reviewers can only read; authors can't push, commit or touch files outside the task's
+  worktree; agent-to-agent text is treated as untrusted; only the Leader writes `main`.
+* **Human in control** — approve, send back with instructions, reassign, pause or cancel any task; answer an agent
+  that is blocked on a decision.
 
-The leader is an ordinary coordinator program, not a required LLM. It owns the queue, routing records, session reservations, lifecycle, and limits. An optional model may later recommend reviewer fit; it cannot override routing and ownership rules.
+## Getting started
 
-Every review has a stable mapping:
+👉 **[Install and use Quorum](docs/INSTALL.md)** — download, host a team, invite teammates, everyday workflow,
+troubleshooting.
 
-```text
-review_id -> author(owner, machine, agent, native_session_id)
-          -> reviewer(owner, machine, agent, native_session_id)
-```
+In short: one person clicks **Host a team** (their app runs the Leader) and sends **join codes**; everyone else clicks
+**Join a team**. Each app runs that person's agent in the background.
 
-Messages carry routing metadata outside model-generated text. A reply always returns to the mapped session. Unrelated work uses another session, even if a reserved session is temporarily idle. Session history remains available after a review closes.
+## Status
 
-This isolates review conversations at the routing layer. Files, tools, and shared project memory need their own access boundaries.
+**v0.1 — feature complete.** Leader, agent Node, desktop app, installers and release pipeline are done; 27/27
+end-to-end scenarios pass in CI, and a real Claude Code → Claude Code review-and-merge was verified. See
+[tasks/STATUS.md](tasks/STATUS.md) for the build history and what's next.
 
-## Hackathon MVP
+## Repository layout
 
-- Two developers and one project first; expand the roster to five.
-- One Claude Code integration, with a local connector on each developer's machine.
-- A shared coordinator, a persistent review queue, and durable session-pair mappings.
-- A desktop view of tasks, sessions, pairings, review findings, and final outcomes.
-- Availability and capability rules for reviewer selection.
-- Bounded review rounds, deadlines, and configured budgets; show unknown provider quota honestly.
-- Separate task workspaces and a pinned candidate revision for each review round.
+| Path | What |
+|---|---|
+| `packages/protocol` | Shared contract: config schemas, WebSocket frames, commands/events, agent output, REST routes (zod) |
+| `packages/leader` | The Leader: SQLite state, task state machine, scheduler, locks/leases, merge worker, REST + WebSocket server, CLI |
+| `packages/node` | The agent Node: git worktrees, journal, prompts, Claude Code / opencode / mock adapters, Leader client, CLI |
+| `packages/desktop` | Electron + React app (Host/Join, dashboard, tasks, diffs, invites) and installer packaging |
+| `e2e` | End-to-end scenarios running a real Leader and Nodes with scripted mock agents against real git |
+| `docs/implementation-spec.md` | The authoritative design spec (codename "Quorum") |
+| `docs/INSTALL.md` | User guide |
 
-The first demo should show a rejected candidate, a corrected revision in the original author session, approval in the same reviewer session, and a second task running without entering either reserved conversation.
-
-## Start contributing
-
-Read [the MVP backlog](tasks/todo.md), [the architecture](docs/architecture.md), [the detailed implementation spec](docs/implementation-spec.md), and [the contribution guide](CONTRIBUTING.md).
-
-Agent assignments: [STATUS](tasks/STATUS.md) (start here) · [Claude — Leader, integration, desktop, release](tasks/claude.md) · [Codex-2 — Node daemon](tasks/codex-2-node.md) · [Codex-1 — stopped, handed over](tasks/codex-1-leader.md). Where documents disagree, `docs/implementation-spec.md` is authoritative.
-
-### Developing
+## Developing
 
 ```bash
 corepack pnpm install
 corepack pnpm -r build && corepack pnpm -r typecheck && corepack pnpm -r lint && corepack pnpm -r test
-corepack pnpm e2e        # end-to-end scenarios (run once the Leader and Node are implemented)
-``` Agree on message schemas before implementing the coordinator, connector, and desktop client in parallel.
+corepack pnpm e2e                               # full end-to-end suite (mock agents, real git)
+corepack pnpm --filter @quorum/desktop dev      # run the desktop app from source
+corepack pnpm --filter @quorum/desktop dist     # build installers for this OS
+```
 
-Proposed starting stack: TypeScript, Node.js and SQLite for the coordinator; Electron and React for the desktop client; Claude Code CLI for the first adapter. These are implementation choices to validate, not installed dependencies.
+Releases: push a `vX.Y.Z` tag — the **Release** workflow builds Linux (AppImage, deb), macOS (dmg) and Windows (NSIS)
+installers and attaches them to a GitHub Release.
 
-## Scope and guarantees
-
-- Manage coding-agent sessions through supported CLI/SDK interfaces; arbitrary browser chat tabs are outside the MVP.
-- A review verdict applies to a specific candidate revision, not whatever happens to be on a branch later.
-- Review approval is a quality checkpoint, not proof that code is correct. Preserve tests and human control over publishing.
-- Token usage, configured spending limits, and remaining provider quota are separate measurements. Unknown quota is not zero and is not unlimited.
-- This repository defines review routing. Hard filesystem write enforcement from the earlier file-lock concept is outside this MVP.
+Contributions: read [CONTRIBUTING.md](CONTRIBUTING.md) and [tasks/STATUS.md](tasks/STATUS.md). Where documents
+disagree, [docs/implementation-spec.md](docs/implementation-spec.md) is authoritative.

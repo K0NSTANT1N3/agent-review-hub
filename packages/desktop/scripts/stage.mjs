@@ -22,13 +22,14 @@ const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: 'inherit',
 console.log(`[stage] deploying @quorum/desktop → ${stage}`);
 // Copy (never hard-link) files: rebuilding a hard-linked native module would rewrite the shared pnpm
 // store copy and break the workspace's Node build.
-run(pnpm[0], [...pnpm.slice(1), '--filter', '@quorum/desktop', 'deploy', '--prod', '--legacy', '--config.package-import-method=copy', stage], desktop);
+run(pnpm[0], [...pnpm.slice(1), '--filter', '@quorum/desktop', 'deploy', '--prod', '--legacy', '--config.package-import-method=copy', '--config.node-linker=hoisted', stage], desktop);
+
+// A flat (hoisted) node_modules: electron-builder's dependency collector does not follow pnpm's nested layout.
+const nativePackages = findPackages(join(stage, 'node_modules'), 'better-sqlite3');
+if (nativePackages.length === 0) throw new Error('better-sqlite3 not found in the staged node_modules');
 
 // Belt and braces: deep-copy every native package directory so its files get fresh inodes.
-const virtualStore = join(stage, 'node_modules', '.pnpm');
-for (const entry of readdirSync(virtualStore)) {
-  if (!entry.startsWith('better-sqlite3@')) continue;
-  const pkg = join(virtualStore, entry, 'node_modules', 'better-sqlite3');
+for (const pkg of nativePackages) {
   const tmp = `${pkg}.copy`;
   cpSync(pkg, tmp, { recursive: true, dereference: true });
   rmSync(pkg, { recursive: true, force: true });
@@ -39,21 +40,24 @@ console.log(`[stage] rebuilding native modules for Electron ${electronVersion}`)
 // Rebuild exactly the staged copies. (@electron/rebuild resolves modules by walking up the directory
 // tree, which from inside the repo reaches — and rewrites — the workspace's own copy.)
 const nodeGyp = createRequire(require.resolve('@electron/rebuild')).resolve('node-gyp/bin/node-gyp.js');
-for (const entry of readdirSync(virtualStore)) {
-  if (!entry.startsWith('better-sqlite3@')) continue;
-  const pkg = join(virtualStore, entry, 'node_modules', 'better-sqlite3');
-  const prebuild = readdirSync(virtualStore).find((e) => e.startsWith('prebuild-install@'));
+const prebuildInstall = findPackages(join(stage, 'node_modules'), 'prebuild-install')[0];
+for (const pkg of nativePackages) {
   const target = ['--runtime=electron', `--target=${electronVersion}`, `--arch=${process.arch}`];
   let ok = false;
-  if (prebuild !== undefined) {
+  if (prebuildInstall !== undefined) {
     try {
-      run(process.execPath, [join(virtualStore, prebuild, 'node_modules', 'prebuild-install', 'bin.js'), ...target, '--force'], pkg);
+      run(process.execPath, [join(prebuildInstall, 'bin.js'), ...target, '--force'], pkg);
       ok = true;
     } catch {
       console.log('[stage] no prebuilt binary for this Electron; compiling from source');
     }
   }
   if (!ok) run(process.execPath, [nodeGyp, 'rebuild', '--release', ...target, '--dist-url=https://electronjs.org/headers'], pkg);
+}
+
+// The Claude Code SDK ships its CLI as a per-platform optional dependency; the app is useless without it.
+if (findPackages(join(stage, 'node_modules'), '@anthropic-ai/claude-agent-sdk').length === 0) {
+  throw new Error('@anthropic-ai/claude-agent-sdk is missing from the staged app');
 }
 
 // Verify the workspace's own copy still loads in plain Node.
@@ -68,3 +72,20 @@ try {
   );
 }
 console.log('[stage] done');
+
+/** All installed copies of `name` (any nesting depth) under a node_modules directory. */
+function findPackages(nodeModules, name) {
+  const found = [];
+  const walk = (dir, depth) => {
+    if (depth > 6 || !existsSync(dir)) return;
+    const direct = join(dir, name);
+    if (existsSync(join(direct, 'package.json'))) found.push(direct);
+    for (const entry of readdirSync(dir)) {
+      if (entry.startsWith('.') && entry !== '.pnpm') continue;
+      const child = entry.startsWith('@') ? readdirSync(join(dir, entry)).map((e) => join(dir, entry, e)) : [join(dir, entry)];
+      for (const c of child) if (existsSync(join(c, 'node_modules'))) walk(join(c, 'node_modules'), depth + 1);
+    }
+  };
+  walk(nodeModules, 0);
+  return [...new Set(found)];
+}

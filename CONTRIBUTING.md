@@ -16,7 +16,7 @@ Keep coordinator state, connectors, and desktop UI boundaries clear so different
 
 Use deterministic fake adapters to verify queue and routing behavior without paid model calls. Exercise concurrent claims, exact session routing, duplicate replies, stale candidate approval, restart recovery, and bounded review loops. Run live CLI checks separately and report exactly what was tested.
 
-There is no runnable app or test command yet. Add setup instructions and meaningful checks alongside the first implementation.
+Run `corepack pnpm -r build && corepack pnpm -r typecheck && corepack pnpm -r lint && corepack pnpm -r test && corepack pnpm e2e` before opening a PR; CI runs the same. New behaviour needs a unit test, and cross-component behaviour an e2e scenario (`e2e/scenarios`, mock agents, real git).
 
 ## Local data
 

@@ -79,6 +79,7 @@ blockquote { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--bo
 .span-2 { grid-column: span 2; }
 .note { padding: 9px 12px; border-radius: 6px; margin: 8px 0; border: 1px solid; }
 .note-danger { border-color: var(--danger); color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.note-ok { border-color: var(--ok); color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .note-warn { border-color: var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .empty { color: var(--muted); padding: 18px; text-align: center; }
 
