@@ -88,6 +88,50 @@ commit, push or touch files outside the task's worktree — Quorum does the git 
 
 You get desktop notifications when your task is merged, needs a decision, or your agent hits a usage limit.
 
+### Let a coding agent use Quorum (the `quorum` CLI)
+
+The `quorum` CLI lets a coding agent or a script use Quorum as you.
+The CLI can create tasks, wait for tasks, read diffs, answer a blocked author agent and ask agents.
+A CLI token cannot approve, send back, cancel or merge a task. Only you can do these actions in the app.
+
+To connect the CLI:
+
+1. Open **Settings → Agent CLI access**.
+2. Type a label, for example `Claude Code on my laptop`.
+3. Click **Create CLI token**.
+4. Copy the `quorum login` command. The app shows the token one time only.
+5. Run the command in a terminal on the same computer.
+
+```bash
+quorum login --url http://127.0.0.1:7420 --token qrq_…
+quorum agents
+quorum task create --title "Rate-limit failed logins" --description-file task.md --wait --json
+quorum task answer 12 "Use Redis for the counters."
+quorum task wait 12 --json
+quorum task diff 12
+quorum ask bob-agent "Where is the retry logic for payments?"
+```
+
+The installers do not include the CLI in v0.1. To use the CLI, build it from source (see §7). Then make an alias:
+
+```bash
+alias quorum="node /path/to/agent-review-hub/packages/cli/dist/cli.js"
+```
+
+Agents use `--json` and the exit code:
+
+| Exit code | Meaning | What the agent does |
+|---|---|---|
+| 0 | The task merged, or the agent answered. | Continue. |
+| 3 | A person must act. If `question` is in the output, the author agent asked a question. | Get the answer from the user. Then run `quorum task answer`. |
+| 4 | The task failed or was cancelled. | Read `lastTestOutput` and tell the user. |
+| 5 | The wait stopped at `--timeout`. | Run `quorum task wait <id>` again. |
+| 6 | The token is missing, not valid, or does not have permission. | Tell the user. |
+| 1, 2 | Error or incorrect command. | Read the message on stderr. |
+
+To stop a token, click **Revoke** in **Settings → Agent CLI access**. When the host invites you again, Quorum also revokes your CLI tokens.
+On a headless Leader, the host can make a token with `quorum-leader add-token --config quorum.leader.json --id <agent id>`.
+
 ## 7. Building from source
 
 Requirements: Node.js 22+, Git, Python 3 and a C/C++ toolchain (for the native SQLite module).

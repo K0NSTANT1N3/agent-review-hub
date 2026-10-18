@@ -5,7 +5,7 @@
 ## State
 
 **v0.1 is feature complete.** Every work item in the spec is built and merged. CI runs build, typecheck, lint, unit
-tests (protocol, leader, node, desktop) and the full end-to-end suite (27 scenarios) on every PR and on `main`.
+tests (protocol, leader, node, desktop) and the full end-to-end suite (32 scenarios) on every PR and on `main`.
 
 Acceptance (spec §21.3) was run with **real Claude Code on both sides** (headless Leader + two Nodes on one machine,
 demo repo): the author agent implemented the task (~13k tokens), tests passed, the reviewer agent approved, and the
@@ -22,6 +22,14 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 | Codex-1 | Leader L1 (DB), L2 (state machine), L3 (locks), L4 (node hub), most of L5 (handlers; adopted by Claude at handoff) — stopped at its usage limit |
 | Codex-2 | Node N1–N9 (worktrees, project tests runner, journal, prompts/parser, adapter interface + mock, Leader client, command runner, daemon/CLI, opencode adapter) |
 
+## Since v0.1
+
+| Change | Notes |
+|---|---|
+| Session profiles | Fixed: the Leader reused any idle session for any role, so after an agent reviewed, its own next task or any directive went to the reviewer session and failed. Sessions now keep their profile (schema v2). e2e #18b, #18c. |
+| macOS worktree paths | Fixed: session worktree reuse failed when the data path contained a symlink (macOS `/var` → `/private/var`). |
+| `quorum` CLI + API tokens | `packages/cli`; requester-scope tokens (create in Settings → Agent CLI access, or `quorum-leader add-token`). e2e #22–#24. |
+
 ## Remaining / next ideas (not required for v0.1)
 
 | Item | Notes |
@@ -29,6 +37,7 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 | Code signing | Installers are unsigned (macOS: right-click → Open; Windows: More info → Run anyway). Add certificates to the Release workflow when available. |
 | macOS Intel build | The Release workflow builds on `macos-latest` (Apple Silicon). Add an `macos-13` matrix entry for x64 if needed. |
 | TLS for the Leader | Supported headless (`tls.certFile/keyFile`); the desktop host mode uses plain WS — use a VPN (e.g. Tailscale) or a TLS proxy. |
+| Ship the CLI | Bundle `quorum` with the installers or publish it to npm; today it runs from a source checkout. |
 | Second-opinion reviews, GitHub PR integration, task decomposition | Out of scope for v0.1 (spec §23). |
 
 ## How to work on it

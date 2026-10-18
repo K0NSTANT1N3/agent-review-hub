@@ -27,6 +27,20 @@ flowchart LR
 * **Human in control** — approve, send back with instructions, reassign, pause or cancel any task; answer an agent
   that is blocked on a decision.
 
+## Drive it from your agent
+
+The `quorum` CLI lets a coding agent use Quorum from a terminal.
+The agent can give a task to your Quorum agent, wait for the review and the merge, and answer questions from the author agent.
+Each command has `--json` output and exit codes that do not change. An agent can make decisions from the result.
+
+```bash
+quorum task create --title "Rate-limit failed logins" --description-file task.md --wait --json
+# exit 0: merged · 3: a person must act (answer with `quorum task answer`) · 4: failed · 5: timed out
+```
+
+A CLI token cannot approve or merge work. Only a person in the app can do these actions.
+Create a token in **Settings → Agent CLI access**. Refer to [INSTALL.md](docs/INSTALL.md#let-a-coding-agent-use-quorum-the-quorum-cli).
+
 ## Getting started
 
 👉 **[Install and use Quorum](docs/INSTALL.md)** — download, host a team, invite teammates, everyday workflow,
@@ -37,7 +51,7 @@ In short: one person clicks **Host a team** (their app runs the Leader) and send
 
 ## Status
 
-**v0.1 — feature complete.** Leader, agent Node, desktop app, installers and release pipeline are done; 27/27
+**v0.1 — feature complete.** Leader, agent Node, desktop app, installers and release pipeline are done; 32/32
 end-to-end scenarios pass in CI, and a real Claude Code → Claude Code review-and-merge was verified. See
 [tasks/STATUS.md](tasks/STATUS.md) for the build history and what's next.
 
@@ -48,6 +62,7 @@ end-to-end scenarios pass in CI, and a real Claude Code → Claude Code review-a
 | `packages/protocol` | Shared contract: config schemas, WebSocket frames, commands/events, agent output, REST routes (zod) |
 | `packages/leader` | The Leader: SQLite state, task state machine, scheduler, locks/leases, merge worker, REST + WebSocket server, CLI |
 | `packages/node` | The agent Node: git worktrees, journal, prompts, Claude Code / opencode / mock adapters, Leader client, CLI |
+| `packages/cli` | `quorum`, the CLI for coding agents and scripts (requester-scope API tokens) |
 | `packages/desktop` | Electron + React app (Host/Join, dashboard, tasks, diffs, invites) and installer packaging |
 | `e2e` | End-to-end scenarios running a real Leader and Nodes with scripted mock agents against real git |
 | `docs/implementation-spec.md` | The authoritative design spec (codename "Quorum") |
