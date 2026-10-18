@@ -1,7 +1,26 @@
 {
   "name": "@quorum/leader",
   "version": "0.1.0",
-  "private": true,
+  "description": "Quorum Leader: routes tasks between a team's coding agents and merges reviewed work (quorum-leader)",
+  "license": "MIT",
+  "keywords": [
+    "quorum",
+    "code-review",
+    "coding-agents",
+    "claude-code"
+  ],
+  "homepage": "https://github.com/K0NSTANT1N3/agent-review-hub#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/K0NSTANT1N3/agent-review-hub.git",
+    "directory": "packages/leader"
+  },
+  "bugs": {
+    "url": "https://github.com/K0NSTANT1N3/agent-review-hub/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -14,13 +33,16 @@
     "quorum-leader": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node -e \"const fs=require('node:fs');if(fs.existsSync('src/db/schema.sql'))fs.cpSync('src/db/schema.sql','dist/db/schema.sql')\"",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "prepack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm run build"
   },
   "dependencies": {
     "@quorum/protocol": "workspace:*",
@@ -33,5 +55,14 @@
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/ws": "^8.18.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
   }
 }

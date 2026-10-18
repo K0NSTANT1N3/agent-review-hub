@@ -145,10 +145,12 @@ describe('author assignment (§9.2)', () => {
     db.agents.update('alice-claude', { max_sessions: 1 });
     session('x', 'alice-claude', { profile: 'author', state: 'opening' });
     agent('carol-claude');
+    agent('bob-claude');
+    session('b', 'bob-claude', { profile: 'author' });
     session('c', 'carol-claude', { profile: 'author' });
     const t = task({ mode: 'pool' });
     scheduler.schedule();
-    expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_agent_id: 'carol-claude' });
+    expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_agent_id: expect.stringMatching(/^(bob|carol)-claude$/) });
   });
 });
 
@@ -190,6 +192,31 @@ describe('reviewer assignment (§9.3)', () => {
     const t = awaitingReview();
     scheduler.schedule();
     expect(db.conversations.find({ task_id: t.id })[0]?.reviewer_agent_id).toBe('bob-claude');
+  });
+
+  it('preserves constrained reviewer capacity for another waiting task', () => {
+    db.agents.update('alice-claude', { status: 'offline' });
+    agent('bob-claude', { max_sessions: 2 });
+    agent('carol-claude', { max_sessions: 2 });
+    session('bob-author', 'bob-claude', { profile: 'author' });
+    session('carol-author', 'carol-claude', { profile: 'author' });
+    const flexible = task({
+      requester_agent_id: 'alice-claude', state: 'AWAITING_REVIEWER', author_agent_id: 'bob-claude',
+      author_session_id: 'bob-author', branch: 'quorum/task-flexible', base_commit: 'aaaaaaa', head_commit: 'bbbbbbb',
+    });
+    const constrained = task({
+      requester_agent_id: 'bob-claude', state: 'AWAITING_REVIEWER', author_agent_id: 'carol-claude',
+      author_session_id: 'carol-author', branch: 'quorum/task-constrained', base_commit: 'aaaaaaa', head_commit: 'bbbbbbb',
+    });
+    locks.lockSession('bob-author', 'task', String(flexible.id), 'author');
+    locks.lockSession('carol-author', 'task', String(constrained.id), 'author');
+    session('bob-reviewer', 'bob-claude', { profile: 'reviewer' });
+    session('carol-reviewer', 'carol-claude', { profile: 'reviewer' });
+
+    scheduler.schedule();
+
+    expect(db.conversations.find({ task_id: flexible.id, state: 'active' })[0]?.reviewer_agent_id).toBe('carol-claude');
+    expect(db.conversations.find({ task_id: constrained.id, state: 'active' })[0]?.reviewer_agent_id).toBe('bob-claude');
   });
 
   it('prefers a reviewer who has not already dropped this task, but falls back to them', () => {

@@ -4,5 +4,5 @@
     "noEmit": true,
     "customConditions": ["development"]
   },
-  "include": ["*.ts", "scenarios", "helpers"]
+  "include": ["*.ts", "scenarios", "helpers", "load"]
 }

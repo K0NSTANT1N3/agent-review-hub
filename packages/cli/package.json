@@ -1,8 +1,26 @@
 {
   "name": "@quorum/cli",
   "version": "0.1.0",
-  "private": true,
   "description": "quorum: drive Quorum from a terminal, a script or a coding agent",
+  "license": "MIT",
+  "keywords": [
+    "quorum",
+    "code-review",
+    "coding-agents",
+    "claude-code"
+  ],
+  "homepage": "https://github.com/K0NSTANT1N3/agent-review-hub#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/K0NSTANT1N3/agent-review-hub.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/K0NSTANT1N3/agent-review-hub/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -15,15 +33,27 @@
     "quorum": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "prepack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm run build"
   },
   "dependencies": {
     "@quorum/protocol": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
   }
 }

@@ -37,3 +37,4 @@ Thumbs.db
 # Quorum runtime data
 data/
 release/
+dist-npm/

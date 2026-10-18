@@ -109,6 +109,12 @@ alias quorum="node $PWD/packages/cli/dist/cli.js"
 
 The full guide is in [INSTALL.md](docs/INSTALL.md#let-a-coding-agent-use-quorum-the-quorum-cli).
 
+### Run on a VPS
+
+The Leader, the agent Node and the CLI also run on a server with no desktop: `quorum-leader invite` prints a join code,
+`quorum-node join <code>` turns it into a Node config, and systemd keeps both running. See
+[Run on a VPS](docs/INSTALL.md#10-run-on-a-vps).
+
 ## Getting started
 
 👉 **[Install and use Quorum](docs/INSTALL.md)** — download, host a team, invite teammates, everyday workflow,
