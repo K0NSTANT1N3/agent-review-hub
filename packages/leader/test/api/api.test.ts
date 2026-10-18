@@ -177,6 +177,31 @@ describe('REST API (§17)', () => {
     expect(await new Promise((r) => bad.once('close', (code) => r(code)))).toBe(1008);
   });
 
+  it('explains why a task waits on list and detail, and pushes the reason when an agent changes', async () => {
+    const created = await api('POST', '/api/tasks', 'alice', { title: 'Waiting', description: 'd' });
+    const offline = { role: 'author', code: 'no_agent_online', nextStep: 'connect_agent', agentId: 'alice-claude', ownerName: 'alice' };
+    expect(created.body).toMatchObject({ state: 'QUEUED', waitReason: offline });
+    const id = created.body!.id as number;
+    expect((await api('GET', '/api/tasks', 'bob')).body!.tasks).toEqual([expect.objectContaining({ id, waitReason: expect.objectContaining(offline) })]);
+    expect((await api('GET', `/api/tasks/${id}`, 'bob')).body!.task).toMatchObject({ waitReason: offline });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=${tokens.alice}`);
+    await new Promise((r) => ws.once('open', r));
+    const got = new Promise<Extract<UiEvent, { type: 'task.updated' }>>((resolve) => ws.on('message', (raw) => {
+      const event = JSON.parse(raw.toString()) as UiEvent;
+      if (event.type === 'task.updated' && event.data.waitReason?.code === 'agent_paused') resolve(event);
+    }));
+    await new Promise((r) => setTimeout(r, 50));
+    // Only the agent changes; the task row stays as it was.
+    side.agents.update('alice-claude', { status: 'online', paused: 1, last_heartbeat_at: Date.now() });
+    const event = await got;
+    expect(event.data).toMatchObject({ id, state: 'QUEUED', waitReason: { code: 'agent_paused', nextStep: 'resume_agent' } });
+    ws.close();
+
+    side.tasks.update(id, { state: 'ESCALATED' });
+    expect((await api('GET', `/api/tasks/${id}`, 'bob')).body!.task).toMatchObject({ waitReason: null });
+  });
+
   it('derives one activity row per session with review pairing and visible idle agents', async () => {
     const now = Date.now();
     side.agents.update('alice-claude', { status: 'online', last_heartbeat_at: now });

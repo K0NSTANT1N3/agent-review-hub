@@ -8,6 +8,7 @@ import type {
   TaskDetail,
   TaskEventView,
   TaskView,
+  TaskWaitReason,
   TeamActivityView,
 } from '@quorum/protocol';
 import { budgetRemaining, lentToday } from '../core/budget.js';
@@ -26,6 +27,9 @@ import type {
 // DB rows → protocol API views (camelCase, decoded JSON). Shapes are validated by API_ROUTES response schemas.
 
 type V<T> = T;
+
+/** Scheduler.explainWait; omitted where no scheduler is available, which yields waitReason null. */
+export type WaitExplainer = (t: TaskRow) => TaskWaitReason | null;
 
 export function agentView(db: LeaderDb, a: AgentRow, now: number, tz: string): AgentView {
   return {
@@ -66,7 +70,7 @@ export function sessionView(s: SessionRow): SessionView {
   };
 }
 
-export function taskView(db: LeaderDb, t: TaskRow): TaskView {
+export function taskView(db: LeaderDb, t: TaskRow, explain?: WaitExplainer): TaskView {
   return {
     id: t.id,
     title: t.title,
@@ -97,6 +101,7 @@ export function taskView(db: LeaderDb, t: TaskRow): TaskView {
     updatedAt: t.updated_at,
     stateEnteredAt: t.state_entered_at,
     approvedAt: t.approved_at,
+    waitReason: explain?.(t) ?? null,
   };
 }
 
@@ -255,9 +260,9 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
   return rows.sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.agentId.localeCompare(b.agentId) || (a.sessionId ?? '').localeCompare(b.sessionId ?? ''));
 }
 
-export function taskDetail(db: LeaderDb, t: TaskRow): TaskDetail {
+export function taskDetail(db: LeaderDb, t: TaskRow, explain?: WaitExplainer): TaskDetail {
   return {
-    task: taskView(db, t),
+    task: taskView(db, t, explain),
     conversations: db.conversationsForTask(t.id).map(conversationView),
     issues: db.issues.find({ task_id: t.id }).map(issueView),
     events: db.taskEvents.find({ task_id: t.id }).map(taskEventView),

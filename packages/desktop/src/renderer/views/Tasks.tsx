@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { TaskState, TaskView } from '@quorum/protocol';
 import { call, timeAgo, useLive } from '../bridge';
 import { Empty, ErrorNote, StateBadge } from '../components/common';
+import { waitText } from '../wait-reason';
 
 const COLUMNS: { title: string; states: TaskState[] }[] = [
   { title: 'Queued', states: ['QUEUED'] },
@@ -50,6 +51,7 @@ export function Tasks({ onOpen }: { onOpen: (id: number) => void }) {
 }
 
 function TaskCard({ task, onOpen }: { task: TaskView; onOpen: (id: number) => void }) {
+  const wait = waitText(task);
   return (
     <button className="task-card" onClick={() => onOpen(task.id)}>
       <div className="row">
@@ -62,6 +64,7 @@ function TaskCard({ task, onOpen }: { task: TaskView; onOpen: (id: number) => vo
         {task.requesterOwner} · round {task.reviewRound} · {timeAgo(task.updatedAt)}
       </div>
       {task.escalationReason !== null && <div className="small danger-text">{task.escalationReason}</div>}
+      {wait !== null && <div className={`small ${wait.tone === 'warn' ? 'warn-text' : 'muted'}`}>{wait.short}</div>}
     </button>
   );
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CmdFrame, LeaderConfig, SessionOpenedEvent, SessionProfile, TaskState } from '@quorum/protocol';
+import type { CmdFrame, LeaderConfig, SessionOpenedEvent, SessionProfile, TaskState, TaskWaitCode, TaskWaitReason, WaitBlocker, WaitNextStep } from '@quorum/protocol';
 import type { AgentRow, LeaderDb, MessageRow, SessionRow, TaskRow } from '../db/repo.js';
 import { silentLogger, type Logger } from '../logging.js';
 import { budgetRemaining, dayStart, estimateAuthor, estimateReview, overlap, taskFiles } from './budget.js';
@@ -32,6 +32,30 @@ interface Candidate {
   agent: AgentRow;
   score: number;
 }
+
+/** Headline order when every candidate is blocked: the blocker most likely to clear soonest wins. */
+const HEADLINE: [WaitBlocker, TaskWaitCode][] = [
+  ['busy', 'agents_busy'],
+  ['session_backoff', 'session_backoff'],
+  ['rate_limited', 'rate_limited'],
+  ['budget_exhausted', 'budget_exhausted'],
+  ['not_lending', 'not_lending'],
+  ['paused', 'agent_paused'],
+];
+
+const NEXT_STEP: Record<TaskWaitCode, WaitNextStep> = {
+  session_starting: 'wait',
+  assigning: 'wait',
+  no_agent_online: 'connect_agent',
+  agents_busy: 'wait',
+  session_backoff: 'wait',
+  rate_limited: 'wait',
+  budget_exhausted: 'adjust_settings',
+  not_lending: 'adjust_settings',
+  agent_paused: 'resume_agent',
+  no_author: 'human_action',
+  unknown: 'wait',
+};
 
 export class Scheduler {
   private readonly db: LeaderDb;
@@ -150,8 +174,34 @@ export class Scheduler {
     return (this.openBackoff.get(agentId) ?? 0) > this.now();
   }
 
-  private ownerOf(agentId: string): string {
-    return this.db.agents.require(agentId).owner_name;
+  /**
+   * Why `a` cannot take `role` on `task` now, or null when it is eligible — the single filter used by assignment
+   * and by explainWait. `own`: the agent belongs to the requester, so lending rules and budget do not apply.
+   */
+  private blocker(a: AgentRow, task: TaskRow, role: Role, own: boolean): WaitBlocker | null {
+    if (!this.isOnline(a)) return 'offline';
+    if (a.paused !== 0) return 'paused';
+    if (this.isRateLimited(a)) return 'rate_limited';
+    if (!this.hasSlot(a)) return 'busy';
+    if (this.backedOff(a.id)) return 'session_backoff';
+    if (own) return null;
+    if (!this.mayLend(a)) return 'not_lending';
+    if (budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < this.estimate(a, task, role)) return 'budget_exhausted';
+    return null;
+  }
+
+  private estimate(a: AgentRow, task: TaskRow, role: Role): number {
+    return role === 'author' ? estimateAuthor(a, this.config.costEstimate) : estimateReview(a, task, this.config.costEstimate);
+  }
+
+  /** The agents the scheduler would consider for the role `task` waits on, with whether each is the requester's own. */
+  private candidatesFor(task: TaskRow, role: Role): { agent: AgentRow; own: boolean }[] {
+    const requester = this.db.agents.require(task.requester_agent_id);
+    if (role === 'author' && task.mode === 'own') return [{ agent: requester, own: true }];
+    return this.db.agents
+      .all()
+      .filter((a) => role === 'author' || a.id !== task.author_agent_id)
+      .map((agent) => ({ agent, own: agent.owner_name === requester.owner_name }));
   }
 
   private agentAffinity(agentId: string, files: string[]): number {
@@ -215,22 +265,12 @@ export class Scheduler {
   private assignAuthor(taskId: number): void {
     const task = this.db.tasks.require(taskId);
     if (task.state !== 'QUEUED' || this.hasPendingOpen(task.id)) return;
-    const requester = this.db.agents.require(task.requester_agent_id);
-    let chosen: AgentRow | undefined;
-    if (task.mode === 'own') {
-      const a = requester;
-      if (this.isOnline(a) && a.paused === 0 && !this.isRateLimited(a) && this.hasSlot(a) && !this.backedOff(a.id)) chosen = a;
-    } else {
-      const candidates: Candidate[] = [];
-      for (const a of this.db.agents.all()) {
-        if (!this.isOnline(a) || this.isRateLimited(a) || !this.hasSlot(a) || this.backedOff(a.id)) continue;
-        const own = a.owner_name === requester.owner_name;
-        const estimate = estimateAuthor(a, this.config.costEstimate);
-        if (own ? a.paused !== 0 : !this.mayLend(a) || budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) continue;
-        candidates.push({ agent: a, score: this.score(a, task, 'author', own, estimate) });
-      }
-      chosen = this.best(candidates);
+    const candidates: Candidate[] = [];
+    for (const { agent: a, own } of this.candidatesFor(task, 'author')) {
+      if (this.blocker(a, task, 'author', own) !== null) continue;
+      candidates.push({ agent: a, score: task.mode === 'own' ? 0 : this.score(a, task, 'author', own, this.estimate(a, task, 'author')) });
     }
+    const chosen = this.best(candidates);
     if (chosen === undefined) return;
     const sid = this.pickSession(chosen, taskFiles(task), 'author');
     if (sid !== null) this.bindAuthor(task, sid);
@@ -261,14 +301,10 @@ export class Scheduler {
   private assignReviewer(taskId: number): void {
     const task = this.db.tasks.require(taskId);
     if (task.state !== 'AWAITING_REVIEWER' || this.hasPendingOpen(task.id) || task.author_agent_id === null) return;
-    const requesterOwner = this.ownerOf(task.requester_agent_id);
     const candidates: Candidate[] = [];
-    for (const a of this.db.agents.all()) {
-      if (a.id === task.author_agent_id || !this.isOnline(a) || this.isRateLimited(a) || !this.hasSlot(a) || this.backedOff(a.id)) continue;
-      const own = a.owner_name === requesterOwner;
-      const estimate = estimateReview(a, task, this.config.costEstimate);
-      if (own ? a.paused !== 0 : !this.mayLend(a) || budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) continue;
-      candidates.push({ agent: a, score: this.score(a, task, 'reviewer', own, estimate) });
+    for (const { agent: a, own } of this.candidatesFor(task, 'reviewer')) {
+      if (this.blocker(a, task, 'reviewer', own) !== null) continue;
+      candidates.push({ agent: a, score: this.score(a, task, 'reviewer', own, this.estimate(a, task, 'reviewer')) });
     }
     // Agents whose earlier review of this task was abandoned (crash, invalid output, rate limit, …) are a last resort.
     const dropped = new Set(this.db.conversations.find({ task_id: task.id, state: 'abandoned' }).map((c) => c.reviewer_agent_id));
@@ -311,6 +347,46 @@ export class Scheduler {
       transition(this.db, task.id, 'IN_REVIEW', { reason: 'reviewer_assigned', actor: 'leader', data: { agentId: session.agent_id, sid, conversationId }, at: this.now() });
       this.options.handlers.sendReview(task.id, conversationId, 'start');
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Wait reasons — issue #51
+  // ---------------------------------------------------------------------------
+
+  /** Why `task` has no agent yet, from current Leader state; null unless it is QUEUED or AWAITING_REVIEWER. */
+  explainWait = (task: TaskRow): TaskWaitReason | null => {
+    const role: Role | null = task.state === 'QUEUED' ? 'author' : task.state === 'AWAITING_REVIEWER' ? 'reviewer' : null;
+    if (role === null) return null;
+    const reason = (code: TaskWaitCode, focus?: AgentRow, until: number | null = null, blockers: TaskWaitReason['blockers'] = []): TaskWaitReason => ({
+      role,
+      code,
+      nextStep: NEXT_STEP[code],
+      agentId: focus?.id ?? null,
+      ownerName: focus?.owner_name ?? null,
+      until,
+      blockers,
+    });
+    const opening = this.pendingOpen(task.id);
+    if (opening !== undefined) return reason('session_starting', this.db.agents.get(opening.agent_id));
+    if (role === 'reviewer' && task.author_agent_id === null) return reason('no_author');
+
+    const evaluated = this.candidatesFor(task, role)
+      .filter(({ agent }) => agent.revoked === 0)
+      .map(({ agent, own }) => ({ agent, blocker: this.blocker(agent, task, role, own) }));
+    if (evaluated.some((e) => e.blocker === null)) return reason('assigning');
+    const blockers = evaluated
+      .map(({ agent, blocker }) => ({ agentId: agent.id, ownerName: agent.owner_name, blocker: blocker!, until: this.blockedUntil(agent, blocker!) }))
+      .sort((a, b) => a.agentId.localeCompare(b.agentId));
+    const [blocker, code] = HEADLINE.find(([b]) => blockers.some((x) => x.blocker === b)) ?? ['offline', 'no_agent_online'];
+    const matching = evaluated.filter((e) => e.blocker === blocker);
+    const untils = blockers.filter((b) => b.blocker === blocker && b.until !== null).map((b) => b.until!);
+    return reason(code, matching.length === 1 ? matching[0]!.agent : undefined, untils.length > 0 ? Math.min(...untils) : null, blockers);
+  };
+
+  private blockedUntil(a: AgentRow, blocker: WaitBlocker): number | null {
+    if (blocker === 'rate_limited') return a.rate_limited_until;
+    if (blocker === 'session_backoff') return this.openBackoff.get(a.id) ?? null;
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -388,13 +464,18 @@ export class Scheduler {
   }
 
   private hasPendingOpen(taskId?: number, directiveId?: string): boolean {
+    return this.pendingOpen(taskId, directiveId) !== undefined;
+  }
+
+  /** The opening session requested for this task or directive, if any. */
+  private pendingOpen(taskId?: number, directiveId?: string): SessionRow | undefined {
     for (const s of this.db.sessions.find({ state: 'opening' })) {
       const req = this.db.openRequestFor(s.id);
       if (req === undefined) continue;
-      if (taskId !== undefined && req.task_id === taskId) return true;
-      if (directiveId !== undefined && req.directive_id === directiveId) return true;
+      if (taskId !== undefined && req.task_id === taskId) return s;
+      if (directiveId !== undefined && req.directive_id === directiveId) return s;
     }
-    return false;
+    return undefined;
   }
 
   private closeIdleSessions(): void {

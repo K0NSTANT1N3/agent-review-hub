@@ -4,6 +4,7 @@ import type { AppState } from '../../shared/ipc';
 import { call, timeAgo, useLive } from '../bridge';
 import { Card, Empty, ErrorNote, STATE_LABEL, StateBadge } from '../components/common';
 import { DiffView, type DiffRange } from '../components/DiffView';
+import { blockerLabel, waitText } from '../wait-reason';
 
 type Tab = 'timeline' | 'issues' | 'diff' | 'description';
 
@@ -46,6 +47,7 @@ export function TaskDetail({ id, state, onBack, initialTab }: { id: number; stat
   };
 
   const reviewers = [...new Set(d.conversations.map((c) => c.reviewerAgentId))];
+  const wait = waitText(t, state.ownerName);
   const blockedQuestion = t.escalationReason?.startsWith('author_blocked:') ? t.escalationReason.slice('author_blocked:'.length).trim() : null;
 
   return (
@@ -79,6 +81,21 @@ export function TaskDetail({ id, state, onBack, initialTab }: { id: number; stat
             <>
               <strong>Needs a human decision:</strong> {t.escalationReason}
             </>
+          )}
+        </div>
+      )}
+      {wait !== null && (
+        <div className={`note ${wait.tone === 'warn' ? 'note-warn' : 'note-muted'}`}>
+          <strong>{wait.short}.</strong> {wait.detail} <span className="muted">· {timeAgo(t.stateEnteredAt)}</span>
+          {wait.action !== null && <div>{wait.action}</div>}
+          {(t.waitReason?.blockers.length ?? 0) > 0 && (
+            <ul className="small wait-blockers">
+              {t.waitReason!.blockers.map((b) => (
+                <li key={b.agentId}>
+                  <b>{b.agentId}</b> <span className="muted">({b.ownerName})</span>: {blockerLabel(b)}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

@@ -1,4 +1,4 @@
-import type { AgentView, DirectiveView, TaskDetail, TaskState, TaskView } from '@quorum/protocol';
+import type { AgentView, DirectiveView, TaskDetail, TaskState, TaskView, TaskWaitReason } from '@quorum/protocol';
 
 export const STATE_LABEL: Record<TaskState, string> = {
   QUEUED: 'queued',
@@ -48,6 +48,8 @@ export interface TaskSummary {
   question: string | null;
   escalationReason: string | null;
   pauseReason: string | null;
+  /** Why the task waits for an agent (QUEUED / AWAITING_REVIEWER only). */
+  waitReason: TaskWaitReason | null;
   openIssues: { code: string; severity: string; file: string | null; line: number | null; comment: string }[];
   lastTestOutput: string | null;
   updatedAt: number;
@@ -71,6 +73,7 @@ export function summarize(detail: TaskDetail): TaskSummary {
     question: blockedQuestion(t),
     escalationReason: t.escalationReason,
     pauseReason: t.pauseReason,
+    waitReason: t.waitReason ?? null,
     openIssues: detail.issues
       .filter((i) => i.status === 'open')
       .map((i) => ({ code: i.code, severity: i.severity, file: i.file, line: i.line, comment: i.comment })),
@@ -88,6 +91,7 @@ export function formatSummary(s: TaskSummary): string {
   if (s.question !== null) rows.push(['question', s.question]);
   else if (s.escalationReason !== null) rows.push(['decision', s.escalationReason]);
   if (s.pauseReason !== null && s.state === 'PAUSED') rows.push(['paused', s.pauseReason]);
+  if (s.waitReason !== null && (s.state === 'QUEUED' || s.state === 'AWAITING_REVIEWER')) rows.push(['waiting', formatWait(s.waitReason)]);
   const lines = [`#${s.id} ${s.title}`, ...rows.map(([k, v]) => `  ${k.padEnd(9)}${v}`)];
   if (s.openIssues.length > 0) {
     lines.push('  open issues:');
@@ -101,6 +105,12 @@ export function formatSummary(s: TaskSummary): string {
   }
   if (s.state === 'FAILED' && s.lastTestOutput !== null) lines.push('  last test output:', indent(s.lastTestOutput.trimEnd(), 4));
   return lines.join('\n');
+}
+
+/** e.g. `agents busy (bob-claude); next: wait`. */
+export function formatWait(w: TaskWaitReason): string {
+  const who = w.agentId !== null ? ` (${w.agentId})` : '';
+  return `${w.code.replace(/_/g, ' ')}${who}; next: ${w.nextStep.replace(/_/g, ' ')}`;
 }
 
 export function formatTaskLine(t: TaskView): string {

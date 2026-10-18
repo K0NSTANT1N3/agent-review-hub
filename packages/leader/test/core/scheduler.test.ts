@@ -384,3 +384,108 @@ describe('sessions and directives', () => {
     expect(sent('directive.run')[0]!.frame.cmd).toMatchObject({ directiveId: 'd1', requester: 'alice', text: 'What is X?' });
   });
 });
+
+describe('wait reasons (issue #51)', () => {
+  const why = (id: number) => scheduler.explainWait(db.tasks.require(id));
+
+  it('explains an own-mode author wait: offline, paused, rate-limited, busy, then assignment', () => {
+    const t = task();
+    db.agents.update('alice-claude', { status: 'offline' });
+    expect(why(t.id)).toEqual({
+      role: 'author', code: 'no_agent_online', nextStep: 'connect_agent', agentId: 'alice-claude', ownerName: 'alice', until: null,
+      blockers: [{ agentId: 'alice-claude', ownerName: 'alice', blocker: 'offline', until: null }],
+    });
+
+    db.agents.update('alice-claude', { status: 'online', paused: 1 });
+    expect(why(t.id)).toMatchObject({ code: 'agent_paused', nextStep: 'resume_agent', agentId: 'alice-claude' });
+
+    db.agents.update('alice-claude', { paused: 0, rate_limited_until: now + 60_000 });
+    expect(why(t.id)).toMatchObject({ code: 'rate_limited', nextStep: 'wait', until: now + 60_000 });
+
+    db.agents.update('alice-claude', { rate_limited_until: null, max_sessions: 1 });
+    session('busy', 'alice-claude', { state: 'locked', lock_kind: 'task', lock_ref: '999', lock_role: 'author' });
+    expect(why(t.id)).toMatchObject({ code: 'agents_busy', nextStep: 'wait', agentId: 'alice-claude' });
+    scheduler.schedule();
+    expect(sent('session.open')).toHaveLength(0);
+
+    // The blocker clears: the reason changes without any change to the task row.
+    db.sessions.update('busy', { state: 'idle', lock_kind: null, lock_ref: null, lock_role: null, profile: 'reviewer' });
+    expect(why(t.id)).toMatchObject({ code: 'assigning', agentId: null, blockers: [] });
+    scheduler.schedule();
+    const open = sent('session.open')[0]!;
+    expect(why(t.id)).toMatchObject({ code: 'session_starting', agentId: 'alice-claude', nextStep: 'wait' });
+
+    handlers.handle('alice-claude', { type: 'session.opened', inReplyTo: open.frame.msgId, sid: open.frame.cmd.sid, ok: true });
+    expect(db.tasks.require(t.id).state).toBe('AUTHORING');
+    expect(why(t.id)).toBeNull();
+  });
+
+  it('reports a failed session open as a back-off until it expires', () => {
+    const t = task();
+    scheduler.schedule();
+    const open = sent('session.open')[0]!;
+    handlers.handle('alice-claude', { type: 'session.opened', inReplyTo: open.frame.msgId, sid: open.frame.cmd.sid, ok: false, error: 'boom' });
+    expect(why(t.id)).toMatchObject({ code: 'session_backoff', nextStep: 'wait', until: now + 5 * 60_000 });
+    now += 5 * 60_000 + 1;
+    db.agents.update('alice-claude', { last_heartbeat_at: now });
+    expect(why(t.id)).toMatchObject({ code: 'assigning' });
+  });
+
+  it('pool mode: lists every blocked candidate and headlines the soonest to clear', () => {
+    const t = task({ mode: 'pool' });
+    db.agents.update('alice-claude', { status: 'offline' });
+    expect(why(t.id)).toMatchObject({ code: 'no_agent_online', nextStep: 'connect_agent', agentId: 'alice-claude' });
+
+    agent('bob-claude', { lend_mode: 'never' });
+    expect(why(t.id)).toMatchObject({ code: 'not_lending', nextStep: 'adjust_settings', agentId: 'bob-claude' });
+
+    agent('carol-claude', { lend_tokens_per_day: 1 });
+    expect(why(t.id)).toMatchObject({ code: 'budget_exhausted', nextStep: 'adjust_settings', agentId: 'carol-claude' });
+
+    agent('dave-claude', { paused: 1 });
+    agent('erin-claude', { max_sessions: 1 });
+    session('e', 'erin-claude', { state: 'locked', lock_kind: 'task', lock_ref: '999', lock_role: 'author' });
+    expect(why(t.id)).toEqual({
+      role: 'author', code: 'agents_busy', nextStep: 'wait', agentId: 'erin-claude', ownerName: 'erin', until: null,
+      blockers: [
+        { agentId: 'alice-claude', ownerName: 'alice', blocker: 'offline', until: null },
+        { agentId: 'bob-claude', ownerName: 'bob', blocker: 'not_lending', until: null },
+        { agentId: 'carol-claude', ownerName: 'carol', blocker: 'budget_exhausted', until: null },
+        { agentId: 'dave-claude', ownerName: 'dave', blocker: 'paused', until: null },
+        { agentId: 'erin-claude', ownerName: 'erin', blocker: 'busy', until: null },
+      ],
+    });
+
+    db.agents.update('dave-claude', { revoked: 1 });
+    expect(why(t.id)!.blockers.map((b) => b.agentId)).not.toContain('dave-claude');
+  });
+
+  it('explains reviewer selection without counting the author, and updates when a reviewer frees up', () => {
+    const t = awaitingReview();
+    expect(why(t.id)).toEqual({ role: 'reviewer', code: 'no_agent_online', nextStep: 'connect_agent', agentId: null, ownerName: null, until: null, blockers: [] });
+
+    agent('bob-claude', { max_sessions: 1 });
+    session('busy', 'bob-claude', { state: 'locked', lock_kind: 'task', lock_ref: '999', lock_role: 'reviewer' });
+    expect(why(t.id)).toMatchObject({ role: 'reviewer', code: 'agents_busy', agentId: 'bob-claude', ownerName: 'bob' });
+    scheduler.schedule();
+    expect(db.tasks.require(t.id).state).toBe('AWAITING_REVIEWER');
+
+    db.sessions.update('busy', { state: 'idle', lock_kind: null, lock_ref: null, lock_role: null, profile: 'reviewer' });
+    expect(why(t.id)).toMatchObject({ role: 'reviewer', code: 'assigning' });
+    scheduler.schedule();
+    expect(db.tasks.require(t.id).state).toBe('IN_REVIEW');
+    expect(why(t.id)).toBeNull();
+  });
+
+  it('needs a person when a task awaits a reviewer with no author on record', () => {
+    const t = task({ state: 'AWAITING_REVIEWER' });
+    expect(why(t.id)).toMatchObject({ role: 'reviewer', code: 'no_author', nextStep: 'human_action' });
+  });
+
+  it('gives no wait reason for active, paused, escalated or finished tasks', () => {
+    db.agents.update('alice-claude', { status: 'offline' });
+    for (const state of ['AUTHORING', 'IN_REVIEW', 'SYNCING', 'MERGE_QUEUED', 'MERGING', 'PAUSED', 'ESCALATED', 'MERGED', 'CANCELLED', 'FAILED']) {
+      expect(why(task({ state }).id)).toBeNull();
+    }
+  });
+});

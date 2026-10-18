@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TaskDetail, TaskView } from '@quorum/protocol';
+import type { TaskDetail, TaskView, TaskWaitReason } from '@quorum/protocol';
 import { normalizeLeaderUrl } from '../src/client.js';
 import { outcomeOf } from '../src/format.js';
 import { EXIT, run, type Deps } from '../src/run.js';
@@ -9,7 +9,7 @@ function taskView(patch: Partial<TaskView> = {}): TaskView {
     id: 7, title: 'T', description: 'd', tags: [], priority: 1, mode: 'own', requesterAgentId: 'ana-agent', requesterOwner: 'Ana',
     authorAgentId: 'ana-agent', authorSessionId: 's', state: 'AUTHORING', pausedFromState: null, pauseReason: null, escalationReason: null,
     branch: 'quorum/task-7', baseCommit: null, headCommit: null, lastReviewedCommit: null, reviewRound: 0, testFixAttempts: 0, syncAttempts: 0,
-    files: [], diffLines: 0, lastTestOutput: null, mergedCommit: null, createdAt: 1, updatedAt: 1, stateEnteredAt: 1, approvedAt: null, ...patch,
+    files: [], diffLines: 0, lastTestOutput: null, mergedCommit: null, createdAt: 1, updatedAt: 1, stateEnteredAt: 1, approvedAt: null, waitReason: null, ...patch,
   };
 }
 
@@ -48,6 +48,16 @@ describe('outcomeOf', () => {
     expect(outcomeOf(taskView({ state: 'PAUSED', pauseReason: 'human' }))).toBe('needs_human');
     expect(outcomeOf(taskView({ state: 'PAUSED', pauseReason: 'rate_limited' }))).toBe('pending');
     expect(outcomeOf(taskView({ state: 'IN_REVIEW' }))).toBe('pending');
+  });
+});
+
+describe('wait reasons', () => {
+  it('shows why a queued task waits, in text and JSON', async () => {
+    const waitReason: TaskWaitReason = { role: 'author', code: 'agents_busy', nextStep: 'wait', agentId: 'bob-claude', ownerName: 'bob', until: null, blockers: [] };
+    const text = await harness(['task', 'status', '7'], () => ({ status: 200, body: detail({ state: 'QUEUED', waitReason }) }));
+    expect(text.out).toContain('waiting  agents busy (bob-claude); next: wait');
+    const json = await harness(['task', 'status', '7', '--json'], () => ({ status: 200, body: detail({ state: 'QUEUED', waitReason }) }));
+    expect(JSON.parse(json.out)).toMatchObject({ waitReason: { code: 'agents_busy', agentId: 'bob-claude' } });
   });
 });
 

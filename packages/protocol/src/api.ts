@@ -63,6 +63,57 @@ export const SessionViewSchema = z.object({
 });
 export type SessionView = z.infer<typeof SessionViewSchema>;
 
+/**
+ * Why a QUEUED or AWAITING_REVIEWER task has no agent yet (issue #51). Derived on read from Leader state with the
+ * scheduler's own eligibility rules; explanatory only, never a scheduler input. Unknown codes degrade to 'unknown'.
+ */
+export const TaskWaitCodeSchema = z.enum([
+  /** A session is opening on the chosen agent; assignment completes when it reports ready. */
+  'session_starting',
+  /** An eligible agent exists; the next scheduler pass assigns it. */
+  'assigning',
+  /** No candidate agent is online (in own mode: the requester's agent). */
+  'no_agent_online',
+  /** Every online candidate has all its session slots in use. */
+  'agents_busy',
+  /** Opening a session failed recently on the remaining candidates; the Leader retries after a back-off. */
+  'session_backoff',
+  'rate_limited',
+  /** Teammates' agents have spent today's lending budget. */
+  'budget_exhausted',
+  /** Teammates' agents do not lend right now (lend mode, or their owner is active). */
+  'not_lending',
+  'agent_paused',
+  /** Awaiting a reviewer without an author on record (legacy data): needs a person. */
+  'no_author',
+  'unknown',
+]);
+export type TaskWaitCode = z.infer<typeof TaskWaitCodeSchema>;
+
+/** Why one candidate agent cannot take the task now. */
+export const WaitBlockerSchema = z.enum(['offline', 'paused', 'rate_limited', 'busy', 'session_backoff', 'not_lending', 'budget_exhausted', 'unknown']);
+export type WaitBlocker = z.infer<typeof WaitBlockerSchema>;
+
+export const WaitNextStepSchema = z.enum(['wait', 'connect_agent', 'resume_agent', 'adjust_settings', 'human_action']);
+export type WaitNextStep = z.infer<typeof WaitNextStepSchema>;
+
+export const TaskWaitReasonSchema = z.object({
+  /** The role being filled: 'author' for QUEUED, 'reviewer' for AWAITING_REVIEWER. */
+  role: z.enum(['author', 'reviewer']),
+  code: TaskWaitCodeSchema.catch('unknown'),
+  nextStep: WaitNextStepSchema.catch('wait'),
+  /** The one agent the reason is about, when there is exactly one (own mode, or a single blocked candidate). */
+  agentId: z.string().nullable(),
+  ownerName: z.string().nullable(),
+  /** When the blocker clears on its own (rate limit or open back-off), if known. */
+  until: nullableTs,
+  /** Every candidate agent that cannot take the task, in agent id order. */
+  blockers: z.array(
+    z.object({ agentId: z.string(), ownerName: z.string(), blocker: WaitBlockerSchema.catch('unknown'), until: nullableTs }),
+  ),
+});
+export type TaskWaitReason = z.infer<typeof TaskWaitReasonSchema>;
+
 export const TaskViewSchema = z.object({
   id: z.number().int(),
   title: z.string(),
@@ -93,6 +144,8 @@ export const TaskViewSchema = z.object({
   updatedAt: ts,
   stateEnteredAt: ts,
   approvedAt: nullableTs,
+  /** Set only while the task waits for an agent (QUEUED, AWAITING_REVIEWER); null otherwise. */
+  waitReason: TaskWaitReasonSchema.nullable().default(null),
 });
 export type TaskView = z.infer<typeof TaskViewSchema>;
 

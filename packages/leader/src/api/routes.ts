@@ -73,6 +73,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
   const { db, config, locks, handlers, scheduler, mergeWorker, git } = deps;
   const now = deps.now ?? Date.now;
   const log = deps.logger ?? silentLogger;
+  const view = (t: TaskRow) => taskView(db, t, scheduler.explainWait);
 
   const bearer = (req: FastifyRequest) => {
     const header = req.headers.authorization;
@@ -148,7 +149,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
     db.tasks.update(t.id, { review_round: Math.max(0, t.review_round - 1), escalation_reason: null });
     const after = transitionToAuthorState(db, t.id, 'AUTHORING', { reason: 'sent_back_by_human', actor: actor(ctx), at: now() });
     if (after.state === 'AUTHORING') handlers.sendAuthor(t.id, 'revise');
-    return taskView(db, db.tasks.require(t.id));
+    return view(db.tasks.require(t.id));
   }
 
   const handlersByRoute: { [R in ApiRouteName]: (ctx: Ctx) => unknown | Promise<unknown> } = {
@@ -170,7 +171,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
       const q = ListTasksQuerySchema.parse(ctx.query ?? {});
       let rows = q.state === undefined ? db.tasks.all() : db.tasks.find({ state: q.state });
       if (q.mine === 'true') rows = rows.filter((t) => db.agents.get(t.requester_agent_id)?.owner_name === ctx.agent?.owner_name);
-      return { tasks: rows.sort((a, b) => b.id - a.id).map((t) => taskView(db, t)) };
+      return { tasks: rows.sort((a, b) => b.id - a.id).map((t) => view(t)) };
     },
 
     createTask: (ctx) => {
@@ -194,10 +195,10 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
         return t;
       });
       scheduler.trigger();
-      return taskView(db, created);
+      return view(created);
     },
 
-    getTask: (ctx) => taskDetail(db, task(ctx.id)),
+    getTask: (ctx) => taskDetail(db, task(ctx.id), scheduler.explainWait),
 
     getTaskDiff: async (ctx) => {
       const t = task(ctx.id);
@@ -226,7 +227,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
           updated_at: now(),
         });
         scheduler.trigger();
-        return taskView(db, updated);
+        return view(updated);
       });
     },
 
@@ -238,7 +239,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
       if (t.state === 'MERGING') throw new ApiHttpError('CONFLICT', 'the task is being merged; wait for it to finish');
       handlers.finishTask(t.id, 'CANCELLED', 'cancelled_by_human', actor(ctx));
       scheduler.trigger();
-      return taskView(db, db.tasks.require(t.id));
+      return view(db.tasks.require(t.id));
     },
 
     approveTask: (ctx) => {
@@ -253,7 +254,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
           }
         }
         queueForMerge(t.id, 'approved_by_human', actor(ctx));
-        return taskView(db, db.tasks.require(t.id));
+        return view(db.tasks.require(t.id));
       });
       mergeWorker.kick();
       return result;
@@ -303,7 +304,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
         requireState(t, ['IN_REVIEW'], 'reassign the reviewer of');
         releaseReviewer(t.id, 'reassigned_by_human');
         transition(db, t.id, 'AWAITING_REVIEWER', { reason: 'reviewer_reassigned_by_human', actor: actor(ctx), at: now() });
-        return taskView(db, db.tasks.require(t.id));
+        return view(db.tasks.require(t.id));
       });
       scheduler.trigger();
       return result;
@@ -321,7 +322,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
         }
         if (t.state === 'AUTHORING' || t.state === 'SYNCING') cancelAuthorTurn(t);
         transition(db, t.id, 'PAUSED', { reason: 'human', actor: actor(ctx), at: now() });
-        return taskView(db, db.tasks.require(t.id));
+        return view(db.tasks.require(t.id));
       }),
 
     resumeTask: (ctx) => {
@@ -330,7 +331,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
       if (t.state !== 'PAUSED' || t.pause_reason !== 'human') throw new ApiHttpError('ILLEGAL_TRANSITION', 'task was not paused by a human');
       scheduler.resumeFromHumanPause(t.id);
       scheduler.trigger();
-      return taskView(db, db.tasks.require(t.id));
+      return view(db.tasks.require(t.id));
     },
 
     createDirective: (ctx) => {
