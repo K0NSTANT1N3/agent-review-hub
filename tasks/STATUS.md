@@ -1,6 +1,6 @@
 # Project status — single source of truth
 
-> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1 feature complete.
+> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1.1 released.
 
 ## State
 
@@ -13,6 +13,14 @@ Leader squash-merged with `Quorum-Task/Author/Reviewer/Requested-By` trailers an
 to end. The packaged Linux app (AppImage/deb) was smoke-tested: in-process Leader, Node daemon and UI all running. The Release
 workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppImage`, `…-linux-amd64.deb`,
 `…-mac-arm64.dmg`, `…-win-x64.exe`.
+
+## Since v0.1.0 (in v0.1.1)
+
+* Every desktop screen was rendered against a live two-member team (real Leader/Nodes, mock agents, two review
+  rounds → merge); fixed blank timeline rows, an overflowing task board and the back link.
+* Reviewer failover now prefers a reviewer who hasn't already dropped the task (#32), with fallback; conversation
+  order is stable (#36).
+* Codex-1 was auto-resumed after its limit and opened #41; superseded by #44 and closed (see the PR for why).
 
 ## Who did what
 
