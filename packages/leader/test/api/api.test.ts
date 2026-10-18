@@ -205,6 +205,30 @@ describe('REST API (§17)', () => {
     expect((offline.body!.activities as { sessionId: string | null; activityState: string }[]).find((item) => item.sessionId === 'bob-session')).toMatchObject({ activityState: 'offline' });
   });
 
+  it('shows who waits for whom: reviewer on author fixes, rate limits, and the explained queue', async () => {
+    const now = Date.now();
+    side.agents.update('alice-claude', { status: 'online', last_heartbeat_at: now });
+    side.agents.update('bob-claude', { status: 'online', last_heartbeat_at: now });
+    side.agents.update('admin-console', { status: 'online', last_heartbeat_at: now, rate_limited_until: now + 600_000 });
+    const task = side.tasks.insert({ title: 'Fix review notes', description: 'd', requester_agent_id: 'alice-claude', state: 'AUTHORING', author_agent_id: 'alice-claude', created_at: now, updated_at: now, state_entered_at: now });
+    side.sessions.insert({ id: 'alice-session', agent_id: 'alice-claude', state: 'locked', lock_kind: 'task', lock_ref: String(task.id), lock_role: 'author', created_at: now, last_used_at: now });
+    side.sessions.insert({ id: 'bob-session', agent_id: 'bob-claude', state: 'locked', lock_kind: 'task', lock_ref: String(task.id), lock_role: 'reviewer', created_at: now, last_used_at: now });
+    side.tasks.update(task.id, { author_session_id: 'alice-session' });
+    side.conversations.insert({ id: 'round-2', task_id: task.id, author_session_id: 'alice-session', author_agent_id: 'alice-claude', reviewer_session_id: 'bob-session', reviewer_agent_id: 'bob-claude', state: 'active', created_at: now });
+    const escalated = side.tasks.insert({ title: 'Disputed change', description: 'd', requester_agent_id: 'bob-claude', state: 'ESCALATED', escalation_reason: 'Issues disputed twice', created_at: now, updated_at: now, state_entered_at: now });
+
+    const body = (await api('GET', '/api/activity', 'alice')).body!;
+    const activities = body.activities as { agentId: string; sessionId: string | null; activityState: string; waitingOn: string | null; waitingForName: string | null; waitingReason: string | null; rateLimitedUntil: number | null }[];
+    expect(activities.find((item) => item.sessionId === 'bob-session')).toMatchObject({
+      activityState: 'waiting', waitingOn: 'agent', waitingForName: 'alice', waitingReason: 'Waiting for author fixes',
+    });
+    expect(activities.find((item) => item.sessionId === 'alice-session')).toMatchObject({ activityState: 'working', waitingForName: null });
+    expect(activities.find((item) => item.agentId === 'admin-console')).toMatchObject({
+      activityState: 'waiting', waitingOn: 'rate_limit', rateLimitedUntil: now + 600_000,
+    });
+    expect(body.queue).toEqual([expect.objectContaining({ taskId: escalated.id, position: null, needs: 'human', requesterOwner: 'bob', reason: 'Issues disputed twice' })]);
+  });
+
   it('pushes team activity changes over /ws/ui', async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=${tokens.alice}`);
     await new Promise((r) => ws.once('open', r));

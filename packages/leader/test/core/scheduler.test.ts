@@ -384,3 +384,55 @@ describe('sessions and directives', () => {
     expect(sent('directive.run')[0]!.frame.cmd).toMatchObject({ directiveId: 'd1', requester: 'alice', text: 'What is X?' });
   });
 });
+
+describe('queue explanation', () => {
+  it('explains an own-only task blocked by its rate-limited requester, without assigning anything', () => {
+    db.agents.update('alice-claude', { rate_limited_until: now + 60_000 });
+    const t = task();
+    const queue = scheduler.queueSnapshot();
+    expect(queue).toEqual([expect.objectContaining({
+      taskId: t.id, position: 1, needs: 'author', waitingOn: 'rate_limit', requesterOwner: 'alice',
+      reason: "Own-only task: alice's agent is rate-limited",
+      candidates: [{ agentId: 'alice-claude', ownerName: 'alice', blocker: 'rate-limited' }],
+    })]);
+    expect(commands).toHaveLength(0);
+    expect(db.tasks.require(t.id).state).toBe('QUEUED');
+  });
+
+  it('lists authors before reviewers and names why each agent cannot review', () => {
+    agent('bob-claude', { status: 'offline' });
+    agent('carol-claude', { lend_mode: 'when_idle' });
+    agent('dave-claude', { lend_tokens_per_day: 0 });
+    const review = awaitingReview();
+    const write = task({ mode: 'pool', priority: 0 });
+    const queue = scheduler.queueSnapshot();
+    expect(queue.map((e) => [e.taskId, e.position, e.needs])).toEqual([[write.id, 1, 'author'], [review.id, 2, 'reviewer']]);
+    expect(queue[1]).toMatchObject({
+      waitingOn: 'agent', authorOwnerName: 'alice',
+      reason: 'No free reviewer: bob offline, carol in use by its owner (lends when idle), dave out of lending budget',
+    });
+    expect(queue[1]!.candidates.find((c) => c.agentId === 'alice-claude')).toMatchObject({ blocker: `wrote #${review.id}` });
+  });
+
+  it('reports a task an eligible agent will pick up on the next pass', () => {
+    agent('bob-claude');
+    const t = task({ mode: 'pool' });
+    expect(scheduler.queueSnapshot()[0]).toMatchObject({ taskId: t.id, waitingOn: 'scheduler', reason: 'Being assigned on the next scheduler pass' });
+  });
+
+  it('orders merges like the merge worker and lists human decisions without a position', () => {
+    const merging = task({ state: 'MERGING', approved_at: now - 3000 });
+    const second = task({ state: 'MERGE_QUEUED', approved_at: now - 1000 });
+    const first = task({ state: 'MERGE_QUEUED', approved_at: now - 2000 });
+    const escalated = task({ state: 'ESCALATED', escalation_reason: 'Reviewer and author disagree', state_entered_at: now - 5000 });
+    const paused = task({ state: 'PAUSED', pause_reason: 'human', paused_from_state: 'AUTHORING', state_entered_at: now - 1000 });
+    const queue = scheduler.queueSnapshot();
+    expect(queue.map((e) => [e.taskId, e.position, e.needs, e.reason])).toEqual([
+      [first.id, 1, 'merge', `Merging #${merging.id} first`],
+      [second.id, 2, 'merge', '2 merges ahead'],
+      [escalated.id, null, 'human', 'Reviewer and author disagree'],
+      [paused.id, null, 'human', 'Paused by a human'],
+    ]);
+    expect(queue[2]).toMatchObject({ waitingOn: 'human', requesterOwner: 'alice' });
+  });
+});
