@@ -3,6 +3,8 @@ node_modules/
 dist/
 out/
 build/
+# Desktop app icons (electron-builder buildResources) are source, not output.
+!packages/desktop/build/
 coverage/
 .cache/
 *.tsbuildinfo

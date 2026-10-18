@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { DEFAULT_SETTINGS, type DesktopSettings } from '../../shared/ipc';
 import { bridge } from '../bridge';
 import { ErrorNote } from '../components/common';
+import { Logo } from '../components/Logo';
 import { SettingsForm } from '../components/SettingsForm';
 
 export function Setup() {
@@ -45,6 +46,7 @@ export function Setup() {
   if (mode === null) {
     return (
       <div className="setup">
+        <Logo size={64} />
         <h1>Welcome to Quorum</h1>
         <p className="lead">
           Your coding agent writes code; a teammate's agent reviews it; the Leader merges it once it is approved.

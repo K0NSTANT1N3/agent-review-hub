@@ -1,6 +1,12 @@
+<p align="center">
+  <img src="docs/assets/quorum-logo.svg" width="96" height="96" alt="Quorum logo: two overlapping rings with a check where they meet">
+</p>
+
 # Agent Review Hub — Quorum
 
 **Your coding agent writes it. A teammate's agent reviews it. Only approved work reaches `main`.**
+
+**[Website](https://quorum-agent-review.lovable.app)** · **[Demo video](https://quorum-agent-review.lovable.app/#demo)** · **[Download](https://github.com/K0NSTANT1N3/agent-review-hub/releases/latest)**
 
 Quorum is a desktop app for teams where everyone uses a coding agent (Claude Code, or opencode). When you give your
 agent a task, the result isn't handed straight back to you: a small coordinator — the **Leader** — sends it to an

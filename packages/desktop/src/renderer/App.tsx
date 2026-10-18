@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AppState } from '../shared/ipc';
 import { bridge } from './bridge';
 import { Dot } from './components/common';
+import { Logo } from './components/Logo';
 import { Dashboard } from './views/Dashboard';
 import { NewTask } from './views/NewTask';
 import { Directives, Sessions, Settings, Team } from './views/Others';
@@ -49,7 +50,10 @@ export function App() {
   return (
     <div className="shell">
       <nav className="sidebar">
-        <div className="brand">Quorum</div>
+        <div className="brand">
+          <Logo size={24} />
+          Quorum
+        </div>
         {NAV.map((n) => (
           <button key={n.page} className={active === n.page ? 'nav active' : 'nav'} onClick={() => setPage({ name: n.page } as Page)}>
             {n.label}
