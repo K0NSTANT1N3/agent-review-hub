@@ -300,7 +300,7 @@ export class Services {
 
   async api<R extends ApiRouteName>(route: R, options: ApiCallOptions = {}): Promise<ApiResult<R>> {
     const c = this.requireConfig();
-    if (requiresTls(c.leaderUrl)) {
+    if (c.mode === 'join' && requiresTls(c.leaderUrl)) {
       return { ok: false, status: 0, error: 'INSECURE_LEADER', message: INSECURE_REMOTE_LEADER };
     }
     const def = API_ROUTES[route];
@@ -369,7 +369,7 @@ export class Services {
 
   private async startAll(): Promise<void> {
     if (this.config?.mode === 'host') await this.startLeader();
-    if (this.config !== null && requiresTls(this.config.leaderUrl)) {
+    if (this.config?.mode === 'join' && requiresTls(this.config.leaderUrl)) {
       this.nodeError = INSECURE_REMOTE_LEADER;
       this.authError = INSECURE_REMOTE_LEADER;
       this.connected = false;
@@ -434,6 +434,8 @@ export class Services {
     const generation = ++this.nodeGeneration;
     try {
       this.daemon = await this.deps.startDaemon(this.nodeConfig(), {
+        // The host's own daemon may use the selected local interface when the Leader is restricted to it.
+        ...(this.config?.mode === 'host' ? { insecure: true } : {}),
         ...(this.deps.idleSeconds !== undefined ? { idleSeconds: this.deps.idleSeconds } : {}),
         onReject: (reason) => this.nodeRejected(generation, reason),
       });
@@ -472,7 +474,7 @@ export class Services {
   private startUi(): void {
     const c = this.config;
     if (c === null) return;
-    if (requiresTls(c.leaderUrl)) {
+    if (c.mode === 'join' && requiresTls(c.leaderUrl)) {
       this.authError = INSECURE_REMOTE_LEADER;
       this.connected = false;
       return;
