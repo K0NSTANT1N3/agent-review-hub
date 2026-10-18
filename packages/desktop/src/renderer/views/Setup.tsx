@@ -113,7 +113,7 @@ export function Setup() {
           <div className="span-2 stack-sm">
             <strong>Address teammates use to reach this computer</strong>
             <span className="hint">
-              It goes into every join code. Teammates connect to this address — nothing is discovered automatically.
+              It goes into every join code. Remote connections require an https:// TLS proxy or tunnel URL; plain host addresses are limited to local connections.
             </span>
             {addresses.map((o, i) => (
               <label key={`${o.address}-${o.interfaceName}`} className="radio">
@@ -127,7 +127,7 @@ export function Setup() {
               <input type="radio" checked={choice === -1} onChange={() => setChoice(-1)} />
               Custom address or tunnel URL
               {choice === -1 && (
-                <input className="grow" value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="my-pc.example.com or https://name.trycloudflare.com" />
+                <input className="grow" value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="https://name.trycloudflare.com" />
               )}
             </label>
             {addresses.every((o) => o.kind === 'local' || o.kind === 'public') && (

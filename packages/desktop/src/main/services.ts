@@ -19,6 +19,17 @@ import { leaderNetworkKind } from './network.js';
 import { UiStream } from './ui-stream.js';
 
 const execFileAsync = promisify(execFile);
+const INSECURE_REMOTE_LEADER = 'Refusing to send credentials to a remote Leader over unencrypted ws://. Configure a TLS proxy or tunnel and ask for a new secure join code.';
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host.startsWith('127.');
+}
+
+function requiresTls(leaderUrl: string): boolean {
+  const url = new URL(leaderUrl);
+  return url.protocol === 'ws:' && !isLoopbackHost(url.hostname);
+}
 
 // Owns the in-process Leader (host mode) and Node daemon; no Electron imports so it is testable with plain Node.
 
@@ -181,6 +192,7 @@ export class Services {
 
   private async setupJoinNow(setup: JoinSetup): Promise<AppState> {
     const code = decodeJoinCode(setup.joinCode);
+    if (requiresTls(code.leaderUrl)) throw new Error(INSECURE_REMOTE_LEADER);
     await this.stopAllNow();
     this.save({
       version: 1,
@@ -204,10 +216,12 @@ export class Services {
     if (ownerName === '') throw new Error('Teammate name is required');
     const agentId = args.agentId.trim() || agentIdFor(ownerName);
     if (agentId === c.agentId) throw new Error('That agent id is yours; pick another');
+    const leaderUrl = publicLeaderUrl(c.host.publicHost, c.host.port);
+    if (requiresTls(leaderUrl)) throw new Error(`${INSECURE_REMOTE_LEADER} Set the host address to an https:// TLS proxy or tunnel URL.`);
     const { token } = await this.deps.addAgent(this.leaderConfig().dbPath, { id: agentId, owner: ownerName });
     return {
       joinCode: encodeJoinCode({
-        leaderUrl: publicLeaderUrl(c.host.publicHost, c.host.port),
+        leaderUrl,
         agentId,
         ownerName,
         token,
@@ -286,6 +300,9 @@ export class Services {
 
   async api<R extends ApiRouteName>(route: R, options: ApiCallOptions = {}): Promise<ApiResult<R>> {
     const c = this.requireConfig();
+    if (c.mode === 'join' && requiresTls(c.leaderUrl)) {
+      return { ok: false, status: 0, error: 'INSECURE_LEADER', message: INSECURE_REMOTE_LEADER };
+    }
     const def = API_ROUTES[route];
     const url = new URL(apiPath(route, options.id), httpBaseFromLeaderUrl(c.leaderUrl));
     for (const [k, v] of Object.entries(options.query ?? {})) url.searchParams.set(k, v);
@@ -352,6 +369,13 @@ export class Services {
 
   private async startAll(): Promise<void> {
     if (this.config?.mode === 'host') await this.startLeader();
+    if (this.config?.mode === 'join' && requiresTls(this.config.leaderUrl)) {
+      this.nodeError = INSECURE_REMOTE_LEADER;
+      this.authError = INSECURE_REMOTE_LEADER;
+      this.connected = false;
+      this.changed();
+      return;
+    }
     await this.startNode();
     this.startUi();
     this.changed();
@@ -410,8 +434,8 @@ export class Services {
     const generation = ++this.nodeGeneration;
     try {
       this.daemon = await this.deps.startDaemon(this.nodeConfig(), {
-        // The host chose this address (LAN, VPN or tunnel); the Node's ws:// guard is meant for headless setups.
-        insecure: true,
+        // The host's own daemon may use the selected local interface when the Leader is restricted to it.
+        ...(this.config?.mode === 'host' ? { insecure: true } : {}),
         ...(this.deps.idleSeconds !== undefined ? { idleSeconds: this.deps.idleSeconds } : {}),
         onReject: (reason) => this.nodeRejected(generation, reason),
       });
@@ -450,6 +474,11 @@ export class Services {
   private startUi(): void {
     const c = this.config;
     if (c === null) return;
+    if (c.mode === 'join' && requiresTls(c.leaderUrl)) {
+      this.authError = INSECURE_REMOTE_LEADER;
+      this.connected = false;
+      return;
+    }
     this.ui?.stop();
     this.ui = null;
     this.authError = null;

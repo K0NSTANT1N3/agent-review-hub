@@ -143,29 +143,14 @@ const lanIp = Object.values(networkInterfaces())
   .find((a) => a !== undefined && a.family === 'IPv4' && !a.internal)?.address;
 
 describe.skipIf(lanIp === undefined)('joining over the LAN with the real Node daemon', () => {
-  it('a member connects to the host through its LAN address (plain ws://)', async () => {
-    const real: ServiceDeps = { ...deps(), startDaemon: (c, o) => startDaemon(c, o) };
-    const mock = join(dir, 'mock.json');
-    writeFileSync(mock, JSON.stringify({ author: [], reviewer: [] }));
-    const settings = { ...DEFAULT_SETTINGS, adapter: { type: 'mock' as const, scriptPath: mock, contextWindow: 200000 } };
-    const host = new Services(join(dir, 'lan-host'), real);
-    services.push(host);
+  it('refuses to create remote join codes without TLS', async () => {
+    const host = make('lan-host');
     const port = await freePort();
-    await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: lanIp!, settings });
-    const { joinCode } = await host.invite({ agentId: '', ownerName: 'Bo' });
-    expect(decodeJoinCode(joinCode).leaderUrl).toBe(`ws://${lanIp}:${port}/ws/node`);
-
-    const member = new Services(join(dir, 'lan-member'), real);
-    services.push(member);
-    const state = await member.setupJoin({ joinCode, settings });
-    expect(state.node).toMatchObject({ running: true, error: null });
-    let online = false;
-    for (let i = 0; i < 50 && !online; i += 1) {
-      const r = await host.api('listAgents');
-      online = r.ok && r.data.agents.find((a) => a.id === 'bo-agent')?.status === 'online';
-      if (!online) await new Promise((r) => setTimeout(r, 200));
-    }
-    expect(online).toBe(true);
+    await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: lanIp!, settings: DEFAULT_SETTINGS });
+    await expect(host.invite({ agentId: '', ownerName: 'Bo' })).rejects.toThrow(/unencrypted ws:\/\//);
+    const member = make('lan-member');
+    const insecureCode = encodeJoinCode({ leaderUrl: `ws://${lanIp}:${port}/ws/node`, agentId: 'bo-agent', ownerName: 'Bo', token: 'qrm_x', repoRemoteUrl: bare });
+    await expect(member.setupJoin({ joinCode: insecureCode, settings: DEFAULT_SETTINGS })).rejects.toThrow(/unencrypted ws:\/\//);
   });
 });
 
