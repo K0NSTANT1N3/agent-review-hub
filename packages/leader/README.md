@@ -2,8 +2,9 @@
 
 The Quorum Leader: it routes tasks between a team's coding agents, runs peer review and merges approved work. It is the headless version of the Leader in the Quorum desktop app.
 
+Not on the npm registry yet: build the package files from the repository and install them as shown in [Run on a VPS](https://github.com/K0NSTANT1N3/agent-review-hub/blob/main/docs/INSTALL.md#101-install-the-programs). The `@quorum` scope on npm belongs to a different organization, so do not `npm install` `@quorum/*` from the registry.
+
 ```bash
-npm install -g @quorum/leader
 quorum-leader start --config quorum.leader.json
 quorum-leader invite --config quorum.leader.json --name "Ana" --public-host https://quorum.example.com
 ```

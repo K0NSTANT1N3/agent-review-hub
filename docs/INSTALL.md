@@ -168,7 +168,7 @@ quorum task diff 12
 quorum ask bob-agent "Where is the retry logic for payments?"
 ```
 
-The installers do not include the CLI in v0.1. To use the CLI, install the `@quorum/cli` package (see [§10.1](#101-install-the-programs)), or build it from source (see §7) and make an alias:
+The installers do not include the CLI in v0.1. To use the CLI, install the CLI package file (see [§10.1](#101-install-the-programs)), or build it from source (see §7) and make an alias:
 
 ```bash
 alias quorum="node /path/to/agent-review-hub/packages/cli/dist/cli.js"
@@ -263,24 +263,22 @@ Requirements on the VPS:
 * Git, with access to the team repository. Use `git ls-remote <repository URL>` to make sure that access is correct.
 * For an agent Node: a Claude API key (see [10.4](#104-log-in-to-claude-code-without-a-browser)), or an opencode server.
 
-Install the programs with npm:
-
-```bash
-npm install -g @quorum/leader     # the Leader: quorum-leader
-npm install -g @quorum/node       # the agent Node: quorum-node
-npm install -g @quorum/cli        # the CLI for coding agents and scripts: quorum
-```
-
-Install only the programs that you use on this VPS. Each program shows its commands with `--help`.
-
-The maintainers did not publish these packages to npm yet. Until they do, make the package files from the repository and install them:
+Make the npm package files from the repository, then install them with npm:
 
 ```bash
 git clone https://github.com/K0NSTANT1N3/agent-review-hub.git && cd agent-review-hub
-corepack pnpm install && corepack pnpm -r build
+corepack pnpm install --filter '@quorum/leader...' --filter '@quorum/node...' --filter '@quorum/cli...'
 for p in protocol leader node cli; do (cd packages/$p && corepack pnpm pack --pack-destination ../../dist-npm); done
 npm install -g ./dist-npm/*.tgz
 ```
+
+The `--filter` options install only the server packages. They do not download the desktop app (Electron).
+`pnpm pack` builds each package before it makes the package file.
+
+This installs three programs: `quorum-leader` (the Leader), `quorum-node` (the agent Node) and `quorum` (the CLI for coding agents and scripts).
+Each program shows its commands with `--help`. Install all four package files together, because the other packages use `@quorum/protocol`.
+
+CAUTION: Do not install `@quorum/...` packages from the npm registry. The maintainers did not publish Quorum to npm. The `@quorum` scope on npm belongs to a different organization.
 
 The `@quorum/node` package contains its own copy of the Claude Code engine. You do not install Claude Code.
 
