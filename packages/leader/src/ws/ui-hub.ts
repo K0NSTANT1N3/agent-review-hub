@@ -1,9 +1,9 @@
 import type { IncomingMessage } from 'node:http';
 import type WebSocket from 'ws';
-import type { LeaderConfig, UiEvent } from '@quorum/protocol';
+import type { LeaderConfig, TaskWaitReason, UiEvent } from '@quorum/protocol';
 import { authenticate } from '../api/routes.js';
 import { agentView, directiveView, taskEventView, taskView, teamActivity } from '../api/views.js';
-import type { LeaderDb } from '../db/repo.js';
+import type { LeaderDb, TaskRow } from '../db/repo.js';
 
 // /ws/ui?token=… — pushes change notifications (spec §17). Polls the DB for changes only while clients are connected.
 
@@ -17,10 +17,12 @@ export class UiHub {
   private readonly agentHashes = new Map<string, string>();
   private readonly directiveHashes = new Map<string, string>();
   private activityHash = '';
+  private readonly taskWaitHashes = new Map<number, string>();
 
   constructor(
     private readonly db: LeaderDb,
     private readonly config: LeaderConfig,
+    private readonly getWaitReason: (task: TaskRow) => TaskWaitReason | null = () => null,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -56,6 +58,8 @@ export class UiHub {
   private resetWatermarks(): void {
     this.taskWatermark = this.now();
     this.eventWatermark = Math.max(0, ...this.db.taskEvents.all().map((e) => e.id));
+    this.taskWaitHashes.clear();
+    for (const task of this.db.tasks.all()) this.taskWaitHashes.set(task.id, JSON.stringify(this.getWaitReason(task)));
     for (const a of this.db.agents.all()) this.agentHashes.set(a.id, JSON.stringify(a));
     for (const d of this.db.directives.all()) this.directiveHashes.set(d.id, JSON.stringify(d));
     this.activityHash = JSON.stringify(teamActivity(this.db, this.now()));
@@ -66,7 +70,13 @@ export class UiHub {
     try {
       const since = this.taskWatermark;
       this.taskWatermark = this.now();
-      for (const t of this.db.tasks.all()) if (t.updated_at >= since) this.broadcast({ type: 'task.updated', data: taskView(this.db, t) });
+      for (const t of this.db.tasks.all()) {
+        const waitReason = this.getWaitReason(t);
+        const waitHash = JSON.stringify(waitReason);
+        const waitChanged = this.taskWaitHashes.get(t.id) !== waitHash;
+        this.taskWaitHashes.set(t.id, waitHash);
+        if (t.updated_at >= since || waitChanged) this.broadcast({ type: 'task.updated', data: taskView(this.db, t, waitReason) });
+      }
       for (const e of this.db.taskEvents.all()) {
         if (e.id <= this.eventWatermark) continue;
         this.eventWatermark = e.id;
