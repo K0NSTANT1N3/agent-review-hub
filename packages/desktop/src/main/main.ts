@@ -66,7 +66,7 @@ function createWindow(): void {
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (e) => e.preventDefault());
-  void window.loadFile(join(here, '../renderer/index.html'));
+  void window.loadFile(join(here, '../renderer/index.html'), { hash: process.env.QUORUM_START_PAGE ?? '' });
   const shot = process.env.QUORUM_SMOKE_SCREENSHOT;
   if (shot) {
     // Smoke test: render, capture this window to a PNG and quit.

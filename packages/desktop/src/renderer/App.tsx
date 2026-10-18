@@ -21,9 +21,21 @@ const NAV: { page: Page['name']; label: string }[] = [
   { page: 'settings', label: 'Settings' },
 ];
 
+/** Optional start page from the URL hash, e.g. "#tasks" or "#task=3&tab=diff". */
+function initialPage(): { page: Page; tab: string | null } {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const task = Number(params.get('task'));
+  if (Number.isInteger(task) && task > 0) return { page: { name: 'task', id: task }, tab: params.get('tab') };
+  const name = [...params.keys()][0] as Page['name'] | undefined;
+  const known = NAV.some((n) => n.page === name);
+  return { page: known ? ({ name } as Page) : { name: 'dashboard' }, tab: null };
+}
+
+const START = initialPage();
+
 export function App() {
   const [state, setState] = useState<AppState | null>(null);
-  const [page, setPage] = useState<Page>({ name: 'dashboard' });
+  const [page, setPage] = useState<Page>(START.page);
 
   useEffect(() => {
     void bridge().getState().then(setState);
@@ -57,7 +69,7 @@ export function App() {
       <main className="content">
         {page.name === 'dashboard' && <Dashboard state={state} />}
         {page.name === 'tasks' && <Tasks onOpen={(id) => setPage({ name: 'task', id })} />}
-        {page.name === 'task' && <TaskDetail id={page.id} state={state} onBack={() => setPage({ name: 'tasks' })} />}
+        {page.name === 'task' && <TaskDetail id={page.id} state={state} initialTab={START.tab} onBack={() => setPage({ name: 'tasks' })} />}
         {page.name === 'new' && <NewTask onCreated={(id) => setPage({ name: 'task', id })} />}
         {page.name === 'directives' && <Directives state={state} />}
         {page.name === 'sessions' && <Sessions state={state} />}
