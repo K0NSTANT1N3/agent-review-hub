@@ -56,7 +56,9 @@ describe('schema migration v1 to v2', () => {
     const filename = join(directory, 'leader.db');
     try {
       const v1 = new Database(filename);
-      v1.exec(readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8').replace(/^\s*profile .*\n/m, '').replace(/^PRAGMA .*;\s*$/gm, ''));
+      const v2 = readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8');
+      const v1Schema = v2.slice(0, v2.indexOf('CREATE TABLE api_tokens')).replace(/^\s*profile .*\n/m, '').replace(/^PRAGMA .*;\s*$/gm, '');
+      v1.exec(v1Schema);
       v1.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (1);');
       v1.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at) VALUES ('bob', 'Bob', 'h', 1)").run();
       v1.prepare("INSERT INTO sessions (id, agent_id, state, created_at, last_used_at) VALUES ('s1', 'bob', 'idle', 1, 1)").run();
@@ -67,6 +69,7 @@ describe('schema migration v1 to v2', () => {
       try {
         expect(migrated.schemaVersion).toBe(2);
         expect(migrated.sessions.require('s1').profile).toBe('reviewer');
+        expect(migrated.apiTokens.all()).toEqual([]);
       } finally { migrated.close(); }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });

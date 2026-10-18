@@ -135,7 +135,7 @@ CREATE TABLE task_events (
   from_state TEXT,
   to_state   TEXT NOT NULL,
   reason     TEXT NOT NULL,
-  actor      TEXT NOT NULL,          -- 'leader' | 'agent:<id>' | 'human:<owner>'
+  actor      TEXT NOT NULL,          -- 'leader' | 'agent:<id>' | 'human:<owner>' | 'token:<owner>' (requester API token)
   data       TEXT NOT NULL DEFAULT '{}',
   at         INTEGER NOT NULL
 );
@@ -172,3 +172,15 @@ CREATE TABLE merge_queue (
   task_id      INTEGER PRIMARY KEY REFERENCES tasks(id),
   enqueued_at  INTEGER NOT NULL
 );
+
+CREATE TABLE api_tokens (                        -- extra credentials for scripts and coding agents (quorum CLI)
+  id            TEXT PRIMARY KEY,
+  agent_id      TEXT NOT NULL REFERENCES agents(id), -- acts as this agent's owner
+  token_hash    TEXT NOT NULL UNIQUE,               -- sha256 of token
+  scope         TEXT NOT NULL,                      -- 'requester'
+  label         TEXT NOT NULL DEFAULT '',
+  created_at    INTEGER NOT NULL,
+  last_used_at  INTEGER,
+  revoked_at    INTEGER
+);
+CREATE INDEX api_tokens_agent ON api_tokens(agent_id);

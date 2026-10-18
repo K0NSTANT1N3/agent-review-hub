@@ -153,6 +153,17 @@ export interface DirectiveRow {
   finished_at: number | null;
 }
 
+export interface ApiTokenRow {
+  id: string;
+  agent_id: string;
+  token_hash: string;
+  scope: string;
+  label: string;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+
 export interface MergeQueueRow {
   task_id: number;
   enqueued_at: number;
@@ -169,6 +180,7 @@ export interface Tables {
   usage_ledger: UsageRow;
   directives: DirectiveRow;
   merge_queue: MergeQueueRow;
+  api_tokens: ApiTokenRow;
 }
 
 type InsertWith<R, K extends keyof R> = Pick<R, K> & Partial<Omit<R, K>>;
@@ -184,6 +196,7 @@ export interface Inserts {
   usage_ledger: InsertWith<UsageRow, 'agent_id' | 'kind' | 'role' | 'input_tokens' | 'output_tokens' | 'at'>;
   directives: InsertWith<DirectiveRow, 'id' | 'requester' | 'agent_id' | 'text' | 'state' | 'created_at'>;
   merge_queue: MergeQueueRow;
+  api_tokens: InsertWith<ApiTokenRow, 'id' | 'agent_id' | 'token_hash' | 'scope' | 'created_at'>;
 }
 
 export type KeyColumn<N extends keyof Tables> = N extends 'merge_queue' ? 'task_id' : 'id';

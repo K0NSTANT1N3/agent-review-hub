@@ -14,7 +14,10 @@ export function migrate(db: Database.Database): void {
       throw new Error(`Unsupported database schema version: ${rows.map((row) => row.version).join(',')}`);
     }
     if (rows[0]?.version === 1) {
-      // v2: sessions remember their profile, recovered from the session.open command that created them.
+      // v2 adds api_tokens (the last table in schema.sql) and sessions.profile, which is recovered from the
+      // session.open command that created each session.
+      const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+      db.exec(schema.slice(schema.indexOf('CREATE TABLE api_tokens')));
       db.exec('ALTER TABLE sessions ADD COLUMN profile TEXT');
       db.exec(`UPDATE sessions SET profile = (
         SELECT json_extract(m.payload, '$.cmd.profile') FROM messages m
