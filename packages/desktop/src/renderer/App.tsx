@@ -8,6 +8,7 @@ import { NewTask } from './views/NewTask';
 import { Directives, Sessions, Settings, Team } from './views/Others';
 import { Setup } from './views/Setup';
 import { TaskDetail } from './views/TaskDetail';
+import { DEFAULT_QUERY, type TaskBoardQuery } from './task-board';
 import { Tasks } from './views/Tasks';
 
 type Page = { name: 'dashboard' } | { name: 'tasks' } | { name: 'task'; id: number } | { name: 'new' } | { name: 'directives' } | { name: 'sessions' } | { name: 'team' } | { name: 'settings' };
@@ -37,6 +38,10 @@ const START = initialPage();
 export function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [page, setPage] = useState<Page>(START.page);
+  // Held here so opening a task and coming back does not remount the board onto empty filters.
+  const [taskMine, setTaskMine] = useState(true);
+  const [taskQuery, setTaskQuery] = useState<TaskBoardQuery>(DEFAULT_QUERY);
+  const [taskExtra, setTaskExtra] = useState<Record<string, number>>({});
 
   useEffect(() => {
     void bridge().getState().then(setState);
@@ -74,7 +79,17 @@ export function App() {
       </nav>
       <main className="content">
         {page.name === 'dashboard' && <Dashboard state={state} onOpenTask={(id) => setPage({ name: 'task', id })} />}
-        {page.name === 'tasks' && <Tasks onOpen={(id) => setPage({ name: 'task', id })} />}
+        {page.name === 'tasks' && (
+          <Tasks
+            onOpen={(id) => setPage({ name: 'task', id })}
+            mine={taskMine}
+            query={taskQuery}
+            extra={taskExtra}
+            onMine={setTaskMine}
+            onQuery={setTaskQuery}
+            onExtra={setTaskExtra}
+          />
+        )}
         {page.name === 'task' && <TaskDetail id={page.id} state={state} initialTab={START.tab} onBack={() => setPage({ name: 'tasks' })} />}
         {page.name === 'new' && <NewTask onCreated={(id) => setPage({ name: 'task', id })} />}
         {page.name === 'directives' && <Directives state={state} />}
