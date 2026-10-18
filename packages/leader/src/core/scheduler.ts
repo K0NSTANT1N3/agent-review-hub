@@ -613,19 +613,58 @@ export class Scheduler {
       } else if (task.state === 'PAUSED' && task.pause_reason === 'human') {
         human.push({ ...this.entryBase(task, null), needs: 'human', waitingOn: 'human', reason: 'Paused by a human' });
       } else if (task.state === 'PAUSED') {
-        const author = task.author_agent_id === null ? undefined : this.db.agents.get(task.author_agent_id);
-        const blocker = author === undefined ? null : this.agentBlocker(author, task, 'author', true);
-        const rest = author === undefined ? '' : `; resumes when ${author.owner_name}'s agent is back${blocker === null ? '' : ` (${blocker})`}`;
-        human.push({
-          ...this.entryBase(task, null),
-          needs: 'author',
-          waitingOn: author !== undefined && this.isRateLimited(author) ? 'rate_limit' : 'agent',
-          reason: `Paused: ${(task.pause_reason ?? 'unknown').replaceAll('_', ' ')}${rest}`,
-          candidates: author === undefined ? [] : [{ agentId: author.id, ownerName: author.owner_name, blocker }],
-        });
+        human.push(this.explainPaused(task));
       }
     }
     return [...entries, ...human.sort((a, b) => a.waitingSince - b.waitingSince || a.taskId - b.taskId)];
+  }
+
+  /** Mirrors handlePaused: only AUTHORING/SYNCING pauses wait for the author agent; others resume on the next pass. */
+  private explainPaused(task: TaskRow): QueueEntryView {
+    const base = this.entryBase(task, null);
+    const paused = `Paused: ${(task.pause_reason ?? 'unknown').replaceAll('_', ' ')}`;
+    const from = task.paused_from_state;
+    if (from === null || from === 'PAUSED' || isTerminal(from)) {
+      return { ...base, needs: 'human', waitingOn: 'human', reason: `${paused}; a human must resume or cancel it` };
+    }
+    if (from !== 'AUTHORING' && from !== 'SYNCING') {
+      const needs = from === 'QUEUED' ? 'author' : from === 'MERGE_QUEUED' || from === 'MERGING' ? 'merge' : 'reviewer';
+      return { ...base, needs, waitingOn: 'scheduler', reason: `${paused}; resumes on the next scheduler pass` };
+    }
+    const opening = this.pendingOpenAgent(task.id);
+    if (opening !== undefined) {
+      return { ...base, needs: 'author', waitingOn: 'scheduler', reason: `${paused}; opening an author session on ${opening.owner_name}'s agent` };
+    }
+    const author = task.author_agent_id === null ? undefined : this.db.agents.get(task.author_agent_id);
+    const blocker = author === undefined
+      ? 'unknown'
+      : !this.isOnline(author) ? 'offline'
+        : this.isRateLimited(author) ? 'rate-limited'
+          : null;
+    const candidates = author === undefined ? [] : [{ agentId: author.id, ownerName: author.owner_name, blocker }];
+    if (author !== undefined && blocker === null) {
+      const session = task.author_session_id === null ? undefined : this.db.sessions.get(task.author_session_id);
+      const alive = session?.state === 'locked' && session.lock_ref === String(task.id) && session.lock_role === 'author';
+      const slotBlocker = alive ? null : !this.hasSlot(author) ? `busy (${this.usedSlots(author.id)}/${author.max_sessions} sessions)` : this.backedOff(author.id) ? 'failed to open a session; retrying soon' : null;
+      if (slotBlocker === null) return { ...base, needs: 'author', waitingOn: 'scheduler', reason: `${paused}; resumes on ${author.owner_name}'s agent on the next pass`, candidates };
+      return {
+        ...base, needs: 'author', waitingOn: 'agent',
+        reason: `${paused}; waits for ${author.owner_name}'s agent (${slotBlocker})`,
+        candidates: [{ agentId: author.id, ownerName: author.owner_name, blocker: slotBlocker }],
+      };
+    }
+    const graceOver = this.now() - task.state_entered_at >= this.config.timeouts.authorReconnectGraceSec * 1000;
+    if (graceOver && task.mode === 'pool') {
+      return { ...base, needs: 'author', waitingOn: 'scheduler', reason: `${paused}; returns to the queue on the next pass`, candidates };
+    }
+    if (graceOver) {
+      return { ...base, needs: 'human', waitingOn: 'human', reason: `${paused}; the author agent is unavailable: reassign to the pool, wait, or cancel`, candidates };
+    }
+    const who = author === undefined ? 'the author' : `${author.owner_name}'s agent`;
+    return {
+      ...base, needs: 'author', waitingOn: blocker === 'rate-limited' ? 'rate_limit' : 'agent',
+      reason: `${paused}; resumes when ${who} is back (${blocker})`, candidates,
+    };
   }
 
   private entryBase(task: TaskRow, position: number | null): Omit<QueueEntryView, 'needs' | 'waitingOn' | 'reason'> {
@@ -649,7 +688,7 @@ export class Scheduler {
       return { ...base, needs: role, waitingOn: 'scheduler', reason: `Opening a ${role} session on ${opening.owner_name}'s agent` };
     }
     if (role === 'reviewer' && task.author_agent_id === null) {
-      return { ...base, needs: role, waitingOn: 'scheduler', reason: 'Waiting for its author' };
+      return { ...base, needs: role, waitingOn: 'agent', reason: 'Waiting for its author' };
     }
     const requester = this.db.agents.get(task.requester_agent_id);
     const pool = role === 'author' && task.mode === 'own' ? (requester === undefined ? [] : [requester]) : this.db.agents.all().filter((a) => a.revoked === 0);

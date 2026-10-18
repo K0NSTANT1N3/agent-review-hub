@@ -260,9 +260,10 @@ export function WaitsFor({ activities, queue, onOpenTask }: { activities: TeamAc
 
 export function QueueCard({ queue, onOpenTask }: { queue: QueueEntryView[]; onOpenTask: (id: number) => void }) {
   const now = Date.now();
-  const next = queue.find((q) => q.position !== null);
+  // The scheduler tries every task each pass, so "next" is the first one it can act on, not simply the first in line.
+  const next = queue.find((q) => q.position !== null && q.waitingOn === 'scheduler');
   return (
-    <Card title="Queue" actions={<span className="hint">In the order the scheduler picks them</span>}>
+    <Card title="Queue" actions={<span className="hint">In the order the scheduler tries them</span>}>
       {queue.length === 0 ? <Empty>The queue is empty.</Empty> : (
         <table className="table queue-table">
           <thead>

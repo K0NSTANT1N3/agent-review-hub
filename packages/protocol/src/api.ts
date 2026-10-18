@@ -216,8 +216,9 @@ export const QueueCandidateViewSchema = z.object({
 export type QueueCandidateView = z.infer<typeof QueueCandidateViewSchema>;
 
 /**
- * A task that waits for the scheduler, the merge worker or a human. `position` is the pickup order
- * (authors first, then reviewers, then merges, as one scheduler pass runs them); null for tasks that wait on a human.
+ * A task that waits for the scheduler, the merge worker or a human. `position` is the order one scheduler pass tries
+ * tasks in (authors first, then reviewers, then merges); a blocked task does not hold back later ones. `position` is
+ * null for tasks outside that order: human decisions and paused tasks. waitingOn 'scheduler' means the next pass acts on it.
  */
 export const QueueEntryViewSchema = z.object({
   taskId: z.number().int(),
