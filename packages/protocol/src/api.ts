@@ -260,6 +260,76 @@ export const API_ERROR_HTTP_STATUS: Record<ApiErrorCode, number> = {
 };
 
 // ---------------------------------------------------------------------------
+// Route table — the single source of truth for server (L8) and clients (desktop, e2e)
+// ---------------------------------------------------------------------------
+
+export type HttpMethod = 'GET' | 'POST' | 'PATCH';
+export type RoutePermission = 'none' | 'any' | 'requesterOrAdmin';
+
+export interface RouteDef {
+  method: HttpMethod;
+  /** Fastify-style path; `:id` is the task or directive id. */
+  path: string;
+  auth: RoutePermission;
+  /** HTTP status on success. */
+  status: 200 | 201;
+  query?: z.ZodType;
+  body?: z.ZodType;
+  response: z.ZodType;
+}
+
+const TaskActionBodySchema = z.object({}).strict().optional();
+
+export const API_ROUTES = {
+  health: { method: 'GET', path: '/api/health', auth: 'none', status: 200, response: HealthResponseSchema },
+  listAgents: { method: 'GET', path: '/api/agents', auth: 'any', status: 200, response: ListAgentsResponseSchema },
+  listSessions: {
+    method: 'GET',
+    path: '/api/sessions',
+    auth: 'any',
+    status: 200,
+    query: ListSessionsQuerySchema,
+    response: ListSessionsResponseSchema,
+  },
+  listTasks: { method: 'GET', path: '/api/tasks', auth: 'any', status: 200, query: ListTasksQuerySchema, response: ListTasksResponseSchema },
+  createTask: { method: 'POST', path: '/api/tasks', auth: 'any', status: 201, body: CreateTaskRequestSchema, response: TaskViewSchema },
+  getTask: { method: 'GET', path: '/api/tasks/:id', auth: 'any', status: 200, response: TaskDetailSchema },
+  getTaskDiff: { method: 'GET', path: '/api/tasks/:id/diff', auth: 'any', status: 200, query: DiffQuerySchema, response: DiffResponseSchema },
+  patchTask: { method: 'PATCH', path: '/api/tasks/:id', auth: 'requesterOrAdmin', status: 200, body: PatchTaskRequestSchema, response: TaskViewSchema },
+  cancelTask: { method: 'POST', path: '/api/tasks/:id/cancel', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema },
+  approveTask: { method: 'POST', path: '/api/tasks/:id/approve', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema },
+  sendBackTask: { method: 'POST', path: '/api/tasks/:id/send-back', auth: 'requesterOrAdmin', status: 200, body: SendBackRequestSchema, response: TaskViewSchema },
+  reassignReviewer: {
+    method: 'POST',
+    path: '/api/tasks/:id/reassign-reviewer',
+    auth: 'requesterOrAdmin',
+    status: 200,
+    body: TaskActionBodySchema,
+    response: TaskViewSchema,
+  },
+  pauseTask: { method: 'POST', path: '/api/tasks/:id/pause', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema },
+  resumeTask: { method: 'POST', path: '/api/tasks/:id/resume', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema },
+  createDirective: { method: 'POST', path: '/api/directives', auth: 'any', status: 201, body: CreateDirectiveRequestSchema, response: DirectiveViewSchema },
+  getDirective: { method: 'GET', path: '/api/directives/:id', auth: 'any', status: 200, response: DirectiveViewSchema },
+} as const satisfies Record<string, RouteDef>;
+
+export type ApiRouteName = keyof typeof API_ROUTES;
+export type ApiResponse<R extends ApiRouteName> = z.infer<(typeof API_ROUTES)[R]['response']>;
+
+/** Fills `:id` in a route path. */
+export function apiPath(route: ApiRouteName, id?: number | string): string {
+  const path: string = API_ROUTES[route].path;
+  if (!path.includes(':id')) return path;
+  if (id === undefined) throw new Error(`route ${route} requires an id`);
+  return path.replace(':id', encodeURIComponent(String(id)));
+}
+
+/** UI WebSocket path; authenticate with `?token=<agent token>`. */
+export const UI_WS_PATH = '/ws/ui';
+/** Node WebSocket path. */
+export const NODE_WS_PATH = '/ws/node';
+
+// ---------------------------------------------------------------------------
 // UI WebSocket push events (/ws/ui)
 // ---------------------------------------------------------------------------
 

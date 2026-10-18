@@ -251,3 +251,19 @@ describe('enums and api', () => {
     );
   });
 });
+
+describe('api routes', () => {
+  it('has unique method+path pairs, all under /api', async () => {
+    const { API_ROUTES } = await import('../src/index.js');
+    const keys = Object.values(API_ROUTES).map((r) => `${r.method} ${r.path}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const r of Object.values(API_ROUTES)) expect(r.path.startsWith('/api/')).toBe(true);
+  });
+
+  it('apiPath fills ids and requires them', async () => {
+    const { apiPath } = await import('../src/index.js');
+    expect(apiPath('listTasks')).toBe('/api/tasks');
+    expect(apiPath('sendBackTask', 12)).toBe('/api/tasks/12/send-back');
+    expect(() => apiPath('getTask')).toThrow(/requires an id/);
+  });
+});
