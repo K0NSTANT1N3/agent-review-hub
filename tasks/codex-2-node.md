@@ -152,11 +152,11 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 - **Accept:** mock tests cover each behavior.
 
 ### N6 — Leader client (WebSocket) · spec §11.1, §11.2, §10.2
-- [ ] `src/ws/leader-client.ts`: connect, `hello` (settings + SessionReports), handle `welcome`/`reject`; exponential backoff 1s→30s with jitter; refuse `ws://` to non-localhost unless `--insecure`.
-- [ ] Inbound `cmd`: if already processed → re-ack only; else journal **then** ack, then dispatch.
-- [ ] Outbound `evt`: always via the journal outbox; resend unacked every `resendUnackedSec` and on reconnect.
-- [ ] Heartbeat every `heartbeatIntervalSec` with `NodeStatus` (`humanIdleSec` from the `idleSeconds` option, or null/large with `--assume-idle`).
-- [ ] `test/helpers/fake-leader.ts`: a scriptable WS server speaking the protocol, used by N6–N8 tests.
+- [x] `src/ws/leader-client.ts`: connect, `hello` (settings + SessionReports), handle `welcome`/`reject`; exponential backoff 1s→30s with jitter; refuse `ws://` to non-localhost unless `--insecure`.
+- [x] Inbound `cmd`: if already processed → re-ack only; else journal **then** ack, then dispatch.
+- [x] Outbound `evt`: always via the journal outbox; resend unacked every `resendUnackedSec` and on reconnect.
+- [x] Heartbeat every `heartbeatIntervalSec` with `NodeStatus` (`humanIdleSec` from the `idleSeconds` option, or null/large with `--assume-idle`).
+- [x] `test/helpers/fake-leader.ts`: a scriptable WS server speaking the protocol, used by N6–N8 tests.
 - **Accept:** reconnect after a server restart resends unacked events; duplicate command executed once; reject handling.
 
 ### N7 — Command runner · spec §16.2, §11.4, §11.5, §11.6
