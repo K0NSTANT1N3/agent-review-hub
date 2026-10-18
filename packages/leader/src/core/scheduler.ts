@@ -269,7 +269,10 @@ export class Scheduler {
       if (own ? a.paused !== 0 : !this.mayLend(a) || budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) continue;
       candidates.push({ agent: a, score: this.score(a, task, 'reviewer', own, estimate) });
     }
-    const chosen = this.best(candidates);
+    // Agents whose earlier review of this task was abandoned (crash, invalid output, rate limit, …) are a last resort.
+    const dropped = new Set(this.db.conversations.find({ task_id: task.id, state: 'abandoned' }).map((c) => c.reviewer_agent_id));
+    const fresh = candidates.filter((c) => !dropped.has(c.agent.id));
+    const chosen = this.best(fresh.length > 0 ? fresh : candidates);
     if (chosen === undefined) {
       const waited = this.now() - task.state_entered_at;
       const key = `no_reviewer:${task.id}:${task.state_entered_at}`;

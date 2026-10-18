@@ -173,6 +173,26 @@ describe('reviewer assignment (§9.3)', () => {
     expect(db.conversations.find({ task_id: t.id })[0]?.reviewer_agent_id).toBe('bob-claude');
   });
 
+  it('prefers a reviewer who has not already dropped this task, but falls back to them', () => {
+    agent('bob-claude');
+    agent('carol-claude');
+    session('b', 'bob-claude', { files: JSON.stringify(['src/auth/login.ts']) });
+    session('c', 'carol-claude');
+    const t = awaitingReview();
+    session('b-old', 'bob-claude', { state: 'lost' });
+    db.conversations.insert({ id: 'old', task_id: t.id, author_agent_id: 'alice-claude', author_session_id: 'a', reviewer_agent_id: 'bob-claude', reviewer_session_id: 'b-old', state: 'abandoned', created_at: now });
+    scheduler.schedule();
+    expect(db.conversations.find({ task_id: t.id, state: 'active' })[0]?.reviewer_agent_id).toBe('carol-claude');
+
+    session('a2', 'alice-claude');
+    const t2 = task({ state: 'AWAITING_REVIEWER', author_agent_id: 'alice-claude', author_session_id: 'a2', branch: 'quorum/task-9', base_commit: 'aaaaaaa', head_commit: 'bbbbbbb' });
+    locks.lockSession('a2', 'task', String(t2.id), 'author');
+    db.agents.update('carol-claude', { status: 'offline' });
+    db.conversations.insert({ id: 'old2', task_id: t2.id, author_agent_id: 'alice-claude', author_session_id: 'a2', reviewer_agent_id: 'bob-claude', reviewer_session_id: 'b-old', state: 'abandoned', created_at: now });
+    scheduler.schedule();
+    expect(db.conversations.find({ task_id: t2.id, state: 'active' })[0]?.reviewer_agent_id).toBe('bob-claude');
+  });
+
   it('raises needs-attention once when nobody can review', () => {
     setup({ timeouts: { noReviewerNotifyAfterSec: 10 } });
     const t = awaitingReview();
