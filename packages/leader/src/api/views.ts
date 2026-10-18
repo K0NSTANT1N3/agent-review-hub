@@ -8,6 +8,7 @@ import type {
   TaskDetail,
   TaskEventView,
   TaskView,
+  TeamActivityView,
 } from '@quorum/protocol';
 import { budgetRemaining, lentToday } from '../core/budget.js';
 import type {
@@ -179,6 +180,79 @@ export function directiveView(d: DirectiveRow): DirectiveView {
     createdAt: d.created_at,
     finishedAt: d.finished_at,
   };
+}
+
+/** A privacy-safe, deterministic summary of every open session and agent without a session. */
+export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
+  const agents = db.agents.all().filter((agent) => agent.revoked === 0);
+  const sessions = db.sessions.all().filter((session) => session.state !== 'closed');
+  const staleAfterMs = 30_000;
+  const bySession = new Map(sessions.map((session) => [session.id, session]));
+  const rows: TeamActivityView[] = [];
+
+  for (const agent of agents) {
+    const agentSessions = sessions.filter((session) => session.agent_id === agent.id);
+    const visibleSessions = agentSessions.length === 0 ? [null] : agentSessions;
+    for (const session of visibleSessions) {
+      const taskId = session?.lock_kind === 'task' && session.lock_ref !== null ? Number(session.lock_ref) : null;
+      const task = taskId !== null && Number.isSafeInteger(taskId) ? db.tasks.get(taskId) : undefined;
+      const directive = session?.lock_kind === 'directive' && session.lock_ref !== null ? db.directives.get(session.lock_ref) : undefined;
+      const role: TeamActivityView['role'] = session?.lock_kind === 'task'
+        ? session.lock_role === 'author' || session.lock_role === 'reviewer' ? session.lock_role : 'idle'
+        : session?.lock_kind === 'directive' ? 'directive' : 'idle';
+      const conversation = task === undefined ? undefined : db.conversations.find({ task_id: task.id, state: 'active' }).find((c) =>
+        c.author_session_id === session?.id || c.reviewer_session_id === session?.id,
+      );
+      const pairedSessionId = conversation === undefined ? null : conversation.author_session_id === session?.id
+        ? conversation.reviewer_session_id
+        : conversation.author_session_id;
+      const pairedSession = pairedSessionId === null ? undefined : bySession.get(pairedSessionId);
+      const pairedAgent = pairedSession === undefined ? undefined : db.agents.get(pairedSession.agent_id);
+      let activityState: TeamActivityView['activityState'] = session === null || session.state === 'idle' ? 'idle' : 'waiting';
+      let waitingOn: TeamActivityView['waitingOn'] = null;
+      let waitingReason: string | null = null;
+      if (agent.status !== 'online') activityState = 'offline';
+      else if (agent.paused !== 0) activityState = 'paused';
+      else if (session?.state === 'opening') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Starting session'; }
+      else if (session?.state === 'lost' || session?.state === 'closing') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = session.state === 'lost' ? 'Session was lost' : 'Session is closing'; }
+      else if (role === 'directive') {
+        activityState = directive?.state === 'running' ? 'working' : 'waiting';
+        if (activityState === 'waiting') { waitingOn = 'scheduler'; waitingReason = 'Directive is queued'; }
+      } else if (task !== undefined) {
+        if (task.state === 'PAUSED') { activityState = 'paused'; waitingOn = 'human'; waitingReason = task.pause_reason ?? 'Task paused'; }
+        else if (task.state === 'ESCALATED') { activityState = 'waiting'; waitingOn = 'human'; waitingReason = 'Needs a human decision'; }
+        else if ((task.state === 'AUTHORING' || task.state === 'SYNCING') && role === 'author') activityState = 'working';
+        else if (task.state === 'IN_REVIEW' && role === 'reviewer') activityState = 'working';
+        else if (task.state === 'AWAITING_REVIEWER' && role === 'author') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Waiting for a reviewer'; }
+        else if (role === 'author' && task.state === 'IN_REVIEW') { activityState = 'waiting'; waitingOn = 'agent'; waitingReason = 'Waiting for reviewer'; }
+        else if (!['MERGED', 'CANCELLED', 'FAILED'].includes(task.state)) { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Waiting for task scheduler'; }
+      }
+      const stateChangedAt = agent.status !== 'online' || agent.paused !== 0
+        ? agent.last_heartbeat_at ?? session?.last_used_at ?? now
+        : task?.state_entered_at ?? directive?.created_at ?? session?.last_used_at ?? agent.last_heartbeat_at ?? now;
+      rows.push({
+        key: session?.id ?? `agent:${agent.id}`,
+        agentId: agent.id,
+        ownerName: agent.owner_name,
+        agentStatus: agent.status as TeamActivityView['agentStatus'],
+        sessionId: session?.id ?? null,
+        sessionState: (session?.state as TeamActivityView['sessionState']) ?? null,
+        role,
+        activityState,
+        waitingOn,
+        waitingReason,
+        taskId: task?.id ?? null,
+        taskTitle: task?.title ?? (directive === undefined ? null : 'Read-only question'),
+        pairedAgentId: pairedAgent?.id ?? null,
+        pairedOwnerName: pairedAgent?.owner_name ?? null,
+        pairedSessionId: pairedSession?.id ?? null,
+        stateChangedAt,
+        lastHeartbeatAt: agent.last_heartbeat_at,
+        stale: agent.status === 'online' && (agent.last_heartbeat_at === null || now - agent.last_heartbeat_at > staleAfterMs),
+      });
+    }
+  }
+  return rows.sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.agentId.localeCompare(b.agentId) || (a.sessionId ?? '').localeCompare(b.sessionId ?? ''));
 }
 
 export function taskDetail(db: LeaderDb, t: TaskRow): TaskDetail {
