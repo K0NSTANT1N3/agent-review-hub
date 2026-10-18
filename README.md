@@ -54,7 +54,9 @@ The first demo should show a rejected candidate, a corrected revision in the ori
 
 ## Start contributing
 
-Read [the MVP backlog](tasks/todo.md), [the architecture](docs/architecture.md), [the detailed implementation spec](docs/implementation-spec.md), and [the contribution guide](CONTRIBUTING.md). Agree on message schemas before implementing the coordinator, connector, and desktop client in parallel.
+Read [the MVP backlog](tasks/todo.md), [the architecture](docs/architecture.md), [the detailed implementation spec](docs/implementation-spec.md), and [the contribution guide](CONTRIBUTING.md).
+
+Parallel agent assignments: [Codex-1 — Leader](tasks/codex-1-leader.md) and [Codex-2 — Node and desktop](tasks/codex-2-node.md). Claude owns the scaffold, the shared protocol, end-to-end tests, the Claude Code adapter, and integration (listed in both files). Where documents disagree, `docs/implementation-spec.md` is authoritative. Agree on message schemas before implementing the coordinator, connector, and desktop client in parallel.
 
 Proposed starting stack: TypeScript, Node.js and SQLite for the coordinator; Electron and React for the desktop client; Claude Code CLI for the first adapter. These are implementation choices to validate, not installed dependencies.
 
