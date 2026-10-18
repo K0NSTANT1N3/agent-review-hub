@@ -475,6 +475,32 @@ describe('queue explanation', () => {
     ]);
     expect(queue[2]).toMatchObject({ waitingOn: 'human', requesterOwner: 'alice' });
   });
+  it('explains paused tasks the way handlePaused resumes them', () => {
+    db.agents.update('alice-claude', { rate_limited_until: now + 60_000 });
+    const review = task({ state: 'PAUSED', pause_reason: 'rate_limited', paused_from_state: 'IN_REVIEW', author_agent_id: 'alice-claude', state_entered_at: now - 2000 });
+    const writing = task({ state: 'PAUSED', pause_reason: 'rate_limited', paused_from_state: 'AUTHORING', author_agent_id: 'alice-claude', state_entered_at: now - 1000 });
+    const queue = scheduler.queueSnapshot();
+    expect(queue.find((e) => e.taskId === review.id)).toMatchObject({
+      position: null, needs: 'reviewer', waitingOn: 'scheduler', reason: 'Paused: rate limited; resumes on the next scheduler pass', candidates: [],
+    });
+    expect(queue.find((e) => e.taskId === writing.id)).toMatchObject({
+      position: null, needs: 'author', waitingOn: 'rate_limit', reason: "Paused: rate limited; resumes when alice's agent is back (rate-limited)",
+    });
+    now += config.timeouts.authorReconnectGraceSec * 1000;
+    db.agents.update('alice-claude', { status: 'offline', rate_limited_until: null });
+    expect(scheduler.queueSnapshot().find((e) => e.taskId === writing.id)).toMatchObject({
+      needs: 'human', waitingOn: 'human', reason: 'Paused: rate limited; the author agent is unavailable: reassign to the pool, wait, or cancel',
+    });
+  });
+  it('treats a task whose session is still opening as waiting on that agent, not as next', () => {
+    const t = task();
+    scheduler.schedule();
+    expect(sent('session.open')).toHaveLength(1);
+    expect(scheduler.queueSnapshot()[0]).toMatchObject({
+      taskId: t.id, waitingOn: 'agent', reason: "Opening an author session on alice's agent",
+      candidates: [{ agentId: 'alice-claude', ownerName: 'alice', blocker: 'opening a session' }],
+    });
+  });
 });
 
 describe('wait reasons (issue #51)', () => {

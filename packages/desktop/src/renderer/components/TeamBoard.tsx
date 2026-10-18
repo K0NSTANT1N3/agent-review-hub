@@ -1,5 +1,5 @@
 import type { AgentView, QueueEntryView, TeamActivityView } from '@quorum/protocol';
-import { duration, timeAgo } from '../bridge';
+import { duration, formatTokens, timeAgo } from '../bridge';
 import { Card, Dot, Empty } from './common';
 
 // Dashboard answers at a glance: who works on what, who waits for whom, and what the scheduler picks next.
@@ -63,6 +63,7 @@ interface AgentTile {
   maxSessions: number | null;
   rateLimitedUntil: number | null;
   lastHeartbeatAt: number | null;
+  budgetRemaining: number | null;
   rows: TeamActivityView[];
 }
 
@@ -74,7 +75,7 @@ function agentTiles(agents: AgentView[] | undefined, activities: TeamActivityVie
       agentId: a.id, ownerName: a.ownerName, status: a.status, paused: a.paused, lendMode: a.lendMode,
       usedSessions: a.lockedSessions, maxSessions: a.maxSessions,
       rateLimitedUntil: a.rateLimitedUntil !== null && a.rateLimitedUntil > Date.now() ? a.rateLimitedUntil : null,
-      lastHeartbeatAt: a.lastHeartbeatAt, rows: [],
+      lastHeartbeatAt: a.lastHeartbeatAt, budgetRemaining: a.budgetRemaining, rows: [],
     });
   }
   for (const row of activities) {
@@ -82,13 +83,27 @@ function agentTiles(agents: AgentView[] | undefined, activities: TeamActivityVie
     if (tile === undefined) {
       tile = {
         agentId: row.agentId, ownerName: row.ownerName, status: row.agentStatus, paused: row.activityState === 'paused', lendMode: null,
-        usedSessions: null, maxSessions: null, rateLimitedUntil: row.rateLimitedUntil ?? null, lastHeartbeatAt: row.lastHeartbeatAt, rows: [],
+        usedSessions: null, maxSessions: null, rateLimitedUntil: row.rateLimitedUntil ?? null, lastHeartbeatAt: row.lastHeartbeatAt,
+        budgetRemaining: null, rows: [],
       };
       tiles.set(row.agentId, tile);
     }
     if (row.role !== 'idle') tile.rows.push(row);
   }
   return [...tiles.values()].sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.agentId.localeCompare(b.agentId));
+}
+
+/**
+ * What an idle agent can do for teammates. It never promises a pickup: when_idle eligibility depends on an idle
+ * threshold the Leader does not report, and each task's cost estimate decides whether the remaining budget suffices.
+ */
+function idleLabel(tile: AgentTile): string {
+  if (tile.lendMode === 'never') return 'Idle · own work only';
+  if (tile.maxSessions !== null && tile.usedSessions !== null && tile.usedSessions >= tile.maxSessions) return 'Idle · no free session';
+  if (tile.budgetRemaining !== null && tile.budgetRemaining <= 0) return 'Idle · lending budget used up';
+  if (tile.lendMode === 'when_idle') return 'Idle · lends when its owner is away';
+  if (tile.lendMode === 'always') return tile.budgetRemaining === null ? 'Idle · lends to teammates' : `Idle · lends to teammates (${formatTokens(tile.budgetRemaining)} budget left)`;
+  return 'Idle';
 }
 
 function tileTone(tile: AgentTile): Tone {
@@ -150,7 +165,7 @@ export function AgentsNow({ agents, activities, me, onOpenTask }: {
                     {tile.paused && <div className="warn-text">Paused by its owner</div>}
                     {tile.rows.map((row) => <SessionLine key={row.key} row={row} onOpen={onOpenTask} />)}
                     {tile.rows.length === 0 && tile.rateLimitedUntil === null && !tile.paused && (
-                      <div className="muted">{tile.lendMode === 'never' ? 'Idle · own work only' : 'Idle · free to help'}</div>
+                      <div className="muted">{idleLabel(tile)}</div>
                     )}
                   </>
                 )}
@@ -171,7 +186,9 @@ interface Wait {
   to: Party;
   taskId: number | null;
   reason: string;
-  since: number;
+  /** When the wait started, if known; rate-limit waits only know when they end. */
+  since: number | null;
+  until: number | null;
 }
 
 const PARTY: Record<Party['kind'], { tag: string; tone: Tone | 'accent' }> = {
@@ -196,6 +213,7 @@ function waitsFor(activities: TeamActivityView[], queue: QueueEntryView[]): Wait
         taskId: row.taskId,
         reason: row.waitingReason ?? 'Waiting',
         since: row.stateChangedAt,
+        until: null,
       });
     } else if (row.waitingOn === 'rate_limit' && row.rateLimitedUntil !== null) {
       waits.push({
@@ -204,22 +222,26 @@ function waitsFor(activities: TeamActivityView[], queue: QueueEntryView[]): Wait
         to: { kind: 'limit', label: 'rate-limit reset' },
         taskId: null,
         reason: `Resets at ${new Date(row.rateLimitedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-        since: row.stateChangedAt,
+        // No rate-limit start time is stored (stateChangedAt follows heartbeats here), so show the time left.
+        since: null,
+        until: row.rateLimitedUntil,
       });
     }
   }
   for (const entry of queue) {
     if (entry.waitingOn === 'scheduler' || entry.waitingOn === 'merge') continue;
+    // The task's author can never review it, so it is not who the task waits on.
+    const able = entry.candidates.filter((c) => c.blocker !== `wrote #${entry.taskId}`);
     const to: Party = entry.needs === 'human'
       ? { kind: 'human', label: `a human (${entry.requesterOwner})` }
       : entry.waitingOn === 'rate_limit'
         ? { kind: 'limit', label: 'rate-limit reset' }
-        : entry.candidates.length === 1 && entry.candidates[0] !== undefined
-          ? { kind: 'agent', label: `${entry.candidates[0].ownerName}'s agent` }
+        : able.length === 1 && able[0] !== undefined
+          ? { kind: 'agent', label: `${able[0].ownerName}'s agent` }
           : { kind: 'free', label: `a free ${entry.needs}` };
-    waits.push({ key: `task:${entry.taskId}`, from: { kind: 'task', label: `Task #${entry.taskId}` }, to, taskId: entry.taskId, reason: entry.reason, since: entry.waitingSince });
+    waits.push({ key: `task:${entry.taskId}`, from: { kind: 'task', label: `Task #${entry.taskId}` }, to, taskId: entry.taskId, reason: entry.reason, since: entry.waitingSince, until: null });
   }
-  return waits.sort((a, b) => a.since - b.since);
+  return waits.sort((a, b) => (a.since ?? Number.MAX_SAFE_INTEGER) - (b.since ?? Number.MAX_SAFE_INTEGER));
 }
 
 function Chip({ party }: { party: Party }) {
@@ -249,7 +271,7 @@ export function WaitsFor({ activities, queue, onOpenTask }: { activities: TeamAc
               ) : (
                 <span className="wait-reason muted" title={w.reason}>{w.reason}</span>
               )}
-              <span className="mono muted small">{duration(w.since, now)}</span>
+              <span className="mono muted small">{w.since !== null ? duration(w.since, now) : w.until !== null ? `${duration(now, w.until)} left` : ''}</span>
             </div>
           ))}
         </div>
@@ -260,9 +282,10 @@ export function WaitsFor({ activities, queue, onOpenTask }: { activities: TeamAc
 
 export function QueueCard({ queue, onOpenTask }: { queue: QueueEntryView[]; onOpenTask: (id: number) => void }) {
   const now = Date.now();
-  const next = queue.find((q) => q.position !== null);
+  // The scheduler tries every task each pass, so "next" is the first one it can act on, not simply the first in line.
+  const next = queue.find((q) => q.position !== null && q.waitingOn === 'scheduler');
   return (
-    <Card title="Queue" actions={<span className="hint">In the order the scheduler picks them</span>}>
+    <Card title="Queue" actions={<span className="hint">In the order the scheduler tries them</span>}>
       {queue.length === 0 ? <Empty>The queue is empty.</Empty> : (
         <table className="table queue-table">
           <thead>
