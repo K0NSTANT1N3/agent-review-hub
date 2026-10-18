@@ -95,6 +95,7 @@ export class TableRepo<N extends keyof Tables> {
 }
 
 export class LeaderDb {
+  private readonly commitHooks: (() => void)[][] = [];
   readonly agents: TableRepo<'agents'>;
   readonly sessions: TableRepo<'sessions'>;
   readonly tasks: TableRepo<'tasks'>;
@@ -124,13 +125,32 @@ export class LeaderDb {
     if (fn.constructor.name === 'AsyncFunction') {
       throw new TypeError('Database transactions must be synchronous');
     }
-    return this.sql.transaction(() => {
-      const result = fn();
-      if (result !== null && (typeof result === 'object' || typeof result === 'function') && 'then' in result) {
-        throw new TypeError('Database transactions must be synchronous');
-      }
-      return result;
-    }).immediate();
+    const hooks: (() => void)[] = [];
+    this.commitHooks.push(hooks);
+    let result: T;
+    try {
+      result = this.sql.transaction(() => {
+        const value = fn();
+        if (value !== null && (typeof value === 'object' || typeof value === 'function') && 'then' in value) {
+          throw new TypeError('Database transactions must be synchronous');
+        }
+        return value;
+      }).immediate();
+    } catch (error) {
+      this.commitHooks.pop();
+      throw error;
+    }
+    this.commitHooks.pop();
+    const parent = this.commitHooks.at(-1);
+    if (parent !== undefined) parent.push(...hooks);
+    else for (const hook of hooks) hook();
+    return result;
+  }
+
+  afterCommit(fn: () => void): void {
+    const hooks = this.commitHooks.at(-1);
+    if (hooks === undefined) fn();
+    else hooks.push(fn);
   }
 
   get schemaVersion(): number {

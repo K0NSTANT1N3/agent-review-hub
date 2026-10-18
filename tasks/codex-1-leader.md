@@ -130,9 +130,9 @@ Every work item must include vitest tests in `packages/leader/test/`. Use an in-
 - **Accept:** a test iterates **every** (from,to) pair of the 12 states. Listed pairs succeed, all others throw. Every success writes exactly one `task_events` row.
 
 ### L3 — Locks, leases, `sendToSession` · spec §3, §10.1, §9.4 lock fields
-- [ ] `src/core/locks.ts`: `lockSession(sid, kind, ref, role)`, `releaseSession(sid, toState: 'idle'|'lost')`, `extendLease(agentId, aliveSids)`.
-- [ ] `sendToSession(sid, command)` exactly per §10.1 steps 1–5 (lock check by `taskId`/`directiveId`, conversation participant check, `seq` assignment, insert into `messages` as `to_node`, hand off to the hub through an injected `deliver(agentId, frame)` function).
-- [ ] `sendToAgent(agentId, command)` for `session.open` / `session.close` only.
+- [x] `src/core/locks.ts`: `lockSession(sid, kind, ref, role)`, `releaseSession(sid, toState: 'idle'|'lost')`, `extendLease(agentId, aliveSids)`.
+- [x] `sendToSession(sid, command)` exactly per §10.1 steps 1–5 (lock check by `taskId`/`directiveId`, conversation participant check, `seq` assignment, insert into `messages` as `to_node`, hand off to the hub through an injected `deliver(agentId, frame)` function).
+- [x] `sendToAgent(agentId, command)` for `session.open` / `session.close` only.
 - **Accept:** tests for each rejection in spec §21.1 bullet 2; `seq` strictly increasing per conversation; invariants §3.1–§3.4 hold under random interleavings (property-style test with 200 random operations).
 
 ### L4 — Node hub (WebSocket `/ws/node`) · spec §11.1, §11.2, §10.2
