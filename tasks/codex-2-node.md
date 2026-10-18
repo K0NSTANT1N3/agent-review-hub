@@ -124,9 +124,9 @@ Dependencies: **N1, N2 and N3 can start immediately**, before Claude's protocol 
 Every work item must include vitest tests in `packages/node/test/`. Git tests use a **temporary bare repo** plus a clone created in `os.tmpdir()`. Build a reusable helper `test/helpers/temp-repo.ts`.
 
 ### N1 — Git worktree operations · spec §14.1, §14.2
-- [ ] `src/git/git.ts`: `git(cwd, args, {timeoutMs})` over `execFile`, returning `{code, stdout, stderr}`, plus `-c user.name/-c user.email` injection for commits.
-- [ ] `src/git/worktrees.ts`: one exported function per row of the §14.2 table: `ensureBaseClone`, `createWorktree(sid)`, `prepareAuthorNewBranch`, `prepareAuthorExistingBranch`, `ensureCleanBeforeAuthorTurn`, `commitAndPushAfterAuthorTurn` (returns the commit or null), `diffInfo(base)` (`filesChanged`, `diffLines` via `--numstat`), `prepareReviewer(headCommit)`, `resetIfReviewerModified`, `syncWithMain` (returns `{hadConflicts, conflictedFiles}` and leaves conflicts in place for the agent), `finishSync` (marker scan + commit + push), `releaseWorktree`, `removeWorktree`.
-- [ ] Worktree path is always `{workspaceDir}/worktrees/{sid}` and never changes for a sid.
+- [x] `src/git/git.ts`: `git(cwd, args, {timeoutMs})` over `execFile`, returning `{code, stdout, stderr}`, plus `-c user.name/-c user.email` injection for commits.
+- [x] `src/git/worktrees.ts`: one exported function per row of the §14.2 table: `ensureBaseClone`, `createWorktree(sid)`, `prepareAuthorNewBranch`, `prepareAuthorExistingBranch`, `ensureCleanBeforeAuthorTurn`, `commitAndPushAfterAuthorTurn` (returns the commit or null), `diffInfo(base)` (`filesChanged`, `diffLines` via `--numstat`), `prepareReviewer(headCommit)`, `resetIfReviewerModified`, `syncWithMain` (returns `{hadConflicts, conflictedFiles}` and leaves conflicts in place for the agent), `finishSync` (marker scan + commit + push), `releaseWorktree`, `removeWorktree`.
+- [x] Worktree path is always `{workspaceDir}/worktrees/{sid}` and never changes for a sid.
 - **Accept:** tests cover each function, including a real merge conflict and conflict-marker detection, and push to the temp bare remote.
 
 ### N2 — Project config + test runner · spec §6.3, §14.2 (last paragraph)
