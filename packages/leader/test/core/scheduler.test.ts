@@ -4,6 +4,7 @@ import { dayStart, dirsOf, overlap } from '../../src/core/budget.js';
 import { EventHandlers } from '../../src/core/handlers.js';
 import { LockManager } from '../../src/core/locks.js';
 import { Scheduler } from '../../src/core/scheduler.js';
+import { transition } from '../../src/core/state-machine.js';
 import { openDatabase, type LeaderDb, type TaskRow } from '../../src/db/repo.js';
 
 let db: LeaderDb;
@@ -265,6 +266,18 @@ describe('liveness (§10.3–§10.5)', () => {
     handlers.handle('alice-claude', { type: 'session.opened', inReplyTo: open.frame.msgId, sid: open.frame.cmd.sid, ok: true });
     expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_session_id: open.frame.cmd.sid });
     expect(sent('author.start').at(-1)!.frame.cmd).toMatchObject({ continueExisting: true });
+  });
+
+  it('session.opened for a task a human paused meanwhile leaves the session idle and does not throw', () => {
+    const t = task();
+    scheduler.schedule();
+    const open = sent('session.open')[0]!;
+    transition(db, t.id, 'PAUSED', { reason: 'human', actor: 'human:alice', at: now });
+
+    expect(() => handlers.handle('alice-claude', { type: 'session.opened', inReplyTo: open.frame.msgId, sid: open.frame.cmd.sid, ok: true })).not.toThrow();
+    expect(db.tasks.require(t.id)).toMatchObject({ state: 'PAUSED', pause_reason: 'human', paused_from_state: 'QUEUED', author_session_id: null });
+    expect(db.sessions.require(open.frame.cmd.sid)).toMatchObject({ state: 'idle', lock_ref: null, profile: 'author' });
+    expect(sent('author.start')).toEqual([]);
   });
 
   it('own task paused by a rate limit resumes on the same session when the limit clears', () => {
