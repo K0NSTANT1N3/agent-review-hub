@@ -151,7 +151,7 @@ describe('author assignment (§9.2)', () => {
     db.agents.update('alice-claude', { paused: 0, rate_limited_until: now + 10_000 });
     expect(scheduler.waitReason(t)?.blockers[0]?.code).toBe('rate_limited');
     db.agents.update('alice-claude', { rate_limited_until: null, max_sessions: 1 });
-    session('occupied', 'alice-claude', { state: 'locked', lock_kind: 'task', lock_ref: '999', lock_role: 'author' });
+    session('occupied', 'alice-claude', { profile: 'author', state: 'locked', lock_kind: 'task', lock_ref: '999', lock_role: 'author' });
     expect(scheduler.waitReason(t)?.blockers[0]?.code).toBe('session_capacity');
 
     db.sessions.update('occupied', { state: 'idle', lock_kind: null, lock_ref: null, lock_role: null });

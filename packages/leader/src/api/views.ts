@@ -257,7 +257,6 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
   return rows.sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.agentId.localeCompare(b.agentId) || (a.sessionId ?? '').localeCompare(b.sessionId ?? ''));
 }
 
-export function taskDetail(db: LeaderDb, t: TaskRow): TaskDetail {
 export function taskDetail(db: LeaderDb, t: TaskRow, waitReason: TaskWaitReason | null = null): TaskDetail {
   return {
     task: taskView(db, t, waitReason),
