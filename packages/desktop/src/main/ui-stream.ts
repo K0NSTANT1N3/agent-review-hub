@@ -44,8 +44,7 @@ export class UiStream {
   private connect(): void {
     const url = new URL('/ws/ui', this.httpBase);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.searchParams.set('token', this.token);
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${this.token}` } });
     this.socket = ws;
     let openedAt: number | null = null;
     // The Leader accepts the upgrade before checking the token, so `open` alone does not mean healthy.
