@@ -146,9 +146,10 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
         if (stopPromise !== null) return stopPromise;
         stopped = true;
         stopPromise = (async () => {
-          runner.abortActiveTurns();
-          await runner.drain();
+          // Stop turns first, then disconnect so no new commands arrive while queued work drains.
+          runner.stop();
           await leaderClient?.stop();
+          await runner.drain();
           journal.close();
           logger.info({ stopped }, 'node daemon stopped');
         })();
