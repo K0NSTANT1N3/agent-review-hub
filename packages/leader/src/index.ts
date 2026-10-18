@@ -9,6 +9,7 @@ import { EventHandlers } from './core/handlers.js';
 import { LockManager } from './core/locks.js';
 import { MergeWorker } from './core/merge-worker.js';
 import { Scheduler } from './core/scheduler.js';
+import { requeueMerge } from './core/state-machine.js';
 import { openDatabase, type LeaderDb } from './db/repo.js';
 import { LeaderGit } from './git/leader-git.js';
 import type { Logger } from './logging.js';
@@ -39,12 +40,7 @@ function openDb(dbPath: string): LeaderDb {
 function recover(db: LeaderDb, now: number): void {
   db.withTx(() => {
     for (const a of db.agents.find({ status: 'online' })) db.agents.update(a.id, { status: 'offline' });
-    for (const t of db.tasks.find({ state: 'MERGING' })) {
-      // Named recovery operation, deliberately not an ordinary state-machine edge (issue #2).
-      db.tasks.update(t.id, { state: 'MERGE_QUEUED', state_entered_at: now, updated_at: now });
-      db.taskEvents.insert({ task_id: t.id, from_state: 'MERGING', to_state: 'MERGE_QUEUED', reason: 'startup_recovery', actor: 'leader', data: '{}', at: now });
-      if (db.mergeQueue.get(t.id) === undefined) db.mergeQueue.insert({ task_id: t.id, enqueued_at: now });
-    }
+    for (const t of db.tasks.find({ state: 'MERGING' })) requeueMerge(db, t.id, { reason: 'startup_recovery', actor: 'leader', at: now });
   });
 }
 

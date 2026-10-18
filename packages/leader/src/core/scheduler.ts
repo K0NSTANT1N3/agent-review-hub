@@ -103,8 +103,9 @@ export class Scheduler {
       const task = this.db.tasks.get(request.task_id);
       if (task === undefined) return;
       if (profile.profile === 'author' && task.state === 'QUEUED') this.bindAuthor(task, session.id);
-      else if (profile.profile === 'author' && task.state === 'PAUSED') this.replaceAuthorSession(task, session.id);
+      else if (profile.profile === 'author' && this.awaitsAuthorSession(task, session.agent_id)) this.replaceAuthorSession(task, session.id);
       else if (profile.profile === 'reviewer' && task.state === 'AWAITING_REVIEWER') this.bindReviewer(task, session.id);
+      // Otherwise the task moved on (e.g. a human paused it) while the session opened: it stays idle for reuse.
     } else if (request.directive_id !== null) {
       const directive = this.db.directives.get(request.directive_id);
       if (directive?.state === 'queued') this.bindDirective(directive.id, session.id);
@@ -522,6 +523,12 @@ export class Scheduler {
       transition(this.db, taskId, from, { reason: 'author_available', actor: 'leader', at: this.now() });
       this.reissueAuthorCommand(taskId, from);
     });
+  }
+
+  /** A PAUSED task that handlePaused would resume on a new session of this agent (never one a human paused). */
+  private awaitsAuthorSession(task: TaskRow, agentId: string): boolean {
+    return task.state === 'PAUSED' && task.pause_reason !== 'human' && task.author_agent_id === agentId
+      && (task.paused_from_state === 'AUTHORING' || task.paused_from_state === 'SYNCING');
   }
 
   /** The author's session was lost: bind a new session on the same agent, drop the old pairing, resume (spec §10.4). */

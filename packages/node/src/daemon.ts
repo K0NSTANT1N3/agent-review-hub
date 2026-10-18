@@ -35,6 +35,8 @@ export interface StartDaemonOptions {
   adapter?: AgentAdapter;
   assumeIdle?: boolean;
   insecure?: boolean;
+  /** Called when the Leader rejects this Node (e.g. revoked token); the Node stops reconnecting. */
+  onReject?: (reason: string) => void;
 }
 
 /** Starts the local Node service and connects it to the Leader. */
@@ -135,7 +137,10 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
         turnTimeoutSec = welcome.turnTimeoutSec;
         logger.info({ mainBranch, turnTimeoutSec }, 'connected to Leader');
       },
-      onReject: (reason) => logger.error({ reason }, 'Leader rejected this Node'),
+      onReject: (reason) => {
+        logger.error({ reason }, 'Leader rejected this Node');
+        options.onReject?.(reason);
+      },
       onError: (error) => logger.warn({ error }, 'Leader connection error'),
     });
     clientRef.current = leaderClient;
@@ -146,9 +151,10 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
         if (stopPromise !== null) return stopPromise;
         stopped = true;
         stopPromise = (async () => {
-          runner.abortActiveTurns();
-          await runner.drain();
+          // Stop turns first, then disconnect so no new commands arrive while queued work drains.
+          runner.stop();
           await leaderClient?.stop();
+          await runner.drain();
           journal.close();
           logger.info({ stopped }, 'node daemon stopped');
         })();

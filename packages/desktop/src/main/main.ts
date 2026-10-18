@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { BrowserWindow, Notification, app, ipcMain, powerMonitor, safeStorage, shell } from 'electron';
 import { addAgent, startLeader } from '@quorum/leader';
 import { resolveClaudeExecutable, startDaemon } from '@quorum/node';
-import type { ApiRouteName, UiEvent } from '@quorum/protocol';
-import { IPC, type ApiCallOptions, type AppState, type DesktopSettings, type HostSetup, type JoinSetup } from '../shared/ipc.js';
+import type { ApiRouteName } from '@quorum/protocol';
+import { IPC, type ApiCallOptions, type DesktopSettings, type HostSetup, type JoinSetup, type ResetOptions } from '../shared/ipc.js';
 import { addressOptions } from './network.js';
+import { createNotifier } from './notifier.js';
 import { Services } from './services.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -15,6 +16,7 @@ let window: BrowserWindow | null = null;
 // Separate data folders let several instances (e.g. a host and a member) run on one computer.
 if (process.env.QUORUM_USER_DATA) app.setPath('userData', process.env.QUORUM_USER_DATA);
 
+// Without an OS keychain (e.g. Linux with no keyring) the token is kept as plain text; Settings warns about it.
 const secrets = {
   encrypt(plain: string): string {
     return safeStorage.isEncryptionAvailable() ? `enc:${safeStorage.encryptString(plain).toString('base64')}` : `plain:${plain}`;
@@ -23,9 +25,18 @@ const secrets = {
     if (stored.startsWith('enc:')) return safeStorage.decryptString(Buffer.from(stored.slice(4), 'base64'));
     return stored.startsWith('plain:') ? stored.slice(6) : stored;
   },
+  isEncrypted: (stored: string): boolean => stored.startsWith('enc:'),
 };
 
-const notifier = createNotifier();
+const notifier = createNotifier({
+  show: (title, body) => {
+    if (Notification.isSupported()) new Notification({ title, body }).show();
+  },
+  requesterOf: async (id) => {
+    const res = await services.api('getTask', { id });
+    return res.ok ? res.data.task.requesterOwner : null;
+  },
+});
 
 const services = new Services(
   app.getPath('userData'),
@@ -94,40 +105,13 @@ handle(IPC.setupJoin, (setup: JoinSetup) => services.setupJoin(setup));
 handle(IPC.invite, (args: { agentId: string; ownerName: string }) => services.invite(args));
 handle(IPC.updateSettings, (settings: DesktopSettings) => services.updateSettings(settings));
 handle(IPC.restart, () => services.restart());
-handle(IPC.reset, () => services.reset());
+handle(IPC.reset, (options?: ResetOptions) => services.reset({ deleteLeaderData: options?.deleteLeaderData === true }));
 handle(IPC.networkAddresses, () => addressOptions());
 handle(IPC.checkAgent, () => services.checkAgent());
 handle(IPC.openExternal, async (url: string) => {
   if (/^https?:\/\//.test(url)) await shell.openExternal(url);
 });
 handle(IPC.api, (route: ApiRouteName, options?: ApiCallOptions) => services.api(route, options));
-
-/** OS notifications for the user's own tasks: merged, escalated, or needing attention. */
-function createNotifier(): (event: UiEvent, state: AppState) => void {
-  const lastState = new Map<number, string>();
-  let lastRateLimit: number | null = null;
-  return (event, state) => {
-    if (!Notification.isSupported()) return;
-    if (event.type === 'task.updated') {
-      const t = event.data;
-      const prev = lastState.get(t.id);
-      lastState.set(t.id, t.state);
-      if (prev === undefined || prev === t.state || t.requesterOwner !== state.ownerName) return;
-      if (t.state === 'MERGED') new Notification({ title: 'Merged ✓', body: `#${t.id} ${t.title}` }).show();
-      if (t.state === 'ESCALATED') new Notification({ title: 'Needs your decision', body: `#${t.id} ${t.title}: ${t.escalationReason ?? ''}` }).show();
-    } else if (event.type === 'task.needs_attention') {
-      new Notification({ title: `Task #${event.data.taskId} needs attention`, body: event.data.message }).show();
-    } else if (event.type === 'agent.updated' && event.data.id === state.agentId) {
-      // agent.updated fires on every heartbeat; notify once per new limit.
-      const limit = event.data.rateLimitedUntil;
-      if (limit === lastRateLimit) return;
-      lastRateLimit = limit;
-      if (limit === null) return;
-      const until = new Date(limit).toLocaleTimeString();
-      new Notification({ title: 'Your agent is rate-limited', body: `Usage resets around ${until}.` }).show();
-    }
-  };
-}
 
 const single = app.requestSingleInstanceLock();
 if (!single) {
@@ -141,7 +125,7 @@ if (!single) {
   });
   app.whenReady().then(async () => {
     createWindow();
-    await services.boot();
+    await services.boot().catch((error: unknown) => console.error('Quorum failed to start its services', error));
     window?.webContents.send(IPC.state, services.state());
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

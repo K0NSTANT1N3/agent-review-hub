@@ -248,6 +248,60 @@ describe('OpenCode adapter', () => {
     setTimeout(() => controller.abort(), 25);
     await expect(cancelled).rejects.toMatchObject({ code: 'CANCELLED' });
   });
+
+  it('asks the server to abort the session when a turn times out or is cancelled', async () => {
+    const aborts: string[] = [];
+    const server = await startServer(async (request, response) => {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      if (request.method === 'POST' && url.pathname === '/session') {
+        return respondJson(response, { id: 'ses_stop' });
+      }
+      if (request.method === 'POST' && url.pathname === '/session/ses_stop/message') {
+        await readBody(request);
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/session/ses_stop/abort') {
+        aborts.push(url.pathname);
+        return respondJson(response, true);
+      }
+      return respondJson(response, { message: 'unexpected route' }, 404);
+    });
+    const adapter = createOpencodeAdapter(opencodeConfig(server.baseUrl));
+    const session = await adapter.createSession({ cwd: '/repo', profile: 'author' });
+
+    await expect(run(adapter, session.nativeId!, 'Timeout.', { timeoutMs: 25 }))
+      .rejects.toMatchObject({ code: 'TIMEOUT' });
+    expect(aborts).toEqual(['/session/ses_stop/abort']);
+
+    const controller = new AbortController();
+    const cancelled = run(adapter, session.nativeId!, 'Cancel.', {
+      signal: controller.signal,
+      timeoutMs: 1_000,
+    });
+    setTimeout(() => controller.abort(), 25);
+    await expect(cancelled).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(aborts).toEqual(['/session/ses_stop/abort', '/session/ses_stop/abort']);
+  });
+
+  it('does not abort the session when a turn completes', async () => {
+    const aborts: string[] = [];
+    const server = await startServer(async (request, response) => {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      if (request.method === 'POST' && url.pathname === '/session') {
+        return respondJson(response, { id: 'ses_done' });
+      }
+      if (request.method === 'POST' && url.pathname === '/session/ses_done/message') {
+        return respondJson(response, assistantMessage({ finish: 'stop', parts: [{ type: 'text', text: 'done' }] }));
+      }
+      if (url.pathname.endsWith('/abort')) aborts.push(url.pathname);
+      return respondJson(response, { message: 'unexpected route' }, 404);
+    });
+    const adapter = createOpencodeAdapter(opencodeConfig(server.baseUrl));
+    const session = await adapter.createSession({ cwd: '/repo', profile: 'author' });
+
+    await expect(run(adapter, session.nativeId!, 'Finish.')).resolves.toMatchObject({ text: 'done' });
+    expect(aborts).toEqual([]);
+  });
 });
 
 async function startServer(handler: RequestHandler): Promise<FakeServer> {

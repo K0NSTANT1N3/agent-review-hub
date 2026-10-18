@@ -112,7 +112,13 @@ export function TaskDetail({ id, state, onBack, initialTab }: { id: number; stat
               </button>
             )}
             <span className="grow" />
-            <button className="danger" disabled={busy} onClick={() => void act('cancelTask', {}, 'Cancel this task? Its branch will be deleted.')}>
+            {/* The Leader refuses to cancel during a merge (409). */}
+            <button
+              className="danger"
+              disabled={busy || t.state === 'MERGING'}
+              title={t.state === 'MERGING' ? 'The task is being merged; wait for it to finish.' : undefined}
+              onClick={() => void act('cancelTask', {}, 'Cancel this task? Its branch will be deleted.')}
+            >
               Cancel task
             </button>
           </div>

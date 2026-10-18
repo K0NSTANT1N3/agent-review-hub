@@ -234,6 +234,8 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
       const t = task(ctx.id);
       requireRequesterOrAdmin(ctx, t);
       if (isTerminalTaskState(t.state as TaskState)) throw new ApiHttpError('ILLEGAL_TRANSITION', 'task is finished');
+      // The worker may already be pushing to main; a cancel now could leave the code merged under a CANCELLED task.
+      if (t.state === 'MERGING') throw new ApiHttpError('CONFLICT', 'the task is being merged; wait for it to finish');
       handlers.finishTask(t.id, 'CANCELLED', 'cancelled_by_human', actor(ctx));
       scheduler.trigger();
       return taskView(db, db.tasks.require(t.id));
