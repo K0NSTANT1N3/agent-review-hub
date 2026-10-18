@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { migrate, SCHEMA_VERSION } from './migrations.js';
-import type { Inserts, KeyColumn, MessageRow, Patch, RowKey, Tables } from './types.js';
+import type { ConversationRow, Inserts, KeyColumn, MessageRow, Patch, RowKey, Tables } from './types.js';
 
 type Value = string | number | null;
 type SyncResult<T> = T & ({ readonly then?: never } | null | undefined | void);
@@ -158,6 +158,36 @@ export class LeaderDb {
     // rowid preserves command issue order when timestamps have millisecond ties.
     return this.sql.prepare(`SELECT * FROM messages WHERE direction = 'to_node' AND acked_at IS NULL${clause} ORDER BY created_at, rowid`)
       .all(...(agentId === undefined ? [] : [agentId])) as MessageRow[];
+  }
+
+  latestTurnCommand(sid: string): MessageRow | undefined {
+    return this.sql.prepare(`SELECT * FROM messages WHERE direction = 'to_node' AND session_id = ?
+      AND type IN ('author.start','author.revise','author.sync','review.start','review.rereview','directive.run')
+      ORDER BY rowid DESC LIMIT 1`).get(sid) as MessageRow | undefined;
+  }
+
+  /** Sum of input+output tokens for an agent's ledger rows of `kind` at or after `since`. */
+  usageTokensSince(agentId: string, kind: 'own' | 'lent', since: number): number {
+    const row = this.sql.prepare(`SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM usage_ledger
+      WHERE agent_id = ? AND kind = ? AND at >= ?`).get(agentId, kind, since) as { total: number };
+    return row.total;
+  }
+
+  /** True when any from_node event answers the given command msgId. */
+  hasReplyTo(msgId: string): boolean {
+    return this.sql.prepare(`SELECT 1 FROM messages WHERE direction = 'from_node'
+      AND json_extract(payload, '$.evt.inReplyTo') = ? LIMIT 1`).get(msgId) !== undefined;
+  }
+
+  /** Conversations created at or after `since` (for reviewer fairness and pair penalties). */
+  conversationsSince(since: number): ConversationRow[] {
+    return this.sql.prepare('SELECT * FROM conversations WHERE created_at >= ? ORDER BY created_at').all(since) as ConversationRow[];
+  }
+
+  /** The session.open message that requested this session, if any. */
+  openRequestFor(sid: string): MessageRow | undefined {
+    return this.sql.prepare(`SELECT * FROM messages WHERE direction = 'to_node' AND type = 'session.open' AND session_id = ?
+      ORDER BY rowid DESC LIMIT 1`).get(sid) as MessageRow | undefined;
   }
 
   get schemaVersion(): number {
