@@ -381,6 +381,7 @@ CREATE TABLE tasks (
   tags                   TEXT NOT NULL DEFAULT '[]',
   priority               INTEGER NOT NULL DEFAULT 1,     -- 0 low, 1 normal, 2 high, 3 urgent
   mode                   TEXT NOT NULL DEFAULT 'own',    -- 'own' | 'pool'
+  require_human_approval INTEGER NOT NULL DEFAULT 0,     -- 1: a human approves the merge after the reviewer agent
   requester_agent_id     TEXT NOT NULL REFERENCES agents(id),
   author_agent_id        TEXT REFERENCES agents(id),
   author_session_id      TEXT REFERENCES sessions(id),
@@ -556,7 +557,8 @@ Implement as a table in `state-machine.ts`. `transition(task, to, reason, actor,
 | T5 | AUTHORING | `author.submitted`, tests failed | attempts exhausted | ESCALATED | reason `tests_failing` |
 | T6 | AUTHORING | `author.submitted`, status `blocked` | — | ESCALATED | reason `author_blocked: <blockedReason>` |
 | T7 | AWAITING_REVIEWER | scheduler selects reviewer + session | §9.3 | IN_REVIEW | create conversation; lock reviewer session (`role=reviewer`); `review_round++`; send `review.start` |
-| T8 | IN_REVIEW | `review.completed`, effective verdict approve (§8.3) | — | MERGE_QUEUED | `last_reviewed_commit=head`; mark resolved issues; `approved_at=now`; insert into merge_queue |
+| T8 | IN_REVIEW | `review.completed`, effective verdict approve (§8.3) | `require_human_approval=0` | MERGE_QUEUED | `last_reviewed_commit=head`; mark resolved issues; `approved_at=now`; insert into merge_queue |
+| T8b | IN_REVIEW | `review.completed`, effective verdict approve (§8.3) | `require_human_approval=1` | ESCALATED | `last_reviewed_commit=head`; mark resolved issues; `escalation_reason='human_approval_required'`; no merge_queue (the requester approves with T26, which sets `approved_at`) |
 | T9 | IN_REVIEW | `review.completed`, effective verdict changes | round < max and no dispute limit hit | AUTHORING | store issues; send `author.revise` to author session |
 | T10 | IN_REVIEW | `review.completed`, effective verdict changes | round ≥ `maxReviewRounds` **or** any issue `dispute_count ≥ maxDisputesPerIssue` | ESCALATED | reason `review_round_limit` or `dispute_limit` |
 | T11 | IN_REVIEW | reviewer session lost / reviewer turn failed past retries / reviewer agent rate-limited | — | AWAITING_REVIEWER | conversation → `abandoned`; release reviewer lock (session → `lost` or `idle`) |
@@ -1223,7 +1225,7 @@ The main process embeds the Node daemon (`import { startDaemon } from '@quorum/n
 1. **First-run setup:** Leader URL, agent id, token, owner name, repo remote, workspace dir, adapter type + adapter settings. Test connection button.
 2. **Dashboard:** team agents (online/offline, idle/human-active, locked/max sessions, budget bar lent/limit, rate-limit countdown). My agent card with a big **Pause / Resume** toggle and lend mode selector.
 3. **Tasks board:** columns grouped by state (Queued, Authoring, In review, Merging, Needs attention [ESCALATED + PAUSED + no-reviewer], Done). Filter: mine / all.
-4. **New task form:** title, description (markdown), tags, priority, mode (own/pool).
+4. **New task form:** title, description (markdown), tags, priority, mode (own/pool), and "Require my approval before merge" (`requireHumanApproval`, preselected for Urgent): after the reviewer agent approves, the task stops in ESCALATED until the requester or an admin approves the merge.
 5. **Task detail:** header (state, author, reviewer, round, branch); timeline built from `task_events` + conversation messages, with critique issues rendered as cards (code, severity, file:line, status, author response); diff viewer (diff2html) with round selector (full / per-round delta); action buttons by permission: Approve, Send back (with comment), Reassign reviewer, Pause/Resume, Cancel. When ESCALATED, show the `escalation_reason` prominently. For `author_blocked`, show the agent's question and a send-back box for the answer.
 6. **Sessions view:** each of my sessions: state, lock, context-usage bar, files.
 7. **Directives:** send a directive to an agent, see results.

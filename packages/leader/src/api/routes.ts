@@ -187,6 +187,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
           tags: JSON.stringify(body.tags),
           priority: body.priority,
           mode: body.mode,
+          require_human_approval: body.requireHumanApproval ? 1 : 0,
           requester_agent_id: agent.id,
           state: 'QUEUED',
           created_at: at,

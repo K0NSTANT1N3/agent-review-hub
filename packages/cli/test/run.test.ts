@@ -7,7 +7,7 @@ import { EXIT, run, type Deps } from '../src/run.js';
 function taskView(patch: Partial<TaskView> = {}): TaskView {
   return {
     id: 7, title: 'T', description: 'd', tags: [], priority: 1, mode: 'own', requesterAgentId: 'ana-agent', requesterOwner: 'Ana',
-    authorAgentId: 'ana-agent', authorSessionId: 's', state: 'AUTHORING', pausedFromState: null, pauseReason: null, escalationReason: null,
+    authorAgentId: 'ana-agent', authorSessionId: 's', state: 'AUTHORING', pausedFromState: null, pauseReason: null, escalationReason: null, requireHumanApproval: false,
     branch: 'quorum/task-7', baseCommit: null, headCommit: null, lastReviewedCommit: null, reviewRound: 0, testFixAttempts: 0, syncAttempts: 0,
     files: [], diffLines: 0, lastTestOutput: null, mergedCommit: null, createdAt: 1, updatedAt: 1, stateEnteredAt: 1, approvedAt: null, ...patch,
   };
@@ -101,7 +101,17 @@ describe('errors', () => {
       return { status: 201, body: taskView({ state: 'QUEUED' }) };
     });
     expect(r.code).toBe(EXIT.OK);
-    expect(seen).toEqual({ url: '/api/tasks', auth: 'Bearer qrq_x', body: { title: 'Add rate limit', description: 'd', tags: ['a', 'b'], priority: 2, mode: 'pool' } });
+    expect(seen).toEqual({ url: '/api/tasks', auth: 'Bearer qrq_x', body: { title: 'Add rate limit', description: 'd', tags: ['a', 'b'], priority: 2, mode: 'pool', requireHumanApproval: false } });
+  });
+
+  it('asks for human approval with --require-approval', async () => {
+    let body: unknown = null;
+    const r = await harness(['task', 'create', '--title', 'Rotate keys', '--description', 'd', '--priority', 'urgent', '--require-approval'], (_url, init) => {
+      body = JSON.parse(String(init.body));
+      return { status: 201, body: taskView({ state: 'QUEUED', requireHumanApproval: true }) };
+    });
+    expect(r.code).toBe(EXIT.OK);
+    expect(body).toMatchObject({ priority: 3, requireHumanApproval: true });
   });
 });
 

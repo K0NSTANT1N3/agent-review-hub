@@ -187,6 +187,14 @@ describe('effective reviews and bounded revision loops', () => {
     expect(db.mergeQueue.all()).toHaveLength(0);
   });
 
+  it('stops an approved task for a human when the requester asked to approve the merge', () => {
+    pair();
+    db.tasks.update(task.id, { require_human_approval: 1 });
+    deliver(reviewed({ verdict: 'approve' }), 'bob');
+    expect(db.tasks.require(task.id)).toMatchObject({ state: 'ESCALATED', escalation_reason: 'human_approval_required', last_reviewed_commit: 'bbbbbbb' });
+    expect(db.mergeQueue.all()).toHaveLength(0);
+  });
+
   it('approves suggestions even when the reviewer states request_changes', () => {
     pair();
     deliver(reviewed({ verdict: 'request_changes', newIssues: [{ severity: 'suggestion', file: null, line: null, comment: 'Consider a shorter helper name' }] }), 'bob');

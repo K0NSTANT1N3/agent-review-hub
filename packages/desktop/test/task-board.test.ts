@@ -16,6 +16,7 @@ function task(partial: Partial<TaskView> & Pick<TaskView, 'id' | 'title' | 'stat
     pausedFromState: null,
     pauseReason: null,
     escalationReason: null,
+    requireHumanApproval: false,
     branch: null,
     baseCommit: null,
     headCommit: null,

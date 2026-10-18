@@ -22,7 +22,7 @@ Usage:
   quorum login --url <leader url> --token <token | ->
   quorum agents
   quorum task create --title <text> [--description <text> | --description-file <path | ->]
-                     [--tags a,b] [--priority low|normal|high|urgent] [--mode own|pool]
+                     [--tags a,b] [--priority low|normal|high|urgent] [--mode own|pool] [--require-approval]
                      [--wait] [--timeout <sec>]
   quorum task list [--all] [--state <STATE>]
   quorum task status <id>
@@ -171,6 +171,7 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
           tags: { type: 'string' },
           priority: { type: 'string' },
           mode: { type: 'string' },
+          'require-approval': { type: 'boolean' },
           wait: { type: 'boolean' },
           timeout: { type: 'string' },
         });
@@ -186,7 +187,7 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
         const tags = typeof values.tags === 'string' ? values.tags.split(',').map((t) => t.trim()).filter(Boolean) : [];
         const timeoutSec = seconds(values.timeout, 1800);
         const client = connect(values);
-        const task = await client.call('createTask', { body: { title: values.title.trim(), description, tags, priority, mode } });
+        const task = await client.call('createTask', { body: { title: values.title.trim(), description, tags, priority, mode, requireHumanApproval: values['require-approval'] === true } });
         if (values.wait === true) {
           if (!json) deps.err(`created #${task.id}`);
           return await waitForTask(client, task.id, timeoutSec, interval);

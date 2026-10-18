@@ -19,6 +19,9 @@ export interface HandlerOptions {
   onFinished?: (task: TaskRow) => void;
 }
 
+/** Escalation reason when the reviewer agent approved a task that needs a human to approve the merge. */
+export const HUMAN_APPROVAL_REQUIRED = 'human_approval_required';
+
 export class EventHandlers {
   private readonly now: () => number;
   constructor(private readonly db: LeaderDb, readonly config: LeaderConfig, readonly locks: LockManager, private readonly options: HandlerOptions = {}) {
@@ -193,7 +196,12 @@ export class EventHandlers {
   private reviewCompleted(task: TaskRow, event: Extract<Event, { type: 'review.completed' }>): void {
     this.db.tasks.update(task.id, { last_reviewed_commit: event.reviewedCommit, turn_retries: 0 });
     const result = applyReview(this.db, task, event.conversationId, event.output, this.now());
-    if (result.verdict === 'approve') { this.queueMerge(task.id, 'review_approved'); return; }
+    if (result.verdict === 'approve') {
+      // The requester asked to approve the merge themselves: stop here instead of merging.
+      if (task.require_human_approval === 1) this.escalate(task.id, HUMAN_APPROVAL_REQUIRED);
+      else this.queueMerge(task.id, 'review_approved');
+      return;
+    }
     if (result.openBlocking.some((issue) => issue.dispute_count >= this.config.limits.maxDisputesPerIssue)) { this.escalate(task.id, 'dispute_limit'); return; }
     if (task.review_round >= this.config.limits.maxReviewRounds) { this.escalate(task.id, 'review_round_limit'); return; }
     const updated = transitionToAuthorState(this.db, task.id, 'AUTHORING', { reason: 'review_changes', actor: 'leader', at: this.now() });

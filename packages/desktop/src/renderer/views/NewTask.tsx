@@ -9,6 +9,7 @@ export function NewTask({ onCreated }: { onCreated: (id: number) => void }) {
   const [tags, setTags] = useState('');
   const [priority, setPriority] = useState(1);
   const [mode, setMode] = useState<TaskMode>('own');
+  const [requireApproval, setRequireApproval] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -22,6 +23,7 @@ export function NewTask({ onCreated }: { onCreated: (id: number) => void }) {
           description,
           priority,
           mode,
+          requireHumanApproval: requireApproval,
           tags: tags
             .split(',')
             .map((s) => s.trim())
@@ -54,7 +56,15 @@ export function NewTask({ onCreated }: { onCreated: (id: number) => void }) {
         </label>
         <label>
           Priority
-          <select value={priority} onChange={(e) => setPriority(Number(e.target.value))}>
+          <select
+            value={priority}
+            onChange={(e) => {
+              const p = Number(e.target.value);
+              setPriority(p);
+              // Urgent work defaults to a human approving the merge; it can still be unticked.
+              if (p === 3) setRequireApproval(true);
+            }}
+          >
             <option value={0}>Low</option>
             <option value={1}>Normal</option>
             <option value={2}>High</option>
@@ -67,6 +77,11 @@ export function NewTask({ onCreated }: { onCreated: (id: number) => void }) {
             <option value="own">My agent</option>
             <option value="pool">Any available agent</option>
           </select>
+        </label>
+        <label className="span-2 row inline">
+          <input type="checkbox" checked={requireApproval} onChange={(e) => setRequireApproval(e.target.checked)} />
+          Require my approval before merge
+          <span className="hint">(after the reviewer agent approves, the task waits for you instead of merging)</span>
         </label>
         <label className="span-2">
           Tags <span className="hint">(comma separated)</span>
