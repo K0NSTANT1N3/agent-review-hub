@@ -149,7 +149,9 @@ export const MessageViewSchema = z.object({
   directiveId: z.string().nullable(),
   conversationId: z.string().nullable(),
   seq: z.number().int().nullable(),
+  /** Command or event type, e.g. 'review.rereview'. */
   type: z.string(),
+  /** The Command (to_node) or Event (from_node) object itself — not the {kind,msgId,…} frame. */
   payload: z.unknown(),
   createdAt: ts,
   sentAt: nullableTs,
