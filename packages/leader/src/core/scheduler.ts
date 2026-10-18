@@ -84,8 +84,8 @@ export class Scheduler {
   /** One full pass — spec §9 steps 1–5. Each item runs in its own savepoint so one failure doesn't block the rest. */
   schedule(): void {
     this.expire();
-    for (const task of this.byPriority(['QUEUED'])) this.guard(`assign author ${task.id}`, () => this.assignAuthor(task.id));
     for (const task of this.byPriority(['AWAITING_REVIEWER'])) this.guard(`assign reviewer ${task.id}`, () => this.assignReviewer(task.id));
+    for (const task of this.byPriority(['QUEUED'])) this.guard(`assign author ${task.id}`, () => this.assignAuthor(task.id));
     for (const d of this.db.directives.find({ state: 'queued' }).sort((a, b) => a.created_at - b.created_at)) {
       this.guard(`directive ${d.id}`, () => this.runDirective(d.id));
     }
@@ -219,7 +219,7 @@ export class Scheduler {
     let chosen: AgentRow | undefined;
     if (task.mode === 'own') {
       const a = requester;
-      if (this.isOnline(a) && a.paused === 0 && !this.isRateLimited(a) && this.hasSlot(a) && !this.backedOff(a.id)) chosen = a;
+      if (this.isOnline(a) && a.paused === 0 && !this.isRateLimited(a) && this.hasSlot(a) && !this.backedOff(a.id) && this.canAdmitAuthor(task, a.id)) chosen = a;
     } else {
       const candidates: Candidate[] = [];
       for (const a of this.db.agents.all()) {
@@ -227,6 +227,7 @@ export class Scheduler {
         const own = a.owner_name === requester.owner_name;
         const estimate = estimateAuthor(a, this.config.costEstimate);
         if (own ? a.paused !== 0 : !this.mayLend(a) || budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) continue;
+        if (!this.canAdmitAuthor(task, a.id)) continue;
         candidates.push({ agent: a, score: this.score(a, task, 'author', own, estimate) });
       }
       chosen = this.best(candidates);
@@ -261,19 +262,15 @@ export class Scheduler {
   private assignReviewer(taskId: number): void {
     const task = this.db.tasks.require(taskId);
     if (task.state !== 'AWAITING_REVIEWER' || this.hasPendingOpen(task.id) || task.author_agent_id === null) return;
-    const requesterOwner = this.ownerOf(task.requester_agent_id);
-    const candidates: Candidate[] = [];
-    for (const a of this.db.agents.all()) {
-      if (a.id === task.author_agent_id || !this.isOnline(a) || this.isRateLimited(a) || !this.hasSlot(a) || this.backedOff(a.id)) continue;
-      const own = a.owner_name === requesterOwner;
-      const estimate = estimateReview(a, task, this.config.costEstimate);
-      if (own ? a.paused !== 0 : !this.mayLend(a) || budgetRemaining(this.db, a, this.now(), this.config.dayBoundaryTz) < estimate) continue;
-      candidates.push({ agent: a, score: this.score(a, task, 'reviewer', own, estimate) });
-    }
+    const candidates = this.eligibleReviewers(task, task.author_agent_id).filter(({ agent }) => this.hasSlot(agent));
     // Agents whose earlier review of this task was abandoned (crash, invalid output, rate limit, …) are a last resort.
     const dropped = new Set(this.db.conversations.find({ task_id: task.id, state: 'abandoned' }).map((c) => c.reviewer_agent_id));
     const fresh = candidates.filter((c) => !dropped.has(c.agent.id));
-    const chosen = this.best(fresh.length > 0 ? fresh : candidates);
+    const ranked = (fresh.length > 0 ? fresh : candidates).sort(
+      (a, b) => b.score - a.score || (a.agent.last_assigned_at ?? -1) - (b.agent.last_assigned_at ?? -1) || a.agent.id.localeCompare(b.agent.id),
+    );
+    const remaining = this.pendingReviewDemands().filter((demand) => demand.task.id !== task.id);
+    const chosen = ranked.find(({ agent }) => this.canMatchReviewDemands(remaining, agent.id)) ?? ranked[0];
     if (chosen === undefined) {
       const waited = this.now() - task.state_entered_at;
       const key = `no_reviewer:${task.id}:${task.state_entered_at}`;
@@ -283,9 +280,84 @@ export class Scheduler {
       }
       return;
     }
-    const sid = this.pickSession(chosen, taskFiles(task), 'reviewer');
+    const sid = this.pickSession(chosen.agent, taskFiles(task), 'reviewer');
     if (sid !== null) this.bindReviewer(task, sid);
-    else this.openSession(chosen.id, 'reviewer', { taskId: task.id });
+    else this.openSession(chosen.agent.id, 'reviewer', { taskId: task.id });
+  }
+
+  /** Agents eligible to review this task, without filtering out agents that are currently full. */
+  private eligibleReviewers(task: TaskRow, authorAgentId: string): Candidate[] {
+    const requesterOwner = this.ownerOf(task.requester_agent_id);
+    const candidates: Candidate[] = [];
+    for (const agent of this.db.agents.all()) {
+      if (agent.id === authorAgentId || !this.isOnline(agent) || this.isRateLimited(agent) || this.backedOff(agent.id)) continue;
+      const own = agent.owner_name === requesterOwner;
+      const estimate = estimateReview(agent, task, this.config.costEstimate);
+      if (own ? agent.paused !== 0 : !this.mayLend(agent) || budgetRemaining(this.db, agent, this.now(), this.config.dayBoundaryTz) < estimate) continue;
+      candidates.push({ agent, score: this.score(agent, task, 'reviewer', own, estimate) });
+    }
+    return candidates;
+  }
+
+  /**
+   * Keep enough free reviewer slots to match every task already in the author/review queue, plus
+   * the author we are about to admit. Each author lock lasts through review, so assigning authors
+   * without this check can consume every slot before any review starts.
+   */
+  private canAdmitAuthor(task: TaskRow, authorAgentId: string): boolean {
+    return this.canMatchReviewDemands([...this.pendingReviewDemands(), { task, authorAgentId }], authorAgentId);
+  }
+
+  private pendingReviewDemands(): { task: TaskRow; authorAgentId: string }[] {
+    return this.db.tasks.all().flatMap((task) => {
+      const needsReviewer = ['AUTHORING', 'SYNCING', 'AWAITING_REVIEWER'].includes(task.state) ||
+        (task.state === 'PAUSED' && ['AUTHORING', 'SYNCING', 'AWAITING_REVIEWER'].includes(task.paused_from_state ?? ''));
+      return needsReviewer && task.author_agent_id !== null ? [{ task, authorAgentId: task.author_agent_id }] : [];
+    });
+  }
+
+  /** Capacity-aware bipartite matching prevents a flexible task from taking the sole reviewer slot another task needs. */
+  private canMatchReviewDemands(
+    demands: { task: TaskRow; authorAgentId: string }[],
+    consumeAgentId?: string,
+  ): boolean {
+    const eligible = demands
+      .map(({ task, authorAgentId }) => ({
+        task,
+        reviewers: this.eligibleReviewers(task, authorAgentId).map(({ agent }) => agent.id),
+      }))
+      // Tasks with no eligible reviewer cannot be helped by reserving capacity; keep their existing
+      // behavior (author, then surface the no-reviewer attention state).
+      .filter(({ reviewers }) => reviewers.length > 0)
+      .sort((a, b) => a.reviewers.length - b.reviewers.length);
+    if (eligible.length === 0) return true;
+
+    const slots: string[] = [];
+    for (const agent of this.db.agents.all()) {
+      // Reviewer sessions are temporary demand on a slot: once that review finishes, the slot
+      // becomes available to the next task. Author/directive locks are the work that can starve
+      // reviews if every session is consumed, so only those locks reduce projected capacity.
+      const occupied = this.db.sessions.find({ agent_id: agent.id, state: 'locked' })
+        .filter((session) => session.lock_role !== 'reviewer').length +
+        this.db.sessions.find({ agent_id: agent.id, state: 'opening' })
+          .filter((session) => session.profile !== 'reviewer').length;
+      const free = Math.max(0, agent.max_sessions - occupied - (agent.id === consumeAgentId ? 1 : 0));
+      for (let i = 0; i < free; i += 1) slots.push(agent.id);
+    }
+    const assigned = new Array<number>(slots.length).fill(-1);
+    const match = (demandIndex: number, visited: Set<number>): boolean => {
+      const reviewers = new Set(eligible[demandIndex]!.reviewers);
+      for (let slot = 0; slot < slots.length; slot += 1) {
+        if (!reviewers.has(slots[slot]!) || visited.has(slot)) continue;
+        visited.add(slot);
+        if (assigned[slot] === -1 || match(assigned[slot]!, visited)) {
+          assigned[slot] = demandIndex;
+          return true;
+        }
+      }
+      return false;
+    };
+    return eligible.every((_, index) => match(index, new Set()));
   }
 
   /** AWAITING_REVIEWER → IN_REVIEW with a new conversation (T7). */
