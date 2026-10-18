@@ -10,13 +10,15 @@ export interface TurnResult {
   contextTokens: number;
 }
 
-export type AdapterErrorCode = 'RATE_LIMITED' | 'ADAPTER_ERROR' | 'CANCELLED' | 'TIMEOUT';
-
 export class AdapterError extends Error {
-  readonly code: AdapterErrorCode;
+  readonly code: 'RATE_LIMITED' | 'ADAPTER_ERROR' | 'CANCELLED' | 'TIMEOUT';
   readonly resetAt?: number;
 
-  constructor(code: AdapterErrorCode, message: string, options?: { resetAt?: number; cause?: unknown }) {
+  constructor(
+    code: AdapterError['code'],
+    message: string = code,
+    options?: { resetAt?: number; cause?: unknown },
+  ) {
     super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'AdapterError';
     this.code = code;
