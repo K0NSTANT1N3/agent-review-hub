@@ -2,9 +2,16 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/out/**', '**/release/**', '**/*.d.ts'] },
+  { ignores: ['**/dist/**', '**/node_modules/**', '**/out/**', '**/release/**', '**/stage/**', '**/*.d.ts'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    // Plain Node scripts (build tooling).
+    files: ['**/*.mjs', '**/*.cjs', '**/*.js'],
+    languageOptions: {
+      globals: { process: 'readonly', console: 'readonly', Buffer: 'readonly', URL: 'readonly', setTimeout: 'readonly' },
+    },
+  },
   {
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
