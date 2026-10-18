@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNodeConfig } from '@quorum/protocol';
@@ -79,6 +79,16 @@ describe('quorum-node join', () => {
     expect(() => runJoin([code()], () => {}, dir, home)).toThrow(/already exists; pass --force/);
     runJoin([code(), '--force'], () => {}, dir, home);
     expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ agentId: 'bo-agent' });
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses an existing dangling config symlink without --force', async () => {
+    const path = join(dir, 'quorum.node.json');
+    const target = join(dir, 'other.json');
+    await symlink(target, path);
+
+    expect(() => runJoin([code()], () => {}, dir, home)).toThrow(/already exists; pass --force/);
+    expect((await lstat(path)).isSymbolicLink()).toBe(true);
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('rejects bad input with a clear message', () => {

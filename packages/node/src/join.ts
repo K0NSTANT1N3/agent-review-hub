@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, fchmodSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -159,10 +159,24 @@ export function needsInsecure(leaderUrl: string): boolean {
 
 /** Writes the config readable only by the current user: it holds the agent's secret token. */
 export function writeNodeConfig(path: string, config: NodeConfig, force: boolean): void {
-  if (!force && existsSync(path)) throw new Error(`${path} already exists; pass --force to overwrite it`);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  let fd: number;
+  try {
+    // Exclusive creation also rejects dangling symlinks and a concurrent join's config.
+    fd = openSync(path, force ? 'w' : 'wx', 0o600);
+  } catch (error) {
+    if (!force && error instanceof Error && 'code' in error && error.code === 'EEXIST') {
+      throw new Error(`${path} already exists; pass --force to overwrite it`);
+    }
+    throw error;
+  }
+  try {
+    // Existing files keep their permissions on open: restrict access before writing a new token.
+    fchmodSync(fd, 0o600);
+    writeFileSync(fd, `${JSON.stringify(config, null, 2)}\n`);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export function runJoin(args: string[], out: (line: string) => void, cwd = process.cwd(), home = homedir()): JoinResult {
