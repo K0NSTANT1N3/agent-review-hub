@@ -176,6 +176,48 @@ describe('REST API (§17)', () => {
     const bad = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=nope`);
     expect(await new Promise((r) => bad.once('close', (code) => r(code)))).toBe(1008);
   });
+
+  it('derives one activity row per session with review pairing and visible idle agents', async () => {
+    const now = Date.now();
+    side.agents.update('alice-claude', { status: 'online', last_heartbeat_at: now });
+    side.agents.update('bob-claude', { status: 'online', last_heartbeat_at: now });
+    side.agents.update('admin-console', { status: 'online', last_heartbeat_at: now });
+    const task = side.tasks.insert({ title: 'Review activity', description: 'd', requester_agent_id: 'alice-claude', state: 'IN_REVIEW', author_agent_id: 'alice-claude', created_at: now, updated_at: now, state_entered_at: now });
+    side.sessions.insert({ id: 'alice-session', agent_id: 'alice-claude', state: 'locked', lock_kind: 'task', lock_ref: String(task.id), lock_role: 'author', created_at: now, last_used_at: now });
+    side.sessions.insert({ id: 'bob-session', agent_id: 'bob-claude', state: 'locked', lock_kind: 'task', lock_ref: String(task.id), lock_role: 'reviewer', created_at: now, last_used_at: now });
+    side.tasks.update(task.id, { author_session_id: 'alice-session' });
+    side.conversations.insert({ id: 'review-conversation', task_id: task.id, author_session_id: 'alice-session', author_agent_id: 'alice-claude', reviewer_session_id: 'bob-session', reviewer_agent_id: 'bob-claude', state: 'active', created_at: now });
+
+    const response = await api('GET', '/api/activity', 'alice');
+    expect(response.status).toBe(200);
+    const activities = response.body!.activities as { agentId: string; sessionId: string | null; role: string; activityState: string; waitingOn: string | null; taskId: number | null; taskTitle: string | null; pairedAgentId: string | null; pairedSessionId: string | null }[];
+    expect(activities).toHaveLength(3);
+    expect(activities.find((item) => item.sessionId === 'alice-session')).toMatchObject({
+      role: 'author', activityState: 'waiting', waitingOn: 'agent', taskId: task.id,
+      taskTitle: 'Review activity', pairedAgentId: 'bob-claude', pairedSessionId: 'bob-session',
+    });
+    expect(activities.find((item) => item.sessionId === 'bob-session')).toMatchObject({
+      role: 'reviewer', activityState: 'working', pairedAgentId: 'alice-claude', pairedSessionId: 'alice-session',
+    });
+    expect(activities.find((item) => item.agentId === 'admin-console')).toMatchObject({ role: 'idle', activityState: 'idle', sessionId: null });
+    side.agents.update('bob-claude', { status: 'offline' });
+    const offline = await api('GET', '/api/activity', 'alice');
+    expect((offline.body!.activities as { sessionId: string | null; activityState: string }[]).find((item) => item.sessionId === 'bob-session')).toMatchObject({ activityState: 'offline' });
+  });
+
+  it('pushes team activity changes over /ws/ui', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=${tokens.alice}`);
+    await new Promise((r) => ws.once('open', r));
+    const got = new Promise<Extract<UiEvent, { type: 'team.activity.updated' }>>((resolve) => ws.on('message', (raw) => {
+      const event = JSON.parse(raw.toString()) as UiEvent;
+      if (event.type === 'team.activity.updated') resolve(event);
+    }));
+    await new Promise((r) => setTimeout(r, 50));
+    side.agents.update('alice-claude', { status: 'online', paused: 1, last_heartbeat_at: Date.now() });
+    const event = await got;
+    expect(event.data.activities.find((item) => item.agentId === 'alice-claude')).toMatchObject({ activityState: 'paused' });
+    ws.close();
+  });
 });
 
 describe('agent token helpers', () => {

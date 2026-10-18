@@ -29,7 +29,7 @@ import { IllegalTransitionError, transition, transitionToAuthorState } from '../
 import { NotFoundError, type AgentRow, type LeaderDb, type TaskRow } from '../db/repo.js';
 import type { LeaderGit } from '../git/leader-git.js';
 import { silentLogger, type Logger } from '../logging.js';
-import { agentView, directiveView, sessionView, taskDetail, taskView } from './views.js';
+import { agentView, directiveView, sessionView, taskDetail, taskView, teamActivity } from './views.js';
 
 // Spec §17 — every route comes from API_ROUTES; responses are validated against its schemas.
 
@@ -157,6 +157,8 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
     listAgents: () => ({
       agents: db.agents.all().filter((a) => a.revoked === 0).map((a) => agentView(db, a, now(), config.dayBoundaryTz)),
     }),
+
+    teamActivity: () => ({ activities: teamActivity(db, now()) }),
 
     listSessions: (ctx) => {
       const q = ListSessionsQuerySchema.parse(ctx.query ?? {});
