@@ -9,6 +9,10 @@ import {
 } from '@quorum/protocol';
 import type { LeaderDb, SessionRow } from '../db/repo.js';
 import type { LockManager } from '../core/locks.js';
+import { silentLogger, type Logger } from '../logging.js';
+
+/** Deterministically failing events are recorded and acked after this many attempts. */
+export const POISON_EVENT_ATTEMPTS = 5;
 
 export interface HubOptions {
   locks: LockManager;
@@ -16,6 +20,7 @@ export interface HubOptions {
   onEvent?: (agentId: string, event: Event) => void;
   onSessionLost?: (session: SessionRow, reason: string) => void;
   onStatusChanged?: () => void;
+  logger?: Logger;
 }
 
 type SocketHandler = (socket: WebSocket, request: IncomingMessage) => void;
@@ -31,9 +36,12 @@ export class NodeHub {
   private readonly now: () => number;
   private resendTimer: ReturnType<typeof setInterval> | undefined;
   private closing = false;
+  private readonly log: Logger;
+  private readonly eventFailures = new Map<string, number>();
 
   constructor(private readonly db: LeaderDb, readonly config: LeaderConfig, private readonly options: HubOptions) {
     this.now = options.now ?? Date.now;
+    this.log = options.logger ?? silentLogger;
     const { certFile, keyFile } = config.tls;
     if ((certFile === null) !== (keyFile === null)) throw new Error('TLS requires both certificate and key');
     this.server = Fastify({
@@ -144,7 +152,7 @@ export class NodeHub {
         this.receive(agentId, socket, frame);
       } catch (error) {
         // No ACK is sent when the event transaction fails, allowing a safe retry.
-        this.server.log.error({ err: error, agentId }, 'node frame failed');
+        this.log.error({ err: error, agentId, kind: frame.kind, msgId: 'msgId' in frame ? frame.msgId : undefined }, 'node frame failed');
         if (!connection.ready) socket.close(1011, 'hello failed');
       }
     });
@@ -185,21 +193,46 @@ export class NodeHub {
         return;
       }
       const session = this.db.sessions.get(frame.evt.sid);
-      if (session?.agent_id !== agentId) { socket.close(1008, 'session ownership mismatch'); return; }
-      this.db.withTx(() => {
-        this.db.messages.insert({
-          id: frame.msgId, direction: 'from_node', agent_id: agentId, session_id: frame.evt.sid,
-          task_id: 'taskId' in frame.evt ? frame.evt.taskId ?? null : null,
-          directive_id: 'directiveId' in frame.evt ? frame.evt.directiveId ?? null : null,
-          conversation_id: 'conversationId' in frame.evt ? frame.evt.conversationId : null,
-          type: frame.evt.type, payload: JSON.stringify(frame), created_at: this.now(), acked_at: this.now(),
+      if (session !== undefined && session.agent_id !== agentId) { socket.close(1008, 'session ownership mismatch'); return; }
+      if (session === undefined) {
+        // Acking (not closing) is essential: the Node would otherwise resend this on every reconnect forever.
+        this.recordInbound(agentId, frame);
+        this.log.warn({ agentId, msgId: frame.msgId, sid: frame.evt.sid, type: frame.evt.type }, 'stale_event: unknown session');
+        socket.send(JSON.stringify({ kind: 'ack', msgId: frame.msgId }));
+        return;
+      }
+      try {
+        this.db.withTx(() => {
+          this.recordInbound(agentId, frame);
+          const result: unknown = this.options.onEvent?.(agentId, frame.evt);
+          if (result !== null && typeof result === 'object' && 'then' in result) throw new TypeError('Event handlers must be synchronous');
         });
-        const result: unknown = this.options.onEvent?.(agentId, frame.evt);
-        if (result !== null && typeof result === 'object' && 'then' in result) throw new TypeError('Event handlers must be synchronous');
-      });
+      } catch (error) {
+        const attempts = (this.eventFailures.get(frame.msgId) ?? 0) + 1;
+        if (attempts < POISON_EVENT_ATTEMPTS) {
+          this.eventFailures.set(frame.msgId, attempts);
+          throw error;
+        }
+        this.eventFailures.delete(frame.msgId);
+        this.recordInbound(agentId, frame);
+        this.log.error({ err: error, agentId, msgId: frame.msgId, sid: frame.evt.sid, type: frame.evt.type, attempts }, 'poisoned_event: acked without applying');
+        socket.send(JSON.stringify({ kind: 'ack', msgId: frame.msgId }));
+        return;
+      }
+      this.eventFailures.delete(frame.msgId);
       socket.send(JSON.stringify({ kind: 'ack', msgId: frame.msgId }));
       this.options.onStatusChanged?.();
     }
+  }
+
+  private recordInbound(agentId: string, frame: Extract<NodeToLeaderFrame, { kind: 'evt' }>): void {
+    this.db.messages.insert({
+      id: frame.msgId, direction: 'from_node', agent_id: agentId, session_id: frame.evt.sid,
+      task_id: 'taskId' in frame.evt ? frame.evt.taskId ?? null : null,
+      directive_id: 'directiveId' in frame.evt ? frame.evt.directiveId ?? null : null,
+      conversation_id: 'conversationId' in frame.evt ? frame.evt.conversationId : null,
+      type: frame.evt.type, payload: JSON.stringify(frame), created_at: this.now(), acked_at: this.now(),
+    });
   }
 
   private storeSettings(agentId: string, settings: OwnerSettings): void {

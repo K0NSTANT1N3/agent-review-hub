@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseLeaderConfig, type Event, type HelloFrame, type NodeStatus, type SessionReport } from '@quorum/protocol';
 import { LockManager } from '../../src/core/locks.js';
 import { openDatabase, type LeaderDb, type SessionRow } from '../../src/db/repo.js';
-import { NodeHub, type HubOptions } from '../../src/ws/node-hub.js';
+import { NodeHub, POISON_EVENT_ATTEMPTS, type HubOptions } from '../../src/ws/node-hub.js';
 import { DEFAULT_OWNER_SETTINGS, FakeNode } from '../helpers/fake-node.js';
 
 let db: LeaderDb;
@@ -328,5 +328,41 @@ describe('durable command delivery', () => {
     expect((await reconnected.next('ack')).msgId).toBe('persistent-inbox');
     expect(calls).toBe(1);
     expect(db.messages.all()).toHaveLength(1);
+  });
+});
+
+describe('poison-message protection', () => {
+  it('acks and records events for unknown sessions instead of disconnecting', async () => {
+    await start();
+    const node = await connect();
+    await node.next('welcome');
+    const id = node.event({ type: 'session.lost', sid: 'ghost', reason: 'gone' });
+    await node.next('ack', (f) => f.msgId === id);
+    expect(db.messages.get(id)).toMatchObject({ direction: 'from_node', session_id: 'ghost', type: 'session.lost' });
+    expect(node.socket.readyState).toBe(1);
+  });
+
+  it('still closes on a real ownership mismatch', async () => {
+    await start();
+    const node = await connect('alice');
+    await node.next('welcome');
+    node.event({ type: 'session.lost', sid: 'b', reason: 'not mine' });
+    expect(await node.waitClosed()).toBe(1008);
+  });
+
+  it('acks an event after POISON_EVENT_ATTEMPTS failing handler runs, without retrying forever', async () => {
+    let calls = 0;
+    await start({ onEvent: () => { calls += 1; throw new Error('handler bug'); } });
+    const node = await connect();
+    await node.next('welcome');
+    const evt: Event = { type: 'session.lost', sid: 'a', reason: 'x' };
+    const id = 'poison-1';
+    for (let i = 0; i < POISON_EVENT_ATTEMPTS; i += 1) node.event(evt, id);
+    await node.next('ack', (f) => f.msgId === id);
+    expect(calls).toBe(POISON_EVENT_ATTEMPTS);
+    expect(db.messages.get(id)).toMatchObject({ direction: 'from_node' });
+    node.event(evt, id);
+    await node.next('ack', (f) => f.msgId === id);
+    expect(calls).toBe(POISON_EVENT_ATTEMPTS);
   });
 });
