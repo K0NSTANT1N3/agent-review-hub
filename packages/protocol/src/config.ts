@@ -141,7 +141,6 @@ export const DEFAULT_AUTHOR_BASH_ALLOW = [
   'python -m pytest',
   'make test',
   'ls',
-  'cat',
   'git status',
   'git diff',
   'git log',

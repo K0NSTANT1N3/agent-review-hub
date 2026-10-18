@@ -9,6 +9,7 @@ import type {
   TaskEventView,
   TaskView,
   TeamActivityView,
+  TaskWaitReason,
 } from '@quorum/protocol';
 import { budgetRemaining, lentToday } from '../core/budget.js';
 import type {
@@ -66,7 +67,7 @@ export function sessionView(s: SessionRow): SessionView {
   };
 }
 
-export function taskView(db: LeaderDb, t: TaskRow): TaskView {
+export function taskView(db: LeaderDb, t: TaskRow, waitReason: TaskWaitReason | null = null): TaskView {
   return {
     id: t.id,
     title: t.title,
@@ -79,6 +80,7 @@ export function taskView(db: LeaderDb, t: TaskRow): TaskView {
     authorAgentId: t.author_agent_id,
     authorSessionId: t.author_session_id,
     state: t.state as V<TaskView['state']>,
+    waitReason,
     pausedFromState: t.paused_from_state as V<TaskView['pausedFromState']>,
     pauseReason: t.pause_reason,
     escalationReason: t.escalation_reason,
@@ -211,8 +213,10 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
       let activityState: TeamActivityView['activityState'] = session === null || session.state === 'idle' ? 'idle' : 'waiting';
       let waitingOn: TeamActivityView['waitingOn'] = null;
       let waitingReason: string | null = null;
+      const rateLimitedUntil = agent.rate_limited_until !== null && agent.rate_limited_until > now ? agent.rate_limited_until : null;
       if (agent.status !== 'online') activityState = 'offline';
       else if (agent.paused !== 0) activityState = 'paused';
+      else if (rateLimitedUntil !== null && (session === null || session.state === 'idle')) { activityState = 'waiting'; waitingOn = 'rate_limit'; waitingReason = 'Rate-limited'; }
       else if (session?.state === 'opening') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Starting session'; }
       else if (session?.state === 'lost' || session?.state === 'closing') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = session.state === 'lost' ? 'Session was lost' : 'Session is closing'; }
       else if (role === 'directive') {
@@ -225,6 +229,7 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
         else if (task.state === 'IN_REVIEW' && role === 'reviewer') activityState = 'working';
         else if (task.state === 'AWAITING_REVIEWER' && role === 'author') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Waiting for a reviewer'; }
         else if (role === 'author' && task.state === 'IN_REVIEW') { activityState = 'waiting'; waitingOn = 'agent'; waitingReason = 'Waiting for reviewer'; }
+        else if (role === 'reviewer' && (task.state === 'AUTHORING' || task.state === 'SYNCING') && pairedAgent !== undefined) { activityState = 'waiting'; waitingOn = 'agent'; waitingReason = 'Waiting for author fixes'; }
         else if (!['MERGED', 'CANCELLED', 'FAILED'].includes(task.state)) { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Waiting for task scheduler'; }
       }
       const stateChangedAt = agent.status !== 'online' || agent.paused !== 0
@@ -241,6 +246,10 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
         activityState,
         waitingOn,
         waitingReason,
+        waitingForName: waitingOn === 'agent'
+          ? pairedAgent?.owner_name ?? null
+          : waitingOn === 'human' && task !== undefined ? db.agents.get(task.requester_agent_id)?.owner_name ?? task.requester_agent_id : null,
+        rateLimitedUntil,
         taskId: task?.id ?? null,
         taskTitle: task?.title ?? (directive === undefined ? null : 'Read-only question'),
         pairedAgentId: pairedAgent?.id ?? null,
@@ -255,9 +264,9 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
   return rows.sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.agentId.localeCompare(b.agentId) || (a.sessionId ?? '').localeCompare(b.sessionId ?? ''));
 }
 
-export function taskDetail(db: LeaderDb, t: TaskRow): TaskDetail {
+export function taskDetail(db: LeaderDb, t: TaskRow, waitReason: TaskWaitReason | null = null): TaskDetail {
   return {
-    task: taskView(db, t),
+    task: taskView(db, t, waitReason),
     conversations: db.conversationsForTask(t.id).map(conversationView),
     issues: db.issues.find({ task_id: t.id }).map(issueView),
     events: db.taskEvents.find({ task_id: t.id }).map(taskEventView),

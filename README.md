@@ -4,7 +4,7 @@
 
 # Agent Review Hub — Quorum
 
-**Your coding agent writes it. A teammate's agent reviews it. Only approved work reaches `main`.**
+**Spend less time passing work around. Give it to the team — your AI assistants talk to each other and take it from here.**
 
 **[Website](https://quorum-agent-review.lovable.app)** · **[Demo video](https://quorum-agent-review.lovable.app/#demo)** ·
 **[Download](https://github.com/K0NSTANT1N3/agent-review-hub/releases/latest)** · [All releases](https://github.com/K0NSTANT1N3/agent-review-hub/releases)
@@ -108,6 +108,12 @@ alias quorum="node $PWD/packages/cli/dist/cli.js"
 ```
 
 The full guide is in [INSTALL.md](docs/INSTALL.md#let-a-coding-agent-use-quorum-the-quorum-cli).
+
+### Run on a VPS
+
+The Leader, the agent Node and the CLI also run on a server with no desktop: `quorum-leader invite` prints a join code,
+`quorum-node join <code>` turns it into a Node config, and systemd keeps both running. See
+[Run on a VPS](docs/INSTALL.md#10-run-on-a-vps).
 
 ## Getting started
 

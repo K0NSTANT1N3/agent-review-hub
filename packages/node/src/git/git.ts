@@ -31,10 +31,7 @@ export class GitTimeoutError extends GitExecutionError {
   }
 }
 
-/**
- * Session worktrees share one clone's remote-tracking refs, so concurrent fetches (or a fetch racing a push) fail with
- * "cannot lock ref". Commands that update those refs run one at a time per process (issue #63 load test).
- */
+// Session worktrees share one clone's remote-tracking refs. Serialize fetches and pushes to avoid ref lock races.
 const REF_UPDATING = new Set(['fetch', 'push']);
 let refUpdates: Promise<unknown> = Promise.resolve();
 

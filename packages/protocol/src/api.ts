@@ -63,6 +63,31 @@ export const SessionViewSchema = z.object({
 });
 export type SessionView = z.infer<typeof SessionViewSchema>;
 
+export const TaskWaitBlockerSchema = z.object({
+  code: z.enum([
+    'agent_offline',
+    'agent_paused',
+    'rate_limited',
+    'session_capacity',
+    'review_capacity_reserved',
+    'session_start_backoff',
+    'lending_disabled',
+    'owner_active',
+    'budget_exhausted',
+    'no_candidate_agent',
+    'session_starting',
+    'scheduler_pending',
+  ]),
+  agentCount: z.number().int().nonnegative(),
+});
+export type TaskWaitBlocker = z.infer<typeof TaskWaitBlockerSchema>;
+
+export const TaskWaitReasonSchema = z.object({
+  role: z.enum(['author', 'reviewer']),
+  blockers: z.array(TaskWaitBlockerSchema),
+});
+export type TaskWaitReason = z.infer<typeof TaskWaitReasonSchema>;
+
 export const TaskViewSchema = z.object({
   id: z.number().int(),
   title: z.string(),
@@ -75,6 +100,7 @@ export const TaskViewSchema = z.object({
   authorAgentId: z.string().nullable(),
   authorSessionId: z.string().nullable(),
   state: TaskStateSchema,
+  waitReason: TaskWaitReasonSchema.nullable().optional(),
   pausedFromState: TaskStateSchema.nullable(),
   pauseReason: z.string().nullable(),
   escalationReason: z.string().nullable(),
@@ -191,8 +217,11 @@ export const TeamActivityViewSchema = z.object({
   sessionState: SessionStateSchema.nullable(),
   role: z.enum(['author', 'reviewer', 'directive', 'idle']),
   activityState: z.enum(['working', 'waiting', 'paused', 'offline', 'idle']),
-  waitingOn: z.enum(['agent', 'human', 'scheduler']).nullable(),
+  waitingOn: z.enum(['agent', 'human', 'scheduler', 'rate_limit']).nullable(),
   waitingReason: z.string().nullable(),
+  /** Who this row waits for: the paired agent's owner (waitingOn 'agent') or the requester (waitingOn 'human'). */
+  waitingForName: z.string().nullable().default(null),
+  rateLimitedUntil: nullableTs.default(null),
   taskId: z.number().int().nullable(),
   taskTitle: z.string().nullable(),
   pairedAgentId: z.string().nullable(),
@@ -204,6 +233,35 @@ export const TeamActivityViewSchema = z.object({
 });
 export type TeamActivityView = z.infer<typeof TeamActivityViewSchema>;
 
+/** Why one agent cannot take a queued task right now (null = it could). */
+export const QueueCandidateViewSchema = z.object({
+  agentId: z.string(),
+  ownerName: z.string(),
+  blocker: z.string().nullable(),
+});
+export type QueueCandidateView = z.infer<typeof QueueCandidateViewSchema>;
+
+/**
+ * A task that waits for the scheduler, the merge worker or a human. `position` is the order one scheduler pass tries
+ * tasks in (reviewers first, then authors, then merges); a blocked task does not hold back later ones. `position` is
+ * null for tasks outside that order: human decisions and paused tasks. waitingOn 'scheduler' means the next pass acts on it.
+ */
+export const QueueEntryViewSchema = z.object({
+  taskId: z.number().int(),
+  title: z.string(),
+  state: TaskStateSchema,
+  position: z.number().int().positive().nullable(),
+  needs: z.enum(['author', 'reviewer', 'merge', 'human']),
+  requesterOwner: z.string(),
+  authorOwnerName: z.string().nullable(),
+  priority: z.number().int(),
+  waitingSince: ts,
+  waitingOn: z.enum(['agent', 'human', 'scheduler', 'rate_limit', 'merge']),
+  reason: z.string(),
+  candidates: z.array(QueueCandidateViewSchema),
+});
+export type QueueEntryView = z.infer<typeof QueueEntryViewSchema>;
+
 // ---------------------------------------------------------------------------
 // Requests / responses
 // ---------------------------------------------------------------------------
@@ -211,7 +269,11 @@ export type TeamActivityView = z.infer<typeof TeamActivityViewSchema>;
 export const ListAgentsResponseSchema = z.object({ agents: z.array(AgentViewSchema) });
 export type ListAgentsResponse = z.infer<typeof ListAgentsResponseSchema>;
 
-export const TeamActivityResponseSchema = z.object({ activities: z.array(TeamActivityViewSchema) });
+export const TeamActivityResponseSchema = z.object({
+  activities: z.array(TeamActivityViewSchema),
+  /** Older Leaders omit the queue. */
+  queue: z.array(QueueEntryViewSchema).default([]),
+});
 export type TeamActivityResponse = z.infer<typeof TeamActivityResponseSchema>;
 
 export const ListSessionsQuerySchema = z.object({ agentId: z.string().optional() });

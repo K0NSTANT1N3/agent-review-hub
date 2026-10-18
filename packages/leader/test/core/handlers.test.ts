@@ -468,6 +468,18 @@ describe('turn failures', () => {
     expect(db.taskEvents.all()).toHaveLength(0);
   });
 
+  it('re-runs finished-task cleanup when a cancelled task\'s turn confirms the cancel (stale branch push race)', () => {
+    const finished: number[] = [];
+    handlers = new EventHandlers(db, config, locks, { now: () => now, onFinished: (t) => finished.push(t.id) });
+    author();
+    const cmd = latest('a');
+    handlers.finishTask(task.id, 'CANCELLED', 'cancelled_by_human', 'human:Alice');
+    expect(finished).toEqual([task.id]);
+    deliver(failure('a', 'CANCELLED', { inReplyTo: cmd.msgId }));
+    expect(finished).toEqual([task.id, task.id]);
+    expect(db.tasks.require(task.id).state).toBe('CANCELLED');
+  });
+
   it.each([undefined, 999])('ignores turn failures with nonmatching task scope %s but charges usage', (taskId) => {
     author();
     deliver(failure('a', 'ADAPTER_ERROR', { taskId, usage }));

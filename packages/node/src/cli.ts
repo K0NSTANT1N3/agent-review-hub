@@ -4,6 +4,15 @@ import { resolve } from 'node:path';
 import pino from 'pino';
 import { parseNodeConfig } from '@quorum/protocol';
 import { startDaemon } from './daemon.js';
+import { JOIN_USAGE, runJoin } from './join.js';
+
+const USAGE = `quorum-node <command> [options]
+
+Commands:
+  join <join code> [options]     write a Node config from a host's join code (see: quorum-node join --help)
+  start --config <path> [--assume-idle] [--insecure]
+                                 run the Node daemon
+  --help                         show this help`;
 
 interface CliOptions {
   configPath: string;
@@ -12,7 +21,31 @@ interface CliOptions {
 }
 
 async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const command = args[0];
+  if (command === undefined || command === '--help' || command === '-h' || command === 'help') {
+    process.stdout.write(`${USAGE}\n`);
+    return;
+  }
+  if (command === 'join') {
+    if (args.includes('--help') || args.includes('-h')) {
+      process.stdout.write(`${JOIN_USAGE}\n`);
+      return;
+    }
+    try {
+      runJoin(args.slice(1), (line) => process.stdout.write(`${line}\n`));
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (command !== 'start') {
+    process.stderr.write(`Unknown command: ${command}\n${USAGE}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const options = parseArgs(args);
   const configText = await readFile(resolve(options.configPath), 'utf8');
   const config = parseNodeConfig(JSON.parse(configText) as unknown);
   const logger = pino().child({ agentId: config.agentId });

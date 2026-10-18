@@ -287,7 +287,7 @@ All configs are JSON, validated with zod. Missing keys take the defaults shown.
   "lendTokensPerDay": 2000000,
   "paused": false,
   "tags": ["backend", "go"],
-  "authorBashAllow": ["npm test", "npm run", "npx tsc", "ls", "cat", "git status", "git diff", "git log"],
+  "authorBashAllow": ["npm test", "npm run", "npx tsc", "ls", "git status", "git diff", "git log"],
   "contextPressurePct": 0.75,
   "maxInvalidOutputRetries": 2,
   "maxDiffLinesInPrompt": 3000
@@ -1111,7 +1111,7 @@ interface AgentAdapter {
 - `options.cwd = worktree`; `options.resume = nativeId` when non-null; `options.model` from config; `options.abortController` connected to `signal`.
 - The `session_id` comes from the init/system message of the stream (store as `nativeId`). Final text and `usage` come from the final result message. `contextTokens` = input tokens + cache-read + cache-creation input tokens of the last model call (best effort; fall back to the cumulative input tokens).
 - **Tool profiles:**
-  - `author`: allowed tools `Read, Write, Edit, Glob, Grep, Bash`. Use `permissionMode: 'acceptEdits'`. Use the SDK's tool-permission callback (`canUseTool`) to: (a) deny any file path that resolves outside `cwd`; (b) allow `Bash` only if the command starts with an entry in `authorBashAllow` **and** contains none of ``; && || | ` $( > <`` unless the whole command exactly equals an allowlisted entry; (c) deny `git commit|push|checkout|merge|rebase|reset`.
+  - `author`: allowed tools `Read, Write, Edit, Glob, Grep, Bash`. Use `permissionMode: 'acceptEdits'`. Use the SDK's tool-permission callback (`canUseTool`) to: (a) deny any file path that resolves outside `cwd`; (b) allow `Bash` only if the command starts with an entry in `authorBashAllow` **and** contains no shell control operators (`;`, `&`, `|`, backticks, command substitution, redirection, or newlines), unless the whole command exactly equals an allowlisted entry; (c) deny `git commit|push|checkout|merge|rebase|reset`.
   - `reviewer` and `directive`: allowed tools `Read, Glob, Grep` only. Paths outside `cwd` are denied.
 - Errors: map 429 / "rate limit" / "usage limit" responses to `RATE_LIMITED`. Parse a reset time if the error provides one, else leave it undefined. Map abort to `CANCELLED` and other failures to `ADAPTER_ERROR`.
 - **Before writing this adapter, read the installed SDK's type definitions** (`node_modules/@anthropic-ai/claude-agent-sdk`) and use the exact current names for options and message types. The descriptions above are the intent. The SDK's types are the source of truth.
@@ -1204,7 +1204,7 @@ Auth: `Authorization: Bearer <agent token>` on every request. The token identifi
 
 Errors: JSON `{error: CODE, message}` with proper HTTP status (400 validation, 401, 403, 404, 409 for state conflicts such as an illegal transition or `SESSION_LOCKED`).
 
-**`/ws/ui`** (same bearer token as a `?token=` query param): the server pushes `{type, data}` where type ∈ `task.updated`, `task.event`, `agent.updated`, `session.updated`, `message.created`, `directive.updated`, `task.needs_attention`. The client refetches details via REST as needed.
+**`/ws/ui`** (same bearer token in the `Authorization` header): the server pushes `{type, data}` where type ∈ `task.updated`, `task.event`, `agent.updated`, `session.updated`, `message.created`, `directive.updated`, `task.needs_attention`. The client refetches details via REST as needed.
 
 **Leader CLI:**
 - `quorum-leader start --config quorum.leader.json`

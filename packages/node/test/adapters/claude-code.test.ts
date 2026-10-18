@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { DEFAULT_AUTHOR_BASH_ALLOW } from '@quorum/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeAdapter, checkBashCommand, isInside, makeCanUseTool, type QueryFn } from '../../src/adapters/claude-code.js';
 import { AdapterError } from '../../src/adapters/types.js';
@@ -207,6 +208,14 @@ describe('path confinement and profiles', () => {
     expect(await ask('author', 'Bash', { command: 'npm test' })).toMatchObject({ behavior: 'allow' });
     expect(await ask('author', 'Bash', { command: 'curl https://evil' })).toMatchObject({ behavior: 'deny' });
     expect(await ask('author', 'Bash', {})).toMatchObject({ behavior: 'deny' });
+  });
+
+  it('default author Bash allowlist cannot read host files with cat', async () => {
+    expect(DEFAULT_AUTHOR_BASH_ALLOW).not.toContain('cat');
+    const canUseTool = makeCanUseTool(repo, 'author', DEFAULT_AUTHOR_BASH_ALLOW);
+    await expect(canUseTool('Bash', { command: 'cat ~/.ssh/id_ed25519' }, {
+      signal: new AbortController().signal, toolUseID: 'tu-cat', requestId: 'rq-cat',
+    })).resolves.toMatchObject({ behavior: 'deny' });
   });
 });
 

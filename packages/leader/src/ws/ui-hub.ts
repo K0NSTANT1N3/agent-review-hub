@@ -1,11 +1,11 @@
 import type { IncomingMessage } from 'node:http';
 import type WebSocket from 'ws';
-import type { LeaderConfig, UiEvent } from '@quorum/protocol';
+import type { LeaderConfig, QueueEntryView, TaskWaitReason, TeamActivityResponse, UiEvent } from '@quorum/protocol';
 import { authenticate } from '../api/routes.js';
 import { agentView, directiveView, taskEventView, taskView, teamActivity } from '../api/views.js';
-import type { LeaderDb } from '../db/repo.js';
+import type { LeaderDb, TaskRow } from '../db/repo.js';
 
-// /ws/ui?token=… — pushes change notifications (spec §17). Polls the DB for changes only while clients are connected.
+// Authenticated /ws/ui — pushes change notifications (spec §17). Polls the DB for changes only while clients are connected.
 
 const POLL_MS = 500;
 
@@ -17,16 +17,21 @@ export class UiHub {
   private readonly agentHashes = new Map<string, string>();
   private readonly directiveHashes = new Map<string, string>();
   private activityHash = '';
+  private readonly taskWaitHashes = new Map<number, string>();
 
   constructor(
     private readonly db: LeaderDb,
     private readonly config: LeaderConfig,
+    private readonly getWaitReason: (task: TaskRow) => TaskWaitReason | null = () => null,
     private readonly now: () => number = Date.now,
+    /** Scheduler queue explanation, pushed with team activity. */
+    private readonly queue: () => QueueEntryView[] = () => [],
   ) {}
 
   /** WebSocket route handler for NodeHub.registerWebSocket('/ws/ui', …). */
   accept = (socket: WebSocket, request: IncomingMessage): void => {
-    const token = new URL(request.url ?? '/', 'http://localhost').searchParams.get('token') ?? undefined;
+    const authorization = request.headers.authorization;
+    const token = authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : undefined;
     if (authenticate(this.db, token) === null) {
       socket.close(1008, 'invalid token');
       return;
@@ -56,9 +61,11 @@ export class UiHub {
   private resetWatermarks(): void {
     this.taskWatermark = this.now();
     this.eventWatermark = Math.max(0, ...this.db.taskEvents.all().map((e) => e.id));
+    this.taskWaitHashes.clear();
+    for (const task of this.db.tasks.all()) this.taskWaitHashes.set(task.id, JSON.stringify(this.getWaitReason(task)));
     for (const a of this.db.agents.all()) this.agentHashes.set(a.id, JSON.stringify(a));
     for (const d of this.db.directives.all()) this.directiveHashes.set(d.id, JSON.stringify(d));
-    this.activityHash = JSON.stringify(teamActivity(this.db, this.now()));
+    this.activityHash = JSON.stringify(this.activity());
   }
 
   private poll(): void {
@@ -66,7 +73,13 @@ export class UiHub {
     try {
       const since = this.taskWatermark;
       this.taskWatermark = this.now();
-      for (const t of this.db.tasks.all()) if (t.updated_at >= since) this.broadcast({ type: 'task.updated', data: taskView(this.db, t) });
+      for (const t of this.db.tasks.all()) {
+        const waitReason = this.getWaitReason(t);
+        const waitHash = JSON.stringify(waitReason);
+        const waitChanged = this.taskWaitHashes.get(t.id) !== waitHash;
+        this.taskWaitHashes.set(t.id, waitHash);
+        if (t.updated_at >= since || waitChanged) this.broadcast({ type: 'task.updated', data: taskView(this.db, t, waitReason) });
+      }
       for (const e of this.db.taskEvents.all()) {
         if (e.id <= this.eventWatermark) continue;
         this.eventWatermark = e.id;
@@ -84,15 +97,19 @@ export class UiHub {
         this.directiveHashes.set(d.id, hash);
         this.broadcast({ type: 'directive.updated', data: directiveView(d) });
       }
-      const activities = teamActivity(this.db, this.now());
-      const activityHash = JSON.stringify(activities);
+      const activity = this.activity();
+      const activityHash = JSON.stringify(activity);
       if (activityHash !== this.activityHash) {
         this.activityHash = activityHash;
-        this.broadcast({ type: 'team.activity.updated', data: { activities } });
+        this.broadcast({ type: 'team.activity.updated', data: activity });
       }
     } catch {
       // A transient DB error must not kill the poller; the next tick retries.
     }
+  }
+
+  private activity(): TeamActivityResponse {
+    return { activities: teamActivity(this.db, this.now()), queue: this.queue() };
   }
 
   private broadcast(event: UiEvent): void {

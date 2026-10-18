@@ -99,7 +99,7 @@ export async function startLeader(config: LeaderConfig, options: StartLeaderOpti
     onStatusChanged: () => scheduler.trigger(),
   });
   late.hub = hub;
-  const ui = new UiHub(db, config);
+  const ui = new UiHub(db, config, (task) => scheduler.waitReason(task), Date.now, () => scheduler.queueSnapshot());
   late.ui = ui;
   hub.registerWebSocket('/ws/ui', ui.accept);
   registerRoutes(hub.server, { db, config, locks, handlers, scheduler, mergeWorker, git, logger: log });
@@ -136,8 +136,8 @@ export function newAgentToken(): string {
   return `qrm_${randomBytes(32).toString('base64url')}`;
 }
 
-/** Registers an agent (or rotates its token and un-revokes it). Returns the plaintext token once. */
-export async function addAgent(dbPath: string, args: { id: string; owner: string }): Promise<{ token: string }> {
+/** Registers an agent (or rotates its token and un-revokes it). Set rotate: false to protect an active token. */
+export async function addAgent(dbPath: string, args: { id: string; owner: string; rotate?: boolean }): Promise<{ token: string }> {
   if (!/^[A-Za-z0-9._-]{1,64}$/.test(args.id)) throw new Error('agent id must be 1-64 characters of [A-Za-z0-9._-]');
   if (args.owner.trim() === '') throw new Error('owner is required');
   const db = openDb(dbPath);
@@ -145,9 +145,13 @@ export async function addAgent(dbPath: string, args: { id: string; owner: string
     const token = newAgentToken();
     const hash = createHash('sha256').update(token).digest('hex');
     db.withTx(() => {
-      if (db.agents.get(args.id) === undefined) {
+      const existing = db.agents.get(args.id);
+      if (existing === undefined) {
         db.agents.insert({ id: args.id, owner_name: args.owner, token_hash: hash, created_at: Date.now() });
       } else {
+        if (existing.revoked === 0 && args.rotate === false) {
+          throw new Error(`Agent ${args.id} already exists. Pass --rotate to issue a new token (its current token and CLI tokens stop working), or pick another --id.`);
+        }
         db.agents.update(args.id, { owner_name: args.owner, token_hash: hash, revoked: 0 });
         // Rotating an agent's token (re-inviting) also cuts off the API tokens minted with the old one.
         revokeAgentApiTokens(db, args.id, Date.now());
