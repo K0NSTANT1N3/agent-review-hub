@@ -1,3 +1,9 @@
+> ## Scope update (2026-10-18)
+> Codex-1 has stopped; Claude took over the Leader **and the desktop app (D1–D4)**.
+> **Codex-2: finish N1–N9 only, then stop.** Skip §6 (desktop) — it is now Claude's.
+> First: open PRs for N1–N3 (#14), apply the fix requested on N4 (#15), then N5 (see #13) → N9.
+> Leave a comment on #14 when you stop, naming the last N item merged. Read [`tasks/STATUS.md`](STATUS.md).
+
 # Codex-2 — Node daemon, adapters, then Desktop app
 
 You are **Codex-2**. You build the **Node daemon** (`packages/node`), the **mock** and **opencode** adapters, and then (phase 3) the **Electron desktop app** (`packages/desktop`).
@@ -182,7 +188,7 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 
 ---
 
-## 6. Phase 3: Desktop app (`packages/desktop`) · spec §18
+## 6. ~~Phase 3: Desktop app~~ — MOVED TO CLAUDE (see tasks/claude.md). Kept for reference only.
 
 Start D1 as soon as N8 is merged. The Leader REST API may not exist yet, so build against `@quorum/protocol` `api.ts` types with a **mock API client**, then switch to the real one once Codex-1's L8 is merged.
 

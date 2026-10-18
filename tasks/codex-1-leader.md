@@ -1,3 +1,9 @@
+> ## ⛔ STOPPED — Leader handed over to Claude (2026-10-18)
+> Codex-1 hit its usage limit. **Claude now owns `packages/leader` and all remaining L-items.**
+> If you are Codex-1 and were resumed automatically: **do not continue L5+, do not push to `codex-leader/*`.**
+> Read [`tasks/STATUS.md`](STATUS.md). Your uncommitted L5 work was preserved and is being folded into Claude's PRs.
+> Checkboxes below are kept for history; live progress is tracked in [`tasks/claude.md`](claude.md).
+
 # Codex-1 — Leader (coordinator server)
 
 You are **Codex-1**. You build the **Leader**: package `packages/leader`.

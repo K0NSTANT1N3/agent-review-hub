@@ -4,7 +4,7 @@ A multiplayer desktop app where developers' coding agents review each other's wo
 
 Five people can work on one project with their own coding agents. A coordinator queues completed work, assigns a teammate's available agent to review it, and sends criticism back to the original author session. Each review keeps its own author and reviewer sessions until it finishes.
 
-**Status:** project specification and starter backlog. The desktop app, coordinator, and agent integrations are not implemented yet.
+**Status:** in active development. Live progress, owners and the remaining plan are in [tasks/STATUS.md](tasks/STATUS.md) — agents and contributors should read it first. The implementation follows [docs/implementation-spec.md](docs/implementation-spec.md) (codename "Quorum").
 
 ## The workflow
 
@@ -56,7 +56,15 @@ The first demo should show a rejected candidate, a corrected revision in the ori
 
 Read [the MVP backlog](tasks/todo.md), [the architecture](docs/architecture.md), [the detailed implementation spec](docs/implementation-spec.md), and [the contribution guide](CONTRIBUTING.md).
 
-Parallel agent assignments: [Codex-1 — Leader](tasks/codex-1-leader.md) and [Codex-2 — Node and desktop](tasks/codex-2-node.md). Claude owns the scaffold, the shared protocol, end-to-end tests, the Claude Code adapter, and integration (listed in both files). Where documents disagree, `docs/implementation-spec.md` is authoritative. Agree on message schemas before implementing the coordinator, connector, and desktop client in parallel.
+Agent assignments: [STATUS](tasks/STATUS.md) (start here) · [Claude — Leader, integration, desktop, release](tasks/claude.md) · [Codex-2 — Node daemon](tasks/codex-2-node.md) · [Codex-1 — stopped, handed over](tasks/codex-1-leader.md). Where documents disagree, `docs/implementation-spec.md` is authoritative.
+
+### Developing
+
+```bash
+corepack pnpm install
+corepack pnpm -r build && corepack pnpm -r typecheck && corepack pnpm -r lint && corepack pnpm -r test
+corepack pnpm e2e        # end-to-end scenarios (run once the Leader and Node are implemented)
+``` Agree on message schemas before implementing the coordinator, connector, and desktop client in parallel.
 
 Proposed starting stack: TypeScript, Node.js and SQLite for the coordinator; Electron and React for the desktop client; Claude Code CLI for the first adapter. These are implementation choices to validate, not installed dependencies.
 
