@@ -182,12 +182,37 @@ export const DirectiveViewSchema = z.object({
 });
 export type DirectiveView = z.infer<typeof DirectiveViewSchema>;
 
+export const TeamActivityViewSchema = z.object({
+  key: z.string(),
+  agentId: z.string(),
+  ownerName: z.string(),
+  agentStatus: AgentStatusSchema,
+  sessionId: z.string().nullable(),
+  sessionState: SessionStateSchema.nullable(),
+  role: z.enum(['author', 'reviewer', 'directive', 'idle']),
+  activityState: z.enum(['working', 'waiting', 'paused', 'offline', 'idle']),
+  waitingOn: z.enum(['agent', 'human', 'scheduler']).nullable(),
+  waitingReason: z.string().nullable(),
+  taskId: z.number().int().nullable(),
+  taskTitle: z.string().nullable(),
+  pairedAgentId: z.string().nullable(),
+  pairedOwnerName: z.string().nullable(),
+  pairedSessionId: z.string().nullable(),
+  stateChangedAt: ts,
+  lastHeartbeatAt: nullableTs,
+  stale: z.boolean(),
+});
+export type TeamActivityView = z.infer<typeof TeamActivityViewSchema>;
+
 // ---------------------------------------------------------------------------
 // Requests / responses
 // ---------------------------------------------------------------------------
 
 export const ListAgentsResponseSchema = z.object({ agents: z.array(AgentViewSchema) });
 export type ListAgentsResponse = z.infer<typeof ListAgentsResponseSchema>;
+
+export const TeamActivityResponseSchema = z.object({ activities: z.array(TeamActivityViewSchema) });
+export type TeamActivityResponse = z.infer<typeof TeamActivityResponseSchema>;
 
 export const ListSessionsQuerySchema = z.object({ agentId: z.string().optional() });
 export const ListSessionsResponseSchema = z.object({ sessions: z.array(SessionViewSchema) });
@@ -285,6 +310,7 @@ const TaskActionBodySchema = z.object({}).strict().optional();
 export const API_ROUTES = {
   health: { method: 'GET', path: '/api/health', auth: 'none', status: 200, response: HealthResponseSchema },
   listAgents: { method: 'GET', path: '/api/agents', auth: 'any', status: 200, response: ListAgentsResponseSchema },
+  teamActivity: { method: 'GET', path: '/api/activity', auth: 'any', status: 200, response: TeamActivityResponseSchema },
   listSessions: {
     method: 'GET',
     path: '/api/sessions',
@@ -341,6 +367,7 @@ export const UiEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('task.updated'), data: TaskViewSchema }),
   z.object({ type: z.literal('task.event'), data: TaskEventViewSchema }),
   z.object({ type: z.literal('agent.updated'), data: AgentViewSchema }),
+  z.object({ type: z.literal('team.activity.updated'), data: TeamActivityResponseSchema }),
   z.object({ type: z.literal('session.updated'), data: SessionViewSchema }),
   z.object({ type: z.literal('message.created'), data: MessageViewSchema }),
   z.object({ type: z.literal('directive.updated'), data: DirectiveViewSchema }),

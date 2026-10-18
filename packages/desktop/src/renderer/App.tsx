@@ -67,7 +67,7 @@ export function App() {
         </div>
       </nav>
       <main className="content">
-        {page.name === 'dashboard' && <Dashboard state={state} />}
+        {page.name === 'dashboard' && <Dashboard state={state} onOpenTask={(id) => setPage({ name: 'task', id })} />}
         {page.name === 'tasks' && <Tasks onOpen={(id) => setPage({ name: 'task', id })} />}
         {page.name === 'task' && <TaskDetail id={page.id} state={state} initialTab={START.tab} onBack={() => setPage({ name: 'tasks' })} />}
         {page.name === 'new' && <NewTask onCreated={(id) => setPage({ name: 'task', id })} />}

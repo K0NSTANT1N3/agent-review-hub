@@ -2,9 +2,10 @@ import type { AppState } from '../../shared/ipc';
 import { bridge, call, formatTokens, timeAgo, useLive } from '../bridge';
 import { Bar, Card, Dot, Empty, ErrorNote } from '../components/common';
 
-export function Dashboard({ state }: { state: AppState }) {
+export function Dashboard({ state, onOpenTask }: { state: AppState; onOpenTask: (id: number) => void }) {
   const agents = useLive(() => call('listAgents'), [], { events: ['agent.updated', 'session.updated'], pollMs: 10_000 });
   const tasks = useLive(() => call('listTasks', { query: { mine: 'true' } }), [], { events: ['task.updated'] });
+  const activity = useLive(() => call('teamActivity'), [], { events: ['team.activity.updated'], pollMs: 5000 });
   const settings = state.settings;
 
   const togglePause = async () => {
@@ -99,8 +100,45 @@ export function Dashboard({ state }: { state: AppState }) {
           </table>
         )}
       </Card>
+
+      <Card title="Team activity">
+        <ErrorNote error={activity.error} />
+        {activity.data === undefined ? <Empty>Loading activity…</Empty> : activity.data.activities.length === 0 ? <Empty>No team agents yet.</Empty> : (
+          <div className="activity-list">
+            {activity.data.activities.map((item) => (
+              <article className="activity-item" key={item.key}>
+                <div className="activity-main">
+                  <div className="activity-title">
+                    <Dot tone={item.activityState === 'working' ? 'ok' : item.activityState === 'waiting' ? 'warn' : item.activityState === 'offline' ? 'danger' : 'muted'} />
+                    <strong>{item.ownerName}</strong>
+                    {item.agentId === state.agentId && <span className="tag">you</span>}
+                    <span className="muted">{item.role}{item.sessionId === null ? '' : ` · ${item.sessionId.slice(0, 8)}`}</span>
+                  </div>
+                  <div className="activity-description">
+                    <span>{activityLabel(item.activityState, item.waitingReason, item.stale)}</span>
+                    {item.taskId !== null ? (
+                      <button className="link activity-task" onClick={() => onOpenTask(item.taskId!)}>#{item.taskId} · {item.taskTitle}</button>
+                    ) : item.taskTitle !== null ? <span>{item.taskTitle}</span> : <span className="muted">No assigned task</span>}
+                    {item.pairedAgentId !== null && <span className="muted">↔ {item.pairedOwnerName} ({item.role === 'author' ? 'reviewer' : 'author'})</span>}
+                  </div>
+                  <div className="hint">Updated {timeAgo(item.stateChangedAt)}{item.stale || item.activityState === 'offline' ? ` · last contact ${timeAgo(item.lastHeartbeatAt)}` : ''}</div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
+}
+
+function activityLabel(state: string, reason: string | null, stale: boolean): string {
+  if (stale) return 'Connection may be stale';
+  if (state === 'waiting') return reason ?? 'Waiting';
+  if (state === 'working') return 'Working';
+  if (state === 'paused') return 'Paused';
+  if (state === 'offline') return 'Offline';
+  return 'Idle';
 }
 
 const HINTS: Record<string, string> = {
