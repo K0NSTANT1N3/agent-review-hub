@@ -100,3 +100,13 @@ export function formatTokens(n: number): string {
   if (Math.abs(n) >= 1_000) return `${Math.round(n / 1000)}k`;
   return String(n);
 }
+
+/** Compact length of the span between two timestamps, e.g. "<1 min", "12 min", "2 h 5 min". */
+export function duration(from: number, to: number): string {
+  const min = Math.floor(Math.max(0, to - from) / 60_000);
+  if (min < 1) return '<1 min';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return min % 60 === 0 ? `${h} h` : `${h} h ${min % 60} min`;
+  return `${Math.floor(h / 24)} d`;
+}

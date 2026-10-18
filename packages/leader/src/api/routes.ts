@@ -161,7 +161,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
       agents: db.agents.all().filter((a) => a.revoked === 0).map((a) => agentView(db, a, now(), config.dayBoundaryTz)),
     }),
 
-    teamActivity: () => ({ activities: teamActivity(db, now()) }),
+    teamActivity: () => ({ activities: teamActivity(db, now()), queue: scheduler.queueSnapshot() }),
 
     listSessions: (ctx) => {
       const q = ListSessionsQuerySchema.parse(ctx.query ?? {});

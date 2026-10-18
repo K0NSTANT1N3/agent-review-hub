@@ -66,7 +66,7 @@ export function WaitReasonNote({ reason, compact = false }: { reason: TaskWaitRe
   );
 }
 
-export function Dot({ tone, title }: { tone: 'ok' | 'warn' | 'danger' | 'muted'; title?: string }) {
+export function Dot({ tone, title }: { tone: 'ok' | 'warn' | 'danger' | 'info' | 'muted'; title?: string }) {
   return <span className={`dot dot-${tone}`} title={title} />;
 }
 

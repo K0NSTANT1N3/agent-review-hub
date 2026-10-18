@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import type { QueueEntryView } from '@quorum/protocol';
 import type { AppState } from '../../shared/ipc';
 import { bridge, call, formatTokens, timeAgo, useLive } from '../bridge';
 import { Bar, Card, Dot, Empty, ErrorNote } from '../components/common';
+import { AgentsNow, QueueCard, TeamStats, WaitsFor } from '../components/TeamBoard';
 
 export function Dashboard({ state, onOpenTask }: { state: AppState; onOpenTask: (id: number) => void }) {
   const agents = useLive(() => call('listAgents'), [], { events: ['agent.updated', 'session.updated'], pollMs: 10_000 });
@@ -28,6 +30,9 @@ export function Dashboard({ state, onOpenTask }: { state: AppState; onOpenTask: 
 
   const open = (tasks.data?.tasks ?? []).filter((t) => !['MERGED', 'CANCELLED', 'FAILED'].includes(t.state));
   const attention = open.filter((t) => t.state === 'ESCALATED' || t.state === 'PAUSED');
+  const activities = activity.data?.activities ?? [];
+  // Leaders older than the queue view send no `queue`.
+  const queue: QueueEntryView[] = (activity.data?.queue as QueueEntryView[] | undefined) ?? [];
 
   return (
     <div className="stack">
@@ -70,6 +75,16 @@ export function Dashboard({ state, onOpenTask }: { state: AppState; onOpenTask: 
           <p className="muted">Budget for teammates: {formatTokens(settings?.lendTokensPerDay ?? 0)} tokens / day</p>
         </Card>
       </div>
+
+      <ErrorNote error={activity.error} />
+      {activity.data === undefined ? <Empty>Loading activity…</Empty> : (
+        <>
+          <TeamStats activities={activities} queue={queue} />
+          <AgentsNow agents={agents.data?.agents} activities={activities} me={state.agentId} onOpenTask={onOpenTask} />
+          <WaitsFor activities={activities} queue={queue} onOpenTask={onOpenTask} />
+          <QueueCard queue={queue} onOpenTask={onOpenTask} />
+        </>
+      )}
 
       <Card title="Team agents">
         <ErrorNote error={agents.error} />
@@ -121,14 +136,13 @@ export function Dashboard({ state, onOpenTask }: { state: AppState; onOpenTask: 
       </Card>
 
       <Card title="Team activity">
-        <ErrorNote error={activity.error} />
         {activity.data === undefined ? <Empty>Loading activity…</Empty> : activity.data.activities.length === 0 ? <Empty>No team agents yet.</Empty> : (
           <div className="activity-list">
             {activity.data.activities.map((item) => (
               <article className="activity-item" key={item.key}>
                 <div className="activity-main">
                   <div className="activity-title">
-                    <Dot tone={item.activityState === 'working' ? 'ok' : item.activityState === 'waiting' ? 'warn' : item.activityState === 'offline' ? 'danger' : 'muted'} />
+                    <Dot tone={item.activityState === 'working' ? 'ok' : item.activityState === 'waiting' ? (item.waitingOn === 'agent' ? 'info' : 'warn') : item.activityState === 'offline' ? 'danger' : 'muted'} />
                     <strong>{item.ownerName}</strong>
                     {item.agentId === state.agentId && <span className="tag">you</span>}
                     <span className="muted">{item.role}{item.sessionId === null ? '' : ` · ${item.sessionId.slice(0, 8)}`}</span>

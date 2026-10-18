@@ -213,8 +213,10 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
       let activityState: TeamActivityView['activityState'] = session === null || session.state === 'idle' ? 'idle' : 'waiting';
       let waitingOn: TeamActivityView['waitingOn'] = null;
       let waitingReason: string | null = null;
+      const rateLimitedUntil = agent.rate_limited_until !== null && agent.rate_limited_until > now ? agent.rate_limited_until : null;
       if (agent.status !== 'online') activityState = 'offline';
       else if (agent.paused !== 0) activityState = 'paused';
+      else if (rateLimitedUntil !== null && (session === null || session.state === 'idle')) { activityState = 'waiting'; waitingOn = 'rate_limit'; waitingReason = 'Rate-limited'; }
       else if (session?.state === 'opening') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Starting session'; }
       else if (session?.state === 'lost' || session?.state === 'closing') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = session.state === 'lost' ? 'Session was lost' : 'Session is closing'; }
       else if (role === 'directive') {
@@ -227,6 +229,7 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
         else if (task.state === 'IN_REVIEW' && role === 'reviewer') activityState = 'working';
         else if (task.state === 'AWAITING_REVIEWER' && role === 'author') { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Waiting for a reviewer'; }
         else if (role === 'author' && task.state === 'IN_REVIEW') { activityState = 'waiting'; waitingOn = 'agent'; waitingReason = 'Waiting for reviewer'; }
+        else if (role === 'reviewer' && (task.state === 'AUTHORING' || task.state === 'SYNCING') && pairedAgent !== undefined) { activityState = 'waiting'; waitingOn = 'agent'; waitingReason = 'Waiting for author fixes'; }
         else if (!['MERGED', 'CANCELLED', 'FAILED'].includes(task.state)) { activityState = 'waiting'; waitingOn = 'scheduler'; waitingReason = 'Waiting for task scheduler'; }
       }
       const stateChangedAt = agent.status !== 'online' || agent.paused !== 0
@@ -243,6 +246,10 @@ export function teamActivity(db: LeaderDb, now: number): TeamActivityView[] {
         activityState,
         waitingOn,
         waitingReason,
+        waitingForName: waitingOn === 'agent'
+          ? pairedAgent?.owner_name ?? null
+          : waitingOn === 'human' && task !== undefined ? db.agents.get(task.requester_agent_id)?.owner_name ?? task.requester_agent_id : null,
+        rateLimitedUntil,
         taskId: task?.id ?? null,
         taskTitle: task?.title ?? (directive === undefined ? null : 'Read-only question'),
         pairedAgentId: pairedAgent?.id ?? null,

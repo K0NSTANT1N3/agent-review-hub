@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type WebSocket from 'ws';
-import type { LeaderConfig, TaskWaitReason, UiEvent } from '@quorum/protocol';
+import type { LeaderConfig, QueueEntryView, TaskWaitReason, TeamActivityResponse, UiEvent } from '@quorum/protocol';
 import { authenticate } from '../api/routes.js';
 import { agentView, directiveView, taskEventView, taskView, teamActivity } from '../api/views.js';
 import type { LeaderDb, TaskRow } from '../db/repo.js';
@@ -24,6 +24,8 @@ export class UiHub {
     private readonly config: LeaderConfig,
     private readonly getWaitReason: (task: TaskRow) => TaskWaitReason | null = () => null,
     private readonly now: () => number = Date.now,
+    /** Scheduler queue explanation, pushed with team activity. */
+    private readonly queue: () => QueueEntryView[] = () => [],
   ) {}
 
   /** WebSocket route handler for NodeHub.registerWebSocket('/ws/ui', …). */
@@ -62,7 +64,7 @@ export class UiHub {
     for (const task of this.db.tasks.all()) this.taskWaitHashes.set(task.id, JSON.stringify(this.getWaitReason(task)));
     for (const a of this.db.agents.all()) this.agentHashes.set(a.id, JSON.stringify(a));
     for (const d of this.db.directives.all()) this.directiveHashes.set(d.id, JSON.stringify(d));
-    this.activityHash = JSON.stringify(teamActivity(this.db, this.now()));
+    this.activityHash = JSON.stringify(this.activity());
   }
 
   private poll(): void {
@@ -94,15 +96,19 @@ export class UiHub {
         this.directiveHashes.set(d.id, hash);
         this.broadcast({ type: 'directive.updated', data: directiveView(d) });
       }
-      const activities = teamActivity(this.db, this.now());
-      const activityHash = JSON.stringify(activities);
+      const activity = this.activity();
+      const activityHash = JSON.stringify(activity);
       if (activityHash !== this.activityHash) {
         this.activityHash = activityHash;
-        this.broadcast({ type: 'team.activity.updated', data: { activities } });
+        this.broadcast({ type: 'team.activity.updated', data: activity });
       }
     } catch {
       // A transient DB error must not kill the poller; the next tick retries.
     }
+  }
+
+  private activity(): TeamActivityResponse {
+    return { activities: teamActivity(this.db, this.now()), queue: this.queue() };
   }
 
   private broadcast(event: UiEvent): void {

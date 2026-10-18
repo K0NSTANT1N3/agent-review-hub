@@ -458,3 +458,94 @@ describe('sessions and directives', () => {
     expect(sent('directive.run')[0]!.frame.cmd).toMatchObject({ directiveId: 'd1', requester: 'alice', text: 'What is X?' });
   });
 });
+
+describe('queue explanation', () => {
+  it('explains an own-only task blocked by its rate-limited requester, without assigning anything', () => {
+    db.agents.update('alice-claude', { rate_limited_until: now + 60_000 });
+    const t = task();
+    const queue = scheduler.queueSnapshot();
+    expect(queue).toEqual([expect.objectContaining({
+      taskId: t.id, position: 1, needs: 'author', waitingOn: 'rate_limit', requesterOwner: 'alice',
+      reason: "Own-only task: alice's agent is rate-limited",
+      candidates: [{ agentId: 'alice-claude', ownerName: 'alice', blocker: 'rate-limited' }],
+    })]);
+    expect(commands).toHaveLength(0);
+    expect(db.tasks.require(t.id).state).toBe('QUEUED');
+  });
+
+  it('lists reviewers before authors and names why each agent cannot review', () => {
+    agent('bob-claude', { status: 'offline' });
+    agent('carol-claude', { lend_mode: 'when_idle' });
+    agent('dave-claude', { lend_tokens_per_day: 0 });
+    const review = awaitingReview();
+    const write = task({ mode: 'pool', priority: 0 });
+    const queue = scheduler.queueSnapshot();
+    expect(queue.map((e) => [e.taskId, e.position, e.needs])).toEqual([[review.id, 1, 'reviewer'], [write.id, 2, 'author']]);
+    expect(queue[0]).toMatchObject({
+      waitingOn: 'agent', authorOwnerName: 'alice',
+      reason: 'No free reviewer: bob offline, carol in use by its owner (lends when idle), dave out of lending budget',
+    });
+    expect(queue[0]!.candidates.find((c) => c.agentId === 'alice-claude')).toMatchObject({ blocker: `wrote #${review.id}` });
+  });
+
+  it('explains reviewer capacity reservations instead of promising assignment', () => {
+    db.agents.update('alice-claude', { max_sessions: 1 });
+    agent('bob-claude', { max_sessions: 1 });
+    const t = task({ requester_agent_id: 'bob-claude', mode: 'own' });
+    awaitingReview();
+    const queued = scheduler.queueSnapshot().find((entry) => entry.taskId === t.id);
+    expect(queued).toMatchObject({
+      waitingOn: 'agent',
+      candidates: [{ agentId: 'bob-claude', ownerName: 'bob', blocker: 'reserving capacity for reviews' }],
+    });
+    expect(commands).toHaveLength(0);
+  });
+
+  it('reports a task an eligible agent will pick up on the next pass', () => {
+    agent('bob-claude');
+    const t = task({ mode: 'pool' });
+    expect(scheduler.queueSnapshot()[0]).toMatchObject({ taskId: t.id, waitingOn: 'scheduler', reason: 'Being assigned on the next scheduler pass' });
+  });
+
+  it('orders merges like the merge worker and lists human decisions without a position', () => {
+    const merging = task({ state: 'MERGING', approved_at: now - 3000 });
+    const second = task({ state: 'MERGE_QUEUED', approved_at: now - 1000 });
+    const first = task({ state: 'MERGE_QUEUED', approved_at: now - 2000 });
+    const escalated = task({ state: 'ESCALATED', escalation_reason: 'Reviewer and author disagree', state_entered_at: now - 5000 });
+    const paused = task({ state: 'PAUSED', pause_reason: 'human', paused_from_state: 'AUTHORING', state_entered_at: now - 1000 });
+    const queue = scheduler.queueSnapshot();
+    expect(queue.map((e) => [e.taskId, e.position, e.needs, e.reason])).toEqual([
+      [first.id, 1, 'merge', `Merging #${merging.id} first`],
+      [second.id, 2, 'merge', '2 merges ahead'],
+      [escalated.id, null, 'human', 'Reviewer and author disagree'],
+      [paused.id, null, 'human', 'Paused by a human'],
+    ]);
+    expect(queue[2]).toMatchObject({ waitingOn: 'human', requesterOwner: 'alice' });
+  });
+  it('explains paused tasks the way handlePaused resumes them', () => {
+    db.agents.update('alice-claude', { rate_limited_until: now + 60_000 });
+    const review = task({ state: 'PAUSED', pause_reason: 'rate_limited', paused_from_state: 'IN_REVIEW', author_agent_id: 'alice-claude', state_entered_at: now - 2000 });
+    const writing = task({ state: 'PAUSED', pause_reason: 'rate_limited', paused_from_state: 'AUTHORING', author_agent_id: 'alice-claude', state_entered_at: now - 1000 });
+    const queue = scheduler.queueSnapshot();
+    expect(queue.find((e) => e.taskId === review.id)).toMatchObject({
+      position: null, needs: 'reviewer', waitingOn: 'scheduler', reason: 'Paused: rate limited; resumes on the next scheduler pass', candidates: [],
+    });
+    expect(queue.find((e) => e.taskId === writing.id)).toMatchObject({
+      position: null, needs: 'author', waitingOn: 'rate_limit', reason: "Paused: rate limited; resumes when alice's agent is back (rate-limited)",
+    });
+    now += config.timeouts.authorReconnectGraceSec * 1000;
+    db.agents.update('alice-claude', { status: 'offline', rate_limited_until: null });
+    expect(scheduler.queueSnapshot().find((e) => e.taskId === writing.id)).toMatchObject({
+      needs: 'human', waitingOn: 'human', reason: 'Paused: rate limited; the author agent is unavailable: reassign to the pool, wait, or cancel',
+    });
+  });
+  it('treats a task whose session is still opening as waiting on that agent, not as next', () => {
+    const t = task();
+    scheduler.schedule();
+    expect(sent('session.open')).toHaveLength(1);
+    expect(scheduler.queueSnapshot()[0]).toMatchObject({
+      taskId: t.id, waitingOn: 'agent', reason: "Opening an author session on alice's agent",
+      candidates: [{ agentId: 'alice-claude', ownerName: 'alice', blocker: 'opening a session' }],
+    });
+  });
+});
