@@ -123,10 +123,10 @@ Every work item must include vitest tests in `packages/leader/test/`. Use an in-
 - **Accept:** tests insert/read every table; CHECK constraints reject a locked session without a lock, a conversation whose reviewer agent equals its author agent, and a second active conversation for the same task.
 
 ### L2 — Task state machine · spec §8
-- [ ] `src/core/state-machine.ts`: the transition table T1–T33 as data (`from[]`, `to`, `id`).
-- [ ] `transition(db, taskId, to, { reason, actor, data })`: asserts the pair is allowed (else throws `IllegalTransitionError`), updates `state`, `state_entered_at`, `updated_at` and `paused_from_state`/`pause_reason` where relevant, and inserts `task_events`, all in one transaction.
-- [ ] Side effects are **not** inside `transition()`. Handlers (L5) call `transition()` and then the effects, inside the same `withTx`.
-- [ ] The "author needed but lost → PAUSED directly" rule (end of spec §8.2) as a helper `enterAuthorState(task, intended)`.
+- [x] `src/core/state-machine.ts`: the transition table T1–T33 as data (`from[]`, `to`, `id`).
+- [x] `transition(db, taskId, to, { reason, actor, data })`: asserts the pair is allowed (else throws `IllegalTransitionError`), updates `state`, `state_entered_at`, `updated_at` and `paused_from_state`/`pause_reason` where relevant, and inserts `task_events`, all in one transaction.
+- [x] Side effects are **not** inside `transition()`. Handlers (L5) call `transition()` and then the effects, inside the same `withTx`.
+- [x] The "author needed but lost → PAUSED directly" rule (end of spec §8.2) as a helper `enterAuthorState(task, intended)`.
 - **Accept:** a test iterates **every** (from,to) pair of the 12 states. Listed pairs succeed, all others throw. Every success writes exactly one `task_events` row.
 
 ### L3 — Locks, leases, `sendToSession` · spec §3, §10.1, §9.4 lock fields
