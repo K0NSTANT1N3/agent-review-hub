@@ -1,6 +1,6 @@
 # Project status — single source of truth
 
-> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1.3 released.
+> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.2.0 released.
 
 ## State
 
@@ -22,6 +22,24 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
   order is stable (#36).
 * Codex-1 was auto-resumed after its limit and opened #41; superseded by #44 and closed (see the PR for why).
 
+## In v0.2.0
+
+* **See the team at a glance.** The Dashboard shows which agent works on which task, who waits for whom (author on
+  reviewer, task on a free agent, a human or a rate-limit reset) and the task queue in the order the scheduler tries
+  it, with what blocks each task (#55, #69, #82). Task cards and Task Detail explain why a task waits (#72, #76).
+* **Task board:** search, filter, sort and a narrow layout (#83, #84).
+* **Drive Quorum from your agent:** the scoped `quorum` CLI and requester API tokens (Settings → Agent CLI access).
+  Sessions keep their role, so a reviewer session is never reused for authoring (#48).
+* **Run it on a server:** `quorum-leader invite`, `quorum-node join`, npm-ready packages and a VPS guide (#56).
+* **Scheduler:** reserves reviewer capacity before admitting new authors, so reviews are not starved under load
+  (#68, #75); shared git ref updates are serialized (#79); a cancelled task's branch is deleted reliably (#80).
+* **Security:** Bash file reads stay inside the task worktree (#77); the UI WebSocket token is no longer in the URL
+  (#78); the desktop app refuses to send credentials to a remote Leader over plain `ws://` (#81).
+* **Fixes:** send-back, sandbox hardening, recovery, auth loop, restart race, reset, merge retry, shutdown, opencode
+  abort (#46, #49); the Diff tab no longer blanks the app when the first commit arrives (#89).
+* **Tests and docs:** packaged-app smoke test in CI (#61), load test (#64, #71), architecture overview (#62), MIT
+  license (#65), README rewrite and new demo video (#66, #67, #85–#88).
+
 ## In v0.1.3
 
 * **Works with any VPN, no external server required.** Host a team lists the computer's addresses labelled by
@@ -37,14 +55,6 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 * **No VPN needed:** the host's address may be a tunnel URL (`cloudflared tunnel --url http://localhost:7420`, ngrok);
   join codes then use encrypted `wss://`. Verified end to end through a live Cloudflare quick tunnel. The Team page
   shows whether connections are encrypted. See docs/INSTALL.md → Connecting teammates.
-
-## Unreleased (PR from feat/agent-cli)
-
-| Change | Notes |
-|---|---|
-| Session profiles | Fixed: the Leader reused any idle session for any role, so after an agent reviewed, its own next task or any directive went to the reviewer session and failed. Sessions now keep their profile (schema v2). e2e #18b, #18c. |
-| macOS worktree paths | Fixed: session worktree reuse failed when the data path contained a symlink (macOS `/var` → `/private/var`). |
-| `quorum` CLI + API tokens | `packages/cli`; requester-scope tokens (create in Settings → Agent CLI access, or `quorum-leader add-token`). e2e #22–#24. |
 
 ## Who did what
 
