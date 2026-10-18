@@ -42,6 +42,7 @@ export class Scheduler {
   private readonly notified = new Set<string>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private triggered = false;
+  private stopped = false;
 
   constructor(private readonly options: SchedulerOptions) {
     this.db = options.db;
@@ -56,13 +57,14 @@ export class Scheduler {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer !== undefined) clearInterval(this.timer);
     this.timer = undefined;
   }
 
   /** Debounced: at most one extra pass per event-loop turn. */
   trigger(): void {
-    if (this.triggered) return;
+    if (this.triggered || this.stopped) return;
     this.triggered = true;
     setImmediate(() => {
       this.triggered = false;
@@ -71,6 +73,7 @@ export class Scheduler {
   }
 
   tick(): void {
+    if (this.stopped) return;
     try {
       this.schedule();
     } catch (error) {

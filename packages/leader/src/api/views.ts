@@ -184,7 +184,7 @@ export function directiveView(d: DirectiveRow): DirectiveView {
 export function taskDetail(db: LeaderDb, t: TaskRow): TaskDetail {
   return {
     task: taskView(db, t),
-    conversations: db.conversations.find({ task_id: t.id }).map(conversationView),
+    conversations: db.conversations.find({ task_id: t.id }).sort((a, b) => a.created_at - b.created_at).map(conversationView),
     issues: db.issues.find({ task_id: t.id }).map(issueView),
     events: db.taskEvents.find({ task_id: t.id }).map(taskEventView),
     messages: db.messagesForTask(t.id).map(messageView),

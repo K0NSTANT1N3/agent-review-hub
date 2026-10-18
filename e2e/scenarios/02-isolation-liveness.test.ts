@@ -101,14 +101,18 @@ describe.skipIf(!E2E_READY)('isolation and liveness', () => {
     await waitForState(alice.api, task.id, 'AUTHORING');
 
     await h.stopNode('alice-claude');
-    await h.addAgent({ id: 'carol-claude', script: { author: anyTask([authorDone(greetFile('carol'))]) } });
-    await h.addAgent({ id: 'bob-claude', script: { reviewer: anyTask([approve()]) } });
+    // In pool mode any lending agent may take over authoring, so both helpers can author and review.
+    const helper = (tag: string): MockScript => ({ author: anyTask([authorDone(greetFile(tag))]), reviewer: anyTask([approve()]) });
+    await h.addAgent({ id: 'carol-claude', script: helper('carol') });
+    await h.addAgent({ id: 'bob-claude', script: helper('bob') });
     const done = await waitForState(alice.api, task.id, 'MERGED', { timeoutMs: 60_000 });
 
     expect(stateHistory(done)).toEqual(expect.arrayContaining(['PAUSED', 'QUEUED']));
-    expect(done.task.authorAgentId).toBe('carol-claude');
-    const restart = done.messages.find((m) => m.type === 'author.start' && m.agentId === 'carol-claude');
+    const newAuthor = done.task.authorAgentId;
+    expect(['bob-claude', 'carol-claude']).toContain(newAuthor);
+    const restart = done.messages.find((m) => m.type === 'author.start' && m.agentId === newAuthor);
     expect((restart?.payload as { continueExisting: boolean }).continueExisting).toBe(true);
+    expect(done.conversations.at(-1)?.reviewerAgentId).not.toBe(newAuthor);
   });
 
   it('#8 author disconnect in own mode → PAUSED → same author resumes after reconnect', async () => {

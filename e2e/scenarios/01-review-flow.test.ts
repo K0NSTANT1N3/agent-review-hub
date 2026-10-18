@@ -66,8 +66,11 @@ describe.skipIf(!E2E_READY)('review flow', () => {
     expect(rereview.headCommit).not.toBe(start.headCommit);
     expect(rereview.reason).toBe('revision');
 
-    const seqs = done.messages.filter((m) => m.conversationId === conv.id).map((m) => m.seq);
-    expect(seqs).toEqual([...seqs].sort((a, b) => (a ?? 0) - (b ?? 0)));
+    // Only Leader→Node commands carry a per-conversation seq; it must strictly increase.
+    const seqs = done.messages.filter((m) => m.conversationId === conv.id && m.direction === 'to_node').map((m) => m.seq ?? -1);
+    expect(seqs.length).toBeGreaterThan(1);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(new Set(seqs).size).toBe(seqs.length);
   });
 
   it('#3 round limit escalates; human approval then merges', async () => {
