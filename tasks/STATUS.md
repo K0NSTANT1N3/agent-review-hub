@@ -10,7 +10,9 @@ tests (protocol, leader, node, desktop) and the full end-to-end suite (27 scenar
 Acceptance (spec §21.3) was run with **real Claude Code on both sides** (headless Leader + two Nodes on one machine,
 demo repo): the author agent implemented the task (~13k tokens), tests passed, the reviewer agent approved, and the
 Leader squash-merged with `Quorum-Task/Author/Reviewer/Requested-By` trailers and deleted the branch — 36 seconds end
-to end. The packaged Linux app (AppImage/deb) was smoke-tested: in-process Leader, Node daemon and UI all running.
+to end. The packaged Linux app (AppImage/deb) was smoke-tested: in-process Leader, Node daemon and UI all running. The Release
+workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppImage`, `…-linux-amd64.deb`,
+`…-mac-arm64.dmg`, `…-win-x64.exe`.
 
 ## Who did what
 
@@ -18,13 +20,12 @@ to end. The packaged Linux app (AppImage/deb) was smoke-tested: in-process Leade
 |---|---|
 | Claude | Scaffold & CI (C0), protocol `contract-v1` (C1, C1.1), e2e harness + 27 scenarios (C2), Claude Code adapter (C3), Leader L3 fixes–L9 (scheduler, budgets, liveness, merge worker, REST/UI API, CLI, wiring), integration fixes (I1), desktop app (D1–D5), packaging & release (R1), docs (R2), acceptance (A1) |
 | Codex-1 | Leader L1 (DB), L2 (state machine), L3 (locks), L4 (node hub), most of L5 (handlers; adopted by Claude at handoff) — stopped at its usage limit |
-| Codex-2 | Node N1–N8 (worktrees, project tests runner, journal, prompts/parser, adapter interface + mock, Leader client, command runner, daemon/CLI) |
+| Codex-2 | Node N1–N9 (worktrees, project tests runner, journal, prompts/parser, adapter interface + mock, Leader client, command runner, daemon/CLI, opencode adapter) |
 
 ## Remaining / next ideas (not required for v0.1)
 
 | Item | Notes |
 |---|---|
-| N9 opencode adapter | Owner Codex-2. Until it lands, choosing "opencode server" in the app shows a clear "could not load" error; Claude Code and Mock work. |
 | Code signing | Installers are unsigned (macOS: right-click → Open; Windows: More info → Run anyway). Add certificates to the Release workflow when available. |
 | macOS Intel build | The Release workflow builds on `macos-latest` (Apple Silicon). Add an `macos-13` matrix entry for x64 if needed. |
 | TLS for the Leader | Supported headless (`tls.certFile/keyFile`); the desktop host mode uses plain WS — use a VPN (e.g. Tailscale) or a TLS proxy. |
