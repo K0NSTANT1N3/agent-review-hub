@@ -146,9 +146,9 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 - **Accept:** snapshot tests for every prompt; parser tests for valid, missing, multiple, malformed, and coverage-mismatch cases.
 
 ### N5 — Adapter interface + mock adapter · spec §15.1, §15.4
-- [ ] `src/adapters/types.ts` exactly per §15.1 (`Profile`, `TurnResult`, `AdapterError`, `AgentAdapter`).
-- [ ] `src/adapters/mock.ts`: full §15.4 script format (`match` by `taskTitleContains` / `any`, per-(sid,taskId) turn index, `writeFiles`, `reply` → wrapped in a quorum-json block, `rawReply`, `failTurnWith`, `delayMs`, `tokensPerTurn`, `contextTokens` growth so compaction can be tested). The mock must find the taskId/title from the prompt text, so add a stable first line to every prompt in N4: `QUORUM-TASK: <id> <title>` (or `QUORUM-DIRECTIVE: <id>`).
-- [ ] `src/adapters/index.ts`: `createAdapter(config.adapter)` factory for `mock` | `opencode` | `claude-code`. Import `claude-code.ts` lazily so a missing SDK doesn't break mock-only use.
+- [x] `src/adapters/types.ts` exactly per §15.1 (`Profile`, `TurnResult`, `AdapterError`, `AgentAdapter`).
+- [x] `src/adapters/mock.ts`: full §15.4 script format (`match` by `taskTitleContains` / `any`, per-(sid,taskId) turn index, `writeFiles`, `reply` → wrapped in a quorum-json block, `rawReply`, `failTurnWith`, `delayMs`, `tokensPerTurn`, `contextTokens` growth so compaction can be tested). The mock must find the taskId/title from the prompt text, so add a stable first line to every prompt in N4: `QUORUM-TASK: <id> <title>` (or `QUORUM-DIRECTIVE: <id>`).
+- [x] `src/adapters/index.ts`: `createAdapter(config.adapter)` factory for `mock` | `opencode` | `claude-code`. Import `claude-code.ts` lazily so a missing SDK doesn't break mock-only use.
 - **Accept:** mock tests cover each behavior.
 
 ### N6 — Leader client (WebSocket) · spec §11.1, §11.2, §10.2
