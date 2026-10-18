@@ -140,9 +140,9 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 - **Accept:** a restart-simulation test (open, write, close, reopen) proves recovery and dedupe.
 
 ### N4 — Prompts + output parsing · spec §12
-- [ ] `src/prompts/`: one function per prompt §12.2–§12.9, with the exact text structure from the spec: the `<peer_content source="…">` wrapping, and the preamble's peer-content rule and git prohibition. Large-diff fallback uses `maxDiffLinesInPrompt`.
-- [ ] Escape `</peer_content>` inside peer text (e.g. replace with `<\/peer_content>`) so peer text can't close the wrapper.
-- [ ] `src/output/parse.ts`: extract the **last** ```` ```quorum-json ```` block, validate with the schema from `@quorum/protocol/agent-output`, and produce the retry prompt text from §12.1 on failure. Extra validation: `responses` must cover exactly the supplied blocking issue codes; `previousIssues` must cover exactly the supplied prior codes.
+- [x] `src/prompts/`: one function per prompt §12.2–§12.9, with the exact text structure from the spec: the `<peer_content source="…">` wrapping, and the preamble's peer-content rule and git prohibition. Large-diff fallback uses `maxDiffLinesInPrompt`.
+- [x] Escape `</peer_content>` inside peer text (e.g. replace with `<\/peer_content>`) so peer text can't close the wrapper.
+- [x] `src/output/parse.ts`: extract the **last** ```` ```quorum-json ```` block, validate with the schema from `@quorum/protocol/agent-output`, and produce the retry prompt text from §12.1 on failure. Extra validation: `responses` must cover exactly the supplied blocking issue codes; `previousIssues` must cover exactly the supplied prior codes.
 - **Accept:** snapshot tests for every prompt; parser tests for valid, missing, multiple, malformed, and coverage-mismatch cases.
 
 ### N5 — Adapter interface + mock adapter · spec §15.1, §15.4
