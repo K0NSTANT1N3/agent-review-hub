@@ -160,6 +160,12 @@ export class LeaderDb {
       .all(...(agentId === undefined ? [] : [agentId])) as MessageRow[];
   }
 
+  latestTurnCommand(sid: string): MessageRow | undefined {
+    return this.sql.prepare(`SELECT * FROM messages WHERE direction = 'to_node' AND session_id = ?
+      AND type IN ('author.start','author.revise','author.sync','review.start','review.rereview','directive.run')
+      ORDER BY rowid DESC LIMIT 1`).get(sid) as MessageRow | undefined;
+  }
+
   get schemaVersion(): number {
     const row = this.sql.prepare('SELECT version FROM schema_version').get() as { version: number };
     return row.version;
