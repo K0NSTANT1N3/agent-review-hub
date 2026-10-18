@@ -39,6 +39,8 @@ export interface AppState {
   leader: { running: boolean; port: number | null; publicUrl: string | null; restrictedTo: string | null; error: string | null } | null;
   node: { running: boolean; error: string | null; status: NodeStatus | null };
   connected: boolean;
+  /** http(s) base of the Leader this app talks to (what `quorum login --url` needs). */
+  apiUrl: string | null;
   /** Whether teammates' connections to the Leader are encrypted (wss://). */
   encrypted: boolean;
   /** Network the Leader is reached through, to explain connection problems. */

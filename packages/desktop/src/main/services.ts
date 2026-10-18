@@ -106,6 +106,7 @@ export class Services {
           : null,
       node: { running: this.daemon !== null, error: this.nodeError, status: safeStatus(this.daemon) },
       connected: this.connected,
+      apiUrl: c === null ? null : httpBaseFromLeaderUrl(c.leaderUrl),
       encrypted: c === null ? false : isEncryptedLeaderUrl(this.teamLeaderUrl(c)),
       leaderNetwork: c === null ? null : leaderNetworkKind(this.teamLeaderUrl(c)),
       settings: c?.settings ?? null,

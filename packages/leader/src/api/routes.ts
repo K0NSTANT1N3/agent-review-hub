@@ -1,8 +1,10 @@
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
   API_ERROR_HTTP_STATUS,
   API_ROUTES,
+  AnswerTaskRequestSchema,
+  CreateApiTokenRequestSchema,
   CreateDirectiveRequestSchema,
   CreateTaskRequestSchema,
   DiffQuerySchema,
@@ -15,7 +17,9 @@ import {
   type ApiRouteName,
   type LeaderConfig,
   type TaskState,
+  type TokenScope,
 } from '@quorum/protocol';
+import { apiTokenView, mintApiToken, resolvePrincipal } from '../core/api-tokens.js';
 import type { EventHandlers } from '../core/handlers.js';
 import { LockError, type LockManager } from '../core/locks.js';
 import type { MergeWorker } from '../core/merge-worker.js';
@@ -52,6 +56,7 @@ export interface ApiDeps {
 
 interface Ctx {
   agent: AgentRow | null;
+  scope: TokenScope | null;
   id: string | undefined;
   query: unknown;
   body: unknown;
@@ -59,15 +64,9 @@ interface Ctx {
 
 const SHA = /^[0-9a-f]{7,64}$/;
 
-/** Resolves a bearer token to its non-revoked agent (constant-time hash comparison). */
+/** Resolves a bearer token (agent token or API token) to its non-revoked agent (constant-time hash comparison). */
 export function authenticate(db: LeaderDb, token: string | undefined): AgentRow | null {
-  if (token === undefined || token === '') return null;
-  const digest = createHash('sha256').update(token).digest();
-  for (const agent of db.agents.all()) {
-    const expected = Buffer.from(agent.token_hash, 'hex');
-    if (expected.length === digest.length && timingSafeEqual(expected, digest)) return agent.revoked === 0 ? agent : null;
-  }
-  return null;
+  return resolvePrincipal(db, token)?.agent ?? null;
 }
 
 export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
@@ -87,7 +86,8 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
     return t;
   };
 
-  const actor = (ctx: Ctx) => `human:${ctx.agent?.owner_name ?? 'unknown'}`;
+  // Actions taken through a requester API token are recorded as `token:<owner>`: possibly a script or agent, not the person.
+  const actor = (ctx: Ctx) => `${ctx.scope === 'requester' ? 'token' : 'human'}:${ctx.agent?.owner_name ?? 'unknown'}`;
 
   const requireRequesterOrAdmin = (ctx: Ctx, t: TaskRow) => {
     const owner = ctx.agent?.owner_name;
@@ -127,6 +127,29 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
     db.tasks.update(taskId, { approved_at: t.approved_at ?? now(), escalation_reason: null });
     if (db.mergeQueue.get(taskId) === undefined) db.mergeQueue.insert({ task_id: taskId, enqueued_at: now() });
   };
+
+  /** Sends a task back to its author with `comment` as a human blocking issue (inside a transaction). */
+  function sendBack(ctx: Ctx, t: TaskRow, comment: string) {
+    if (t.state === 'IN_REVIEW') {
+      for (const c of db.conversations.find({ task_id: t.id, state: 'active' })) {
+        locks.sendToSession(c.reviewer_session_id, { type: 'task.cancel', sid: c.reviewer_session_id, taskId: t.id });
+      }
+    }
+    db.issues.insert({
+      task_id: t.id,
+      code: nextIssueCode(db, t.id),
+      source: 'human',
+      severity: 'blocking',
+      comment,
+      status: 'open',
+      raised_round: t.review_round,
+      created_at: now(),
+    });
+    db.tasks.update(t.id, { review_round: Math.max(0, t.review_round - 1), escalation_reason: null });
+    const after = transitionToAuthorState(db, t.id, 'AUTHORING', { reason: 'sent_back_by_human', actor: actor(ctx), at: now() });
+    if (after.state === 'AUTHORING') handlers.sendAuthor(t.id, 'revise');
+    return taskView(db, db.tasks.require(t.id));
+  }
 
   const handlersByRoute: { [R in ApiRouteName]: (ctx: Ctx) => unknown | Promise<unknown> } = {
     health: () => ({ ok: true }),
@@ -240,26 +263,35 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
         const t = task(ctx.id);
         requireRequesterOrAdmin(ctx, t);
         requireState(t, ['ESCALATED', 'IN_REVIEW', 'AWAITING_REVIEWER'], 'send back');
-        if (t.state === 'IN_REVIEW') {
-          for (const c of db.conversations.find({ task_id: t.id, state: 'active' })) {
-            locks.sendToSession(c.reviewer_session_id, { type: 'task.cancel', sid: c.reviewer_session_id, taskId: t.id });
-          }
-        }
-        db.issues.insert({
-          task_id: t.id,
-          code: nextIssueCode(db, t.id),
-          source: 'human',
-          severity: 'blocking',
-          comment: body.comment,
-          status: 'open',
-          raised_round: t.review_round,
-          created_at: now(),
-        });
-        db.tasks.update(t.id, { review_round: Math.max(0, t.review_round - 1), escalation_reason: null });
-        const after = transitionToAuthorState(db, t.id, 'AUTHORING', { reason: 'sent_back_by_human', actor: actor(ctx), at: now() });
-        if (after.state === 'AUTHORING') handlers.sendAuthor(t.id, 'revise');
-        return taskView(db, db.tasks.require(t.id));
+        return sendBack(ctx, t, body.comment);
       });
+    },
+
+    answerTask: (ctx) => {
+      const body = AnswerTaskRequestSchema.parse(ctx.body);
+      return db.withTx(() => {
+        const t = task(ctx.id);
+        requireRequesterOrAdmin(ctx, t);
+        if (t.state !== 'ESCALATED' || !t.escalation_reason?.startsWith('author_blocked:')) {
+          throw new ApiHttpError('ILLEGAL_TRANSITION', `task ${t.id} is not waiting for an answer (state ${t.state})`);
+        }
+        return sendBack(ctx, t, body.answer);
+      });
+    },
+
+    createApiToken: (ctx) => {
+      const body = CreateApiTokenRequestSchema.parse(ctx.body);
+      const { row, token } = mintApiToken(db, ctx.agent!.id, body.label ?? '', now());
+      log.info({ agentId: row.agent_id, tokenId: row.id }, 'api token created');
+      return { ...apiTokenView(row), token };
+    },
+
+    listApiTokens: (ctx) => ({ tokens: db.apiTokens.find({ agent_id: ctx.agent!.id }).map(apiTokenView) }),
+
+    revokeApiToken: (ctx) => {
+      const row = ctx.id === undefined ? undefined : db.apiTokens.get(ctx.id);
+      if (row === undefined || row.agent_id !== ctx.agent!.id) throw new ApiHttpError('NOT_FOUND', `token ${ctx.id} not found`);
+      return apiTokenView(row.revoked_at === null ? db.apiTokens.update(row.id, { revoked_at: now() }) : row);
     },
 
     reassignReviewer: (ctx) => {
@@ -308,6 +340,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
           if (s === undefined || s.agent_id !== body.agentId) throw new ApiHttpError('NOT_FOUND', 'session not found for this agent');
           if (s.state === 'locked') throw new ApiHttpError('SESSION_LOCKED', 'session is locked to other work');
           if (s.state !== 'idle') throw new ApiHttpError('CONFLICT', `session is ${s.state}`);
+          if (s.profile !== 'directive') throw new ApiHttpError('CONFLICT', `session is a ${s.profile ?? 'legacy'} session; directives need a directive session`);
         }
         const id = randomUUID();
         db.directives.insert({ id, requester: ctx.agent!.owner_name, agent_id: body.agentId, text: body.text, state: 'queued', created_at: now() });
@@ -333,10 +366,17 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
       url: def.path,
       handler: async (req, reply) => {
         try {
-          const agent = def.auth === 'none' ? null : authenticate(db, bearer(req));
-          if (def.auth !== 'none' && agent === null) throw new ApiHttpError('UNAUTHORIZED', 'missing or invalid token');
+          const principal = def.auth === 'none' ? null : resolvePrincipal(db, bearer(req));
+          if (def.auth !== 'none' && principal === null) throw new ApiHttpError('UNAUTHORIZED', 'missing or invalid token');
+          if (principal?.scope === 'requester') {
+            if (!('requesterToken' in def && def.requesterToken)) {
+              throw new ApiHttpError('FORBIDDEN', `a requester token cannot call ${name}; use the Quorum app for this`);
+            }
+            db.apiTokens.update(principal.tokenId!, { last_used_at: now() });
+          }
           const params = req.params as { id?: string };
-          const result = await handler({ agent, id: params.id, query: req.query, body: req.body ?? {} });
+          const ctx: Ctx = { agent: principal?.agent ?? null, scope: principal?.scope ?? null, id: params.id, query: req.query, body: req.body ?? {} };
+          const result = await handler(ctx);
           return reply.code(def.status).send(def.response.parse(result));
         } catch (error) {
           const { code, message } = toApiError(error);

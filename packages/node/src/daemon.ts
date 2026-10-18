@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import pino, { type Logger } from 'pino';
@@ -186,7 +186,8 @@ async function sessionWorktreeExists(worktree: string): Promise<boolean> {
   try {
     await access(worktree);
     const result = await git(worktree, ['rev-parse', '--show-toplevel']);
-    return result.code === 0 && resolve(result.stdout.trim()) === resolve(worktree);
+    // Compare real paths: git reports the symlink-resolved root (macOS /var -> /private/var).
+    return result.code === 0 && (await realpath(result.stdout.trim())) === (await realpath(worktree));
   } catch {
     return false;
   }

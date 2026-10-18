@@ -67,7 +67,8 @@ blockquote { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--bo
 .splash { display: grid; place-items: center; height: 100vh; color: var(--muted); }
 .shell { display: grid; grid-template-columns: 210px 1fr; height: 100vh; }
 .sidebar { display: flex; flex-direction: column; gap: 2px; padding: 16px 10px; background: var(--panel); border-right: 1px solid var(--border); }
-.brand { font-weight: 700; font-size: 18px; padding: 4px 10px 16px; letter-spacing: .02em; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 18px; padding: 4px 10px 16px; letter-spacing: .02em; }
+.logo { flex-shrink: 0; display: block; }
 .nav { text-align: left; background: none; border: 1px solid transparent; }
 .nav.active { background: var(--panel-2); border-color: var(--border); }
 .status { display: flex; flex-direction: column; gap: 4px; padding: 10px; }

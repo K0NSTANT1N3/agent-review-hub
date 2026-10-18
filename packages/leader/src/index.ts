@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import pino from 'pino';
 import type { LeaderConfig } from '@quorum/protocol';
 import { registerRoutes } from './api/routes.js';
+import { mintApiToken, revokeAgentApiTokens } from './core/api-tokens.js';
 import { EventHandlers } from './core/handlers.js';
 import { LockManager } from './core/locks.js';
 import { MergeWorker } from './core/merge-worker.js';
@@ -152,6 +153,8 @@ export async function addAgent(dbPath: string, args: { id: string; owner: string
         db.agents.insert({ id: args.id, owner_name: args.owner, token_hash: hash, created_at: Date.now() });
       } else {
         db.agents.update(args.id, { owner_name: args.owner, token_hash: hash, revoked: 0 });
+        // Rotating an agent's token (re-inviting) also cuts off the API tokens minted with the old one.
+        revokeAgentApiTokens(db, args.id, Date.now());
       }
     });
     return { token };
@@ -163,7 +166,23 @@ export async function addAgent(dbPath: string, args: { id: string; owner: string
 export async function revokeAgent(dbPath: string, id: string): Promise<void> {
   const db = openDb(dbPath);
   try {
-    db.agents.update(id, { revoked: 1 });
+    db.withTx(() => {
+      db.agents.update(id, { revoked: 1 });
+      revokeAgentApiTokens(db, id, Date.now());
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Mints a requester-scope API token for an existing agent (for the `quorum` CLI). Returns the plaintext once. */
+export async function addApiToken(dbPath: string, args: { agentId: string; label?: string }): Promise<{ id: string; token: string }> {
+  const db = openDb(dbPath);
+  try {
+    const agent = db.agents.get(args.agentId);
+    if (agent === undefined || agent.revoked !== 0) throw new Error(`agent ${args.agentId} not found or revoked`);
+    const { row, token } = mintApiToken(db, agent.id, args.label ?? '', Date.now());
+    return { id: row.id, token };
   } finally {
     db.close();
   }

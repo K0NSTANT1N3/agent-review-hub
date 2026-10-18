@@ -30,6 +30,42 @@ describe.skipIf(!E2E_READY)('human control, directives, compaction', () => {
     expect(finished.sessionId).not.toBe(lockedSid);
   });
 
+  it('#18b a directive never reuses an idle reviewer session (sessions keep their profile)', async () => {
+    h = await Harness.create();
+    const { alice } = await aliceAndBob(h, {
+      alice: { author: anyTask([authorDone({ 'src/greet.js': GREET.withDefault })]) },
+      bob: { reviewer: anyTask([approve()]), directive: anyTask([directiveAnswer('42')]) },
+    });
+    const task = await alice.api.createTask({ title: 'Review first', description: 'x' });
+    const merged = await waitForState(alice.api, task.id, 'MERGED');
+    const reviewerSid = merged.conversations[0]!.reviewerSessionId;
+
+    const d = await alice.api.createDirective({ agentId: 'bob-claude', text: 'What is the answer?' });
+    const finished = await waitFor('directive done', () => alice.api.getDirective(d.id), (x) => x.state === 'done' || x.state === 'failed');
+    expect(finished).toMatchObject({ state: 'done', resultText: '42' });
+    expect(finished.sessionId).not.toBe(reviewerSid);
+
+    // Pinning a directive to a session of another profile is refused up front.
+    const res = await alice.api.status('createDirective', { body: { agentId: 'bob-claude', text: 'hi', sessionId: reviewerSid } });
+    expect(res.status).toBe(409);
+  });
+
+  it('#18c an agent that reviewed can then author its own task (no cross-profile session reuse)', async () => {
+    h = await Harness.create();
+    const { alice, bob } = await aliceAndBob(h, {
+      alice: { author: anyTask([authorDone({ 'src/greet.js': GREET.withDefault })]) },
+      bob: { reviewer: anyTask([approve()]), author: anyTask([authorDone({ 'src/greet.js': GREET.variantB })]) },
+    });
+    const first = await alice.api.createTask({ title: 'Alice task', description: 'x' });
+    await waitForState(alice.api, first.id, 'MERGED');
+
+    const own = await bob.api.createTask({ title: 'Bob task', description: 'x' });
+    // alice never lends, so Bob's task waits for a reviewer once Bob's agent has submitted it.
+    const waiting = await waitForState(bob.api, own.id, 'AWAITING_REVIEWER');
+    expect(waiting.task.authorAgentId).toBe('bob-claude');
+    expect(waiting.messages.filter((m) => m.type === 'turn.failed')).toEqual([]);
+  });
+
   it('#19 cancel during AUTHORING aborts the turn, releases locks and deletes the branch', async () => {
     h = await Harness.create();
     const { alice } = await aliceAndBob(h, {

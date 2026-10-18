@@ -50,7 +50,7 @@ function task(patch: Partial<Parameters<typeof db.tasks.insert>[0]> = {}): TaskR
 
 /** A task that finished authoring and waits for a reviewer, with alice's locked author session 'a'. */
 function awaitingReview(patch: Partial<Parameters<typeof db.tasks.insert>[0]> = {}): TaskRow {
-  session('a', 'alice-claude');
+  session('a', 'alice-claude', { profile: 'author' });
   const t = task({
     state: 'AWAITING_REVIEWER', author_agent_id: 'alice-claude', author_session_id: 'a', branch: 'quorum/task-1',
     base_commit: 'aaaaaaa', head_commit: 'bbbbbbb', files: JSON.stringify(['src/auth/login.ts']), diff_lines: 10, ...patch,
@@ -88,7 +88,7 @@ describe('budget helpers', () => {
 
 describe('author assignment (§9.2)', () => {
   it('own mode binds an idle requester session: QUEUED → AUTHORING with author.start', () => {
-    session('a', 'alice-claude');
+    session('a', 'alice-claude', { profile: 'author' });
     const t = task();
     scheduler.schedule();
     const after = db.tasks.require(t.id);
@@ -112,7 +112,7 @@ describe('author assignment (§9.2)', () => {
   });
 
   it('own mode waits while the requester is offline, rate-limited or full', () => {
-    session('a', 'alice-claude');
+    session('a', 'alice-claude', { profile: 'author' });
     const t = task();
     db.agents.update('alice-claude', { last_heartbeat_at: now - 60_000 });
     scheduler.schedule();
@@ -137,9 +137,9 @@ describe('author assignment (§9.2)', () => {
 
   it('pool mode picks a lending agent when the requester is busy', () => {
     db.agents.update('alice-claude', { max_sessions: 1 });
-    session('x', 'alice-claude', { state: 'opening' });
+    session('x', 'alice-claude', { profile: 'author', state: 'opening' });
     agent('carol-claude');
-    session('c', 'carol-claude');
+    session('c', 'carol-claude', { profile: 'author' });
     const t = task({ mode: 'pool' });
     scheduler.schedule();
     expect(db.tasks.require(t.id)).toMatchObject({ state: 'AUTHORING', author_agent_id: 'carol-claude' });
@@ -149,7 +149,7 @@ describe('author assignment (§9.2)', () => {
 describe('reviewer assignment (§9.3)', () => {
   it('never picks the author agent; creates a conversation and sends review.start (round 1)', () => {
     agent('bob-claude');
-    session('b', 'bob-claude');
+    session('b', 'bob-claude', { profile: 'reviewer' });
     const t = awaitingReview();
     scheduler.schedule();
     const after = db.tasks.require(t.id);
@@ -165,7 +165,7 @@ describe('reviewer assignment (§9.3)', () => {
     agent('dave-claude', { lend_tokens_per_day: 1 });
     agent('erin-claude', { rate_limited_until: now + 60_000 });
     agent('fred-claude', { paused: 1 });
-    for (const id of ['bob', 'carol', 'dave', 'erin', 'fred']) session(id[0]!, `${id}-claude`);
+    for (const id of ['bob', 'carol', 'dave', 'erin', 'fred']) session(id[0]!, `${id}-claude`, { profile: 'reviewer' });
     const t = awaitingReview();
     idleThreshold.set('carol-claude', 300);
     scheduler.schedule();
@@ -179,8 +179,8 @@ describe('reviewer assignment (§9.3)', () => {
   it('prefers the agent with file affinity, then the least recently assigned', () => {
     agent('bob-claude', { last_assigned_at: 5 });
     agent('carol-claude', { last_assigned_at: 1 });
-    session('b', 'bob-claude', { files: JSON.stringify(['src/auth/login.ts']) });
-    session('c', 'carol-claude');
+    session('b', 'bob-claude', { profile: 'reviewer', files: JSON.stringify(['src/auth/login.ts']) });
+    session('c', 'carol-claude', { profile: 'reviewer' });
     const t = awaitingReview();
     scheduler.schedule();
     expect(db.conversations.find({ task_id: t.id })[0]?.reviewer_agent_id).toBe('bob-claude');
@@ -189,15 +189,15 @@ describe('reviewer assignment (§9.3)', () => {
   it('prefers a reviewer who has not already dropped this task, but falls back to them', () => {
     agent('bob-claude');
     agent('carol-claude');
-    session('b', 'bob-claude', { files: JSON.stringify(['src/auth/login.ts']) });
-    session('c', 'carol-claude');
+    session('b', 'bob-claude', { profile: 'reviewer', files: JSON.stringify(['src/auth/login.ts']) });
+    session('c', 'carol-claude', { profile: 'reviewer' });
     const t = awaitingReview();
-    session('b-old', 'bob-claude', { state: 'lost' });
+    session('b-old', 'bob-claude', { profile: 'reviewer', state: 'lost' });
     db.conversations.insert({ id: 'old', task_id: t.id, author_agent_id: 'alice-claude', author_session_id: 'a', reviewer_agent_id: 'bob-claude', reviewer_session_id: 'b-old', state: 'abandoned', created_at: now });
     scheduler.schedule();
     expect(db.conversations.find({ task_id: t.id, state: 'active' })[0]?.reviewer_agent_id).toBe('carol-claude');
 
-    session('a2', 'alice-claude');
+    session('a2', 'alice-claude', { profile: 'author' });
     const t2 = task({ state: 'AWAITING_REVIEWER', author_agent_id: 'alice-claude', author_session_id: 'a2', branch: 'quorum/task-9', base_commit: 'aaaaaaa', head_commit: 'bbbbbbb' });
     locks.lockSession('a2', 'task', String(t2.id), 'author');
     db.agents.update('carol-claude', { status: 'offline' });
@@ -228,7 +228,7 @@ describe('liveness (§10.3–§10.5)', () => {
 
   it('lease expiry on the reviewer abandons the conversation and returns the task to AWAITING_REVIEWER', () => {
     agent('bob-claude');
-    session('b', 'bob-claude');
+    session('b', 'bob-claude', { profile: 'reviewer' });
     const t = awaitingReview();
     scheduler.schedule();
     expect(db.tasks.require(t.id).state).toBe('IN_REVIEW');
@@ -245,8 +245,8 @@ describe('liveness (§10.3–§10.5)', () => {
   it('pool task with an unavailable author is requeued after the grace period and continued by another agent', () => {
     setup({ timeouts: { authorReconnectGraceSec: 30 } });
     agent('carol-claude');
-    session('c', 'carol-claude');
-    session('a', 'alice-claude', { state: 'lost' });
+    session('c', 'carol-claude', { profile: 'author' });
+    session('a', 'alice-claude', { profile: 'author', state: 'lost' });
     const t = task({
       mode: 'pool', state: 'PAUSED', paused_from_state: 'AUTHORING', pause_reason: 'author_unavailable',
       author_agent_id: 'alice-claude', author_session_id: 'a', branch: 'quorum/task-1', head_commit: 'abcdef1',
@@ -263,7 +263,7 @@ describe('liveness (§10.3–§10.5)', () => {
   });
 
   it('own task whose author session was lost resumes on a new session once the agent is back', () => {
-    session('a', 'alice-claude', { state: 'lost' });
+    session('a', 'alice-claude', { profile: 'author', state: 'lost' });
     const t = task({
       state: 'PAUSED', paused_from_state: 'AUTHORING', pause_reason: 'author_unavailable',
       author_agent_id: 'alice-claude', author_session_id: 'a', branch: 'quorum/task-1', head_commit: 'abcdef1',
@@ -276,7 +276,7 @@ describe('liveness (§10.3–§10.5)', () => {
   });
 
   it('own task paused by a rate limit resumes on the same session when the limit clears', () => {
-    session('a', 'alice-claude');
+    session('a', 'alice-claude', { profile: 'author' });
     const t = task({ state: 'AUTHORING', author_agent_id: 'alice-claude', author_session_id: 'a', branch: 'quorum/task-1' });
     locks.lockSession('a', 'task', String(t.id), 'author');
     db.tasks.update(t.id, { state: 'PAUSED', paused_from_state: 'AUTHORING', pause_reason: 'rate_limited' });
@@ -293,7 +293,7 @@ describe('liveness (§10.3–§10.5)', () => {
 
   it('times out unanswered turns as turn.failed TIMEOUT', () => {
     setup({ timeouts: { turnTimeoutSec: 10 }, limits: { maxTurnRetries: 0 } });
-    session('a', 'alice-claude');
+    session('a', 'alice-claude', { profile: 'author' });
     const t = task();
     scheduler.schedule();
     now += 10_000 + 61_000;
@@ -308,7 +308,7 @@ describe('liveness (§10.3–§10.5)', () => {
 describe('sessions and directives', () => {
   it('counts opening sessions against capacity', () => {
     db.agents.update('alice-claude', { max_sessions: 1 });
-    session('x', 'alice-claude', { state: 'opening' });
+    session('x', 'alice-claude', { profile: 'author', state: 'opening' });
     const t = task();
     scheduler.schedule();
     expect(db.tasks.require(t.id).state).toBe('QUEUED');
@@ -328,14 +328,14 @@ describe('sessions and directives', () => {
   });
 
   it('closes idle sessions after the TTL', () => {
-    session('a', 'alice-claude', { last_used_at: now - 61 * 60_000 });
+    session('a', 'alice-claude', { profile: 'author', last_used_at: now - 61 * 60_000 });
     scheduler.schedule();
     expect(db.sessions.require('a').state).toBe('closing');
     expect(sent('session.close')[0]!.frame.cmd.sid).toBe('a');
   });
 
   it('runs a queued directive on an idle session with the requester name', () => {
-    session('a', 'alice-claude');
+    session('a', 'alice-claude', { profile: 'directive' });
     db.directives.insert({ id: 'd1', requester: 'alice', agent_id: 'alice-claude', text: 'What is X?', state: 'queued', created_at: now });
     scheduler.schedule();
     expect(db.directives.require('d1')).toMatchObject({ state: 'running', session_id: 'a' });

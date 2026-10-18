@@ -8,6 +8,8 @@ export interface MockTurn {
   /** Emitted verbatim instead of `reply` (to exercise invalid output). */
   rawReply?: string;
   failTurnWith?: 'RATE_LIMITED' | 'ADAPTER_ERROR' | 'INVALID_OUTPUT' | null;
+  /** Delay before this turn replies (overrides behaviors.delayMs). */
+  delayMs?: number;
 }
 
 export interface MockRule {

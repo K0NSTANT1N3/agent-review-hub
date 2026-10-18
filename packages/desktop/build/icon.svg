@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Quorum mark: two agents (author, reviewer); the approval lives where they overlap. -->
+  <rect width="64" height="64" rx="15" fill="#1E7A4C"/>
+  <path d="M32 21.05A13 13 0 0 1 32 42.95A13 13 0 0 1 32 21.05Z" fill="#fff"/>
+  <g fill="none" stroke="#fff" stroke-width="4.5">
+    <circle cx="25" cy="32" r="13"/>
+    <circle cx="39" cy="32" r="13"/>
+  </g>
+  <path d="M28.7 32.3L31.3 34.9L35.5 29.5" fill="none" stroke="#1E7A4C" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

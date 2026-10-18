@@ -349,10 +349,11 @@ export class Scheduler {
   // ---------------------------------------------------------------------------
 
   /** Best reusable idle session for these files, or null to open a new one. */
+  /** An idle session of `profile` worth reusing, or null to open a new one. Nodes fix a session's profile at open. */
   private pickSession(agent: AgentRow, files: string[], profile: SessionProfile): string | null {
     const maxContext = this.config.scheduler.sessionReuseMaxContextPct * agent.context_window;
     let best: { sid: string; score: number } | null = null;
-    for (const s of this.db.sessions.find({ agent_id: agent.id, state: 'idle' })) {
+    for (const s of this.db.sessions.find({ agent_id: agent.id, state: 'idle', profile })) {
       if (s.context_tokens >= maxContext) continue;
       // A session keeps the tool profile it was opened with (reviewers are read-only); never reuse it for another role.
       const opened = this.sessionProfile(s.id);
@@ -378,7 +379,7 @@ export class Scheduler {
     this.db.withTx(() => {
       const sid = randomUUID();
       const at = this.now();
-      this.db.sessions.insert({ id: sid, agent_id: agentId, state: 'opening', created_at: at, last_used_at: at });
+      this.db.sessions.insert({ id: sid, agent_id: agentId, state: 'opening', profile, created_at: at, last_used_at: at });
       const frame = this.options.locks.sendToAgent(agentId, { type: 'session.open', sid, profile });
       // Pending assignment lives on the session.open row (issue #9).
       this.db.messages.update(frame.msgId, { task_id: ref.taskId ?? null, directive_id: ref.directiveId ?? null });
