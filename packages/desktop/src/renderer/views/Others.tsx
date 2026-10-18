@@ -194,7 +194,10 @@ export function Team({ state }: { state: AppState }) {
             </div>
           )}
           <p className="hint">
-            Teammates connect to <code>{state.leader?.publicUrl}</code>. Make sure that address and port are reachable from their computers.
+            Teammates connect to <code>{state.leader?.publicUrl}</code>.{' '}
+            {state.encrypted
+              ? 'The connection is encrypted.'
+              : 'This connection is not encrypted: fine on the same network or a VPN; for teammates on the internet use a tunnel URL (Settings → Disconnect, then host again with the tunnel address).'}
           </p>
         </Card>
       ) : (

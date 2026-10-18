@@ -40,16 +40,33 @@ Building it yourself instead: see [§7](#7-building-from-source).
 
 1. Open Quorum → **Host a team**.
 2. Fill in your name, the **team repository** URL and its main branch.
-3. **Leader port** (default 7420) and **the address teammates use to reach you**:
-   * same office / Wi-Fi: your LAN IP (the app suggests it);
-   * remote teams: a VPN such as **Tailscale** (use your Tailscale IP/name), or forward the port on your router;
-   * allow the port through your firewall (`sudo ufw allow 7420/tcp`, macOS/Windows firewall prompt → Allow).
+3. **Leader port** (default 7420) and **the address teammates use to reach you** — see
+   [Connecting teammates](#connecting-teammates-no-vpn-required) below. On the same Wi-Fi/office network just pick your
+   LAN IP (the app suggests it).
 4. Choose your agent settings (see [§5](#5-agent-settings)) → **Start hosting**.
 5. **Team → Invite a teammate**: type their name → **Create join code** → send the code privately (it contains
    their secret token). Inviting the same name again replaces their token.
 
 The host's computer must be on (with Quorum running) for the team to work. Its data lives in the app data folder
 (shown in **Settings**); the Leader keeps all tasks, reviews and history there.
+
+### Connecting teammates (no VPN required)
+
+Teammates' apps open a connection to the host's computer. Pick whichever fits:
+
+| Where are teammates? | What to enter as the address | Encrypted? | Setup |
+|---|---|---|---|
+| **Same Wi-Fi / office network** | the host's LAN IP, e.g. `192.168.1.20` | no (stays inside your network) | none — allow port 7420 if the OS firewall asks |
+| **Anywhere, no VPN, no router changes** | a tunnel URL, e.g. `https://words-words.trycloudflare.com` | **yes** | on the host run `cloudflared tunnel --url http://localhost:7420` ([install cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), free, no account) and paste the printed `https://…trycloudflare.com` URL |
+| **Anywhere, permanent address** | the host's Tailscale IP or name (`100.x.y.z` / `pc.tailnet.ts.net`) | yes (by Tailscale) | install [Tailscale](https://tailscale.com) (free) on every computer |
+| Anywhere, via your router | your public IP | **no** — tokens and code travel in plain text | forward TCP 7420 to the host; not recommended |
+
+Notes:
+* A quick Cloudflare tunnel gets a **new URL every time `cloudflared` restarts**. After a restart, host again with the new
+  URL (Settings → Disconnect → Host a team; your Leader data is kept) and re-invite teammates — or use a named tunnel /
+  Tailscale for a stable address.
+* `ngrok http 7420` works the same way as `cloudflared` (paste its `https://` URL).
+* The **Team** page tells you whether teammates' connections are encrypted.
 
 ## 4. Join a team (everyone else)
 
@@ -120,7 +137,7 @@ Config formats: [`docs/implementation-spec.md`](implementation-spec.md) §6.
 
 | Symptom | Fix |
 |---|---|
-| "Connecting to the Leader…" forever | The host's app is closed, the address/port is wrong, or a firewall blocks it. From your machine: `curl http://HOST:7420/api/health` must print `{"ok":true}`. |
+| "Connecting to the Leader…" forever | The host's app is closed, the address/port is wrong, a firewall blocks it, or a quick tunnel URL changed. From your machine: `curl http://HOST:7420/api/health` (or `curl https://TUNNEL/api/health`) must print `{"ok":true}`. |
 | Agent stopped with a git error | Your computer can't clone/push the team repository — check `git ls-remote <repo>`. |
 | Agent turns fail immediately | Claude Code isn't logged in: run `claude` once in a terminal and sign in. |
 | "Rate-limited until …" | Your Claude usage limit was reached; the Leader routes work elsewhere and resumes your tasks after the reset. |
@@ -136,5 +153,6 @@ folder: `QUORUM_USER_DATA=/tmp/quorum-2 ./Quorum.AppImage`.
   their SHA-256 is kept by the Leader. Revoke a teammate by re-inviting them (rotates the token) or with
   `quorum-leader revoke-agent`.
 * Agent-to-agent text is treated as untrusted data; tool permissions are enforced in code, not just in prompts.
-* The Leader listens on plain HTTP/WebSocket. Expose it only on a trusted network or VPN, or put it behind a TLS
-  reverse proxy (or set `tls.certFile`/`tls.keyFile` in headless mode) and use `wss://`.
+* The Leader itself speaks plain HTTP/WebSocket. That is fine on a LAN or VPN; for teammates on the internet use an
+  HTTPS tunnel (cloudflared/ngrok), a TLS reverse proxy, or `tls.certFile`/`tls.keyFile` in headless mode, so
+  connections use `wss://`. Avoid raw port forwarding.
