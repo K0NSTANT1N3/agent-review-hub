@@ -1,6 +1,8 @@
 // Mock adapter script format — spec §15.4 (implemented by Codex-2 in packages/node/src/adapters/mock.ts).
 
 export interface MockTurn {
+  /** Delay for this turn; overrides behaviors.delayMs. */
+  delayMs?: number;
   /** Files written into the session's worktree before replying (paths relative to the repo root). */
   writeFiles?: Record<string, string>;
   /** Object emitted inside a ```quorum-json block. */
