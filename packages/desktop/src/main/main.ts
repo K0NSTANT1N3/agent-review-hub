@@ -1,5 +1,4 @@
 import { writeFileSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BrowserWindow, Notification, app, ipcMain, powerMonitor, safeStorage, shell } from 'electron';
@@ -7,6 +6,7 @@ import { addAgent, startLeader } from '@quorum/leader';
 import { resolveClaudeExecutable, startDaemon } from '@quorum/node';
 import type { ApiRouteName, UiEvent } from '@quorum/protocol';
 import { IPC, type ApiCallOptions, type AppState, type DesktopSettings, type HostSetup, type JoinSetup } from '../shared/ipc.js';
+import { addressOptions } from './network.js';
 import { Services } from './services.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -95,20 +95,12 @@ handle(IPC.invite, (args: { agentId: string; ownerName: string }) => services.in
 handle(IPC.updateSettings, (settings: DesktopSettings) => services.updateSettings(settings));
 handle(IPC.restart, () => services.restart());
 handle(IPC.reset, () => services.reset());
-handle(IPC.networkAddresses, () => lanAddresses());
+handle(IPC.networkAddresses, () => addressOptions());
 handle(IPC.checkAgent, () => services.checkAgent());
 handle(IPC.openExternal, async (url: string) => {
   if (/^https?:\/\//.test(url)) await shell.openExternal(url);
 });
 handle(IPC.api, (route: ApiRouteName, options?: ApiCallOptions) => services.api(route, options));
-
-function lanAddresses(): string[] {
-  const out: string[] = [];
-  for (const list of Object.values(networkInterfaces())) {
-    for (const a of list ?? []) if (a.family === 'IPv4' && !a.internal) out.push(a.address);
-  }
-  return [...out, '127.0.0.1'];
-}
 
 /** OS notifications for the user's own tasks: merged, escalated, or needing attention. */
 function createNotifier(): (event: UiEvent, state: AppState) => void {

@@ -132,3 +132,5 @@ blockquote { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--bo
 .choice { display: flex; flex-direction: column; gap: 8px; text-align: left; padding: 22px; }
 .choice strong { font-size: 17px; }
 .choice span { color: var(--muted); line-height: 1.4; }
+.radio { display: flex; flex-direction: row; align-items: center; gap: 8px; font-weight: normal; flex-wrap: wrap; }
+.radio input[type='radio'], .radio input[type='checkbox'] { width: auto; }

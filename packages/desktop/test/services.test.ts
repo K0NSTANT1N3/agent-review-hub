@@ -121,7 +121,39 @@ describe.skipIf(lanIp === undefined)('joining over the LAN with the real Node da
   });
 });
 
+describe.skipIf(lanIp === undefined)('restricting the Leader to one address', () => {
+  it('listens only on the chosen address; the host agent still connects through it', async () => {
+    const real: ServiceDeps = { ...deps(), startDaemon: (c, o) => startDaemon(c, o) };
+    const mock = join(dir, 'mock.json');
+    writeFileSync(mock, JSON.stringify({ author: [], reviewer: [] }));
+    const settings = { ...DEFAULT_SETTINGS, adapter: { type: 'mock' as const, scriptPath: mock, contextWindow: 200000 } };
+    const host = new Services(join(dir, 'restricted'), real);
+    services.push(host);
+    const port = await freePort();
+    const state = await host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port, publicHost: lanIp!, restrictToIp: lanIp!, settings });
+    expect(state.leader).toMatchObject({ running: true, restrictedTo: lanIp });
+    expect(state.leaderNetwork).toBe('local');
+    expect(await (await fetch(`http://${lanIp}:${port}/api/health`)).json()).toEqual({ ok: true });
+    await expect(fetch(`http://127.0.0.1:${port}/api/health`)).rejects.toThrow();
+    let online = false;
+    for (let i = 0; i < 50 && !online; i += 1) {
+      const r = await host.api('listAgents');
+      online = r.ok && r.data.agents.find((a) => a.id === 'ana-agent')?.status === 'online';
+      if (!online) await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(online).toBe(true);
+  });
+});
+
 describe('Services', () => {
+  it('explains a restricted address that is not on this computer (VPN not connected)', async () => {
+    const host = make('novpn');
+    await expect(
+      host.setupHost({ ownerName: 'Ana', repoRemoteUrl: bare, mainBranch: 'main', port: await freePort(), publicHost: '10.255.255.254', restrictToIp: '10.255.255.254', settings: DEFAULT_SETTINGS }),
+    ).rejects.toThrow(/not on this computer right now\. Connect your VPN/);
+    expect(host.state().configured).toBe(false);
+  });
+
   it('host setup starts the Leader, registers the host agent and starts the Node pointed at it', async () => {
     const host = make('host');
     expect((await host.boot()).configured).toBe(false);
