@@ -116,10 +116,10 @@ Dependencies: **L1 and L2 can start immediately**, before Claude's protocol PR (
 Every work item must include vitest tests in `packages/leader/test/`. Use an in-memory or temp-file SQLite DB per test.
 
 ### L1 — Database layer · spec §7
-- [ ] `src/db/schema.sql`: exactly the tables, columns, CHECKs, indexes and partial unique index from spec §7.
-- [ ] `src/db/migrations.ts`: applies the schema with a `schema_version` table (version 1). Idempotent on re-run. Enables WAL and foreign keys.
-- [ ] `src/db/repo.ts`: typed functions for every read and write used later (agents, sessions, tasks, conversations, issues, messages, task_events, usage_ledger, directives, merge_queue). No raw SQL outside `src/db/`.
-- [ ] `withTx(fn)` helper using better-sqlite3 transactions. All mutations go through it.
+- [x] `src/db/schema.sql`: exactly the tables, columns, CHECKs, indexes and partial unique index from spec §7.
+- [x] `src/db/migrations.ts`: applies the schema with a `schema_version` table (version 1). Idempotent on re-run. Enables WAL and foreign keys.
+- [x] `src/db/repo.ts`: typed functions for every read and write used later (agents, sessions, tasks, conversations, issues, messages, task_events, usage_ledger, directives, merge_queue). No raw SQL outside `src/db/`.
+- [x] `withTx(fn)` helper using better-sqlite3 transactions. All mutations go through it.
 - **Accept:** tests insert/read every table; CHECK constraints reject a locked session without a lock, a conversation whose reviewer agent equals its author agent, and a second active conversation for the same task.
 
 ### L2 — Task state machine · spec §8
