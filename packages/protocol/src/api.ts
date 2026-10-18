@@ -217,7 +217,7 @@ export type QueueCandidateView = z.infer<typeof QueueCandidateViewSchema>;
 
 /**
  * A task that waits for the scheduler, the merge worker or a human. `position` is the pickup order
- * (authors first, then reviewers, then merges, as one scheduler pass runs them); null for tasks that wait on a human.
+ * (reviewers first, then authors, then merges, as one scheduler pass runs them); null for tasks that wait on a human.
  */
 export const QueueEntryViewSchema = z.object({
   taskId: z.number().int(),

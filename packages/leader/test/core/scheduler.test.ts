@@ -426,19 +426,32 @@ describe('queue explanation', () => {
     expect(db.tasks.require(t.id).state).toBe('QUEUED');
   });
 
-  it('lists authors before reviewers and names why each agent cannot review', () => {
+  it('lists reviewers before authors and names why each agent cannot review', () => {
     agent('bob-claude', { status: 'offline' });
     agent('carol-claude', { lend_mode: 'when_idle' });
     agent('dave-claude', { lend_tokens_per_day: 0 });
     const review = awaitingReview();
     const write = task({ mode: 'pool', priority: 0 });
     const queue = scheduler.queueSnapshot();
-    expect(queue.map((e) => [e.taskId, e.position, e.needs])).toEqual([[write.id, 1, 'author'], [review.id, 2, 'reviewer']]);
-    expect(queue[1]).toMatchObject({
+    expect(queue.map((e) => [e.taskId, e.position, e.needs])).toEqual([[review.id, 1, 'reviewer'], [write.id, 2, 'author']]);
+    expect(queue[0]).toMatchObject({
       waitingOn: 'agent', authorOwnerName: 'alice',
       reason: 'No free reviewer: bob offline, carol in use by its owner (lends when idle), dave out of lending budget',
     });
-    expect(queue[1]!.candidates.find((c) => c.agentId === 'alice-claude')).toMatchObject({ blocker: `wrote #${review.id}` });
+    expect(queue[0]!.candidates.find((c) => c.agentId === 'alice-claude')).toMatchObject({ blocker: `wrote #${review.id}` });
+  });
+
+  it('explains reviewer capacity reservations instead of promising assignment', () => {
+    db.agents.update('alice-claude', { max_sessions: 1 });
+    agent('bob-claude', { max_sessions: 1 });
+    const t = task({ requester_agent_id: 'bob-claude', mode: 'own' });
+    awaitingReview();
+    const queued = scheduler.queueSnapshot().find((entry) => entry.taskId === t.id);
+    expect(queued).toMatchObject({
+      waitingOn: 'agent',
+      candidates: [{ agentId: 'bob-claude', ownerName: 'bob', blocker: 'reserving capacity for reviews' }],
+    });
+    expect(commands).toHaveLength(0);
   });
 
   it('reports a task an eligible agent will pick up on the next pass', () => {

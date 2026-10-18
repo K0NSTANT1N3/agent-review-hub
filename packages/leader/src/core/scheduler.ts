@@ -663,8 +663,8 @@ export class Scheduler {
   queueSnapshot(): QueueEntryView[] {
     const entries: QueueEntryView[] = [];
     let position = 0;
-    for (const task of this.byPriority(['QUEUED'])) entries.push(this.explainAssignment(task, 'author', ++position));
     for (const task of this.byPriority(['AWAITING_REVIEWER'])) entries.push(this.explainAssignment(task, 'reviewer', ++position));
+    for (const task of this.byPriority(['QUEUED'])) entries.push(this.explainAssignment(task, 'author', ++position));
     const merging = this.db.tasks.all().find((t) => t.state === 'MERGING');
     const merges = this.db.tasks.all()
       .filter((t) => t.state === 'MERGE_QUEUED')
@@ -760,6 +760,7 @@ export class Scheduler {
     if (!this.hasSlot(a)) return `busy (${this.usedSlots(a.id)}/${a.max_sessions} sessions)`;
     if (this.backedOff(a.id)) return 'failed to open a session; retrying soon';
     if (a.paused !== 0) return 'paused';
+    if (role === 'author' && !this.canAdmitAuthor(task, a.id)) return 'reserving capacity for reviews';
     if (own) return null;
     if (a.lend_mode === 'never') return 'does not lend';
     if (!this.mayLend(a)) return 'in use by its owner (lends when idle)';
