@@ -598,6 +598,10 @@ effective = 'changes' if exists issue where task_id=T, severity='blocking', stat
 
 Suggestions never block. They are passed to the author in the next `author.revise`, or shown in the UI if the task gets approved.
 
+**Who resolves each issue source:**
+- `system` issues (test failures, T4/T17/T21) are resolved by the **Leader**. When a later `author.submitted`, `author.synced` or merge-worker test run passes, the Leader sets every open `system` issue of that task to `resolved`. They are never sent to reviewers. Authors still see them in `author.revise.openIssues` and must answer them in `responses`.
+- `reviewer` and `human` issues are resolved only by a reviewer (`previousIssues`) or by a human (`approve` → `closed_by_human`). `review.start.priorIssues` and `review.rereview.openIssues` contain **every open `reviewer` or `human` issue of the task**, whichever conversation raised it. This includes the human comment from T27 send-back, and issues from an abandoned conversation.
+
 ---
 
 ## 9. Scheduler
