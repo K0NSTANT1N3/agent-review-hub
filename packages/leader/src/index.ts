@@ -61,23 +61,20 @@ export async function startLeader(config: LeaderConfig, options: StartLeaderOpti
   }
 
   // Late-bound references: the components call each other through callbacks.
-  let hub: NodeHub | undefined;
-  let scheduler: Scheduler | undefined;
-  let mergeWorker: MergeWorker | undefined;
-  let ui: UiHub | undefined;
+  const late: { hub?: NodeHub; scheduler?: Scheduler; mergeWorker?: MergeWorker; ui?: UiHub } = {};
 
   const locks = new LockManager(db, {
     leaseSec: config.timeouts.leaseSec,
-    deliver: (agentId, frame) => hub?.deliver(agentId, frame),
+    deliver: (agentId, frame) => late.hub?.deliver(agentId, frame),
     onDeliveryError: (error) => log.warn({ err: error }, 'immediate delivery failed; outbox will retry'),
   });
   const handlers = new EventHandlers(db, config, locks, {
-    onSessionOpened: (session, event, request) => scheduler?.sessionOpened(session, event, request),
+    onSessionOpened: (session, event, request) => late.scheduler?.sessionOpened(session, event, request),
     onChange: () => {
-      scheduler?.trigger();
-      mergeWorker?.kick();
+      late.scheduler?.trigger();
+      late.mergeWorker?.kick();
     },
-    onAttention: (taskId, reason, message) => ui?.attention(taskId, reason, message),
+    onAttention: (taskId, reason, message) => late.ui?.attention(taskId, reason, message),
     onFinished: (task) => {
       if (config.repo.deleteBranchOnFinish && task.branch !== null) {
         const branch = task.branch;
@@ -85,24 +82,28 @@ export async function startLeader(config: LeaderConfig, options: StartLeaderOpti
       }
     },
   });
-  scheduler = new Scheduler({
+  const scheduler = new Scheduler({
     db,
     config,
     locks,
     handlers,
     logger: log,
-    idleThresholdSec: (agentId) => hub?.ownerSettings(agentId)?.idleThresholdSec,
-    onAttention: (taskId, reason, message) => ui?.attention(taskId, reason, message),
+    idleThresholdSec: (agentId) => late.hub?.ownerSettings(agentId)?.idleThresholdSec,
+    onAttention: (taskId, reason, message) => late.ui?.attention(taskId, reason, message),
   });
-  mergeWorker = new MergeWorker({ db, config, git, handlers, logger: log });
-  hub = new NodeHub(db, config, {
+  late.scheduler = scheduler;
+  const mergeWorker = new MergeWorker({ db, config, git, handlers, logger: log });
+  late.mergeWorker = mergeWorker;
+  const hub = new NodeHub(db, config, {
     locks,
     logger: log,
     onEvent: (agentId, event) => handlers.handle(agentId, event),
     onSessionLost: (session, reason) => handlers.sessionLost(session, reason),
-    onStatusChanged: () => scheduler?.trigger(),
+    onStatusChanged: () => scheduler.trigger(),
   });
-  ui = new UiHub(db, config);
+  late.hub = hub;
+  const ui = new UiHub(db, config);
+  late.ui = ui;
   hub.registerWebSocket('/ws/ui', ui.accept);
   registerRoutes(hub.server, { db, config, locks, handlers, scheduler, mergeWorker, git, logger: log });
 
@@ -125,10 +126,10 @@ export async function startLeader(config: LeaderConfig, options: StartLeaderOpti
     async close() {
       if (closed) return;
       closed = true;
-      scheduler?.stop();
-      ui?.stop();
-      await mergeWorker?.stop();
-      await hub?.close();
+      scheduler.stop();
+      ui.stop();
+      await mergeWorker.stop();
+      await hub.close();
       db.close();
     },
   };
