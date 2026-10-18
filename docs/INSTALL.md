@@ -31,8 +31,27 @@ Download the installer for your system from the project's **Releases** page:
 | System | File | Notes |
 |---|---|---|
 | Linux | `Quorum-x.y.z-linux-x86_64.AppImage` | `chmod +x` it and run, or install the `.deb` with `sudo apt install ./Quorum-…amd64.deb` |
-| macOS | `Quorum-x.y.z-mac-arm64.dmg` | Builds are unsigned: the first time, right-click the app → **Open** → **Open**. |
+| macOS | `Quorum-x.y.z-mac-arm64.dmg` | Builds are unsigned. Do the [macOS first-run steps](#macos-first-run) below. |
 | Windows | `Quorum-x.y.z-win-x64.exe` | Builds are unsigned: on the SmartScreen prompt choose **More info → Run anyway**. |
+
+### macOS first run
+
+The app is unsigned, so macOS blocks it the first time. Do these steps one time only.
+
+macOS 14 and earlier:
+
+1. In Finder, right-click the Quorum app.
+2. Click **Open**.
+3. In the dialog, click **Open** again.
+
+macOS 15 and later (right-click > **Open** does not work on these versions):
+
+1. Open the Quorum app. macOS blocks the app and shows a warning.
+2. Close the warning.
+3. Open **System Settings > Privacy & Security**.
+4. Go to the **Security** section.
+5. Click **Open Anyway** next to the message about Quorum.
+6. Confirm the request. macOS can ask for your login password.
 
 Building it yourself instead: see [§7](#7-building-from-source).
 
@@ -101,6 +120,14 @@ If a teammate can't connect, their dashboard explains which network the team use
 Reviewers are always **read-only** (they can read the repository but not change it). Authors may edit files and run
 only the allow-listed commands (`npm test`, `npm run …`, `ls`, `cat`, `git status/diff/log`, `npx tsc`); they can never
 commit, push or touch files outside the task's worktree — Quorum does the git work.
+
+The allow-list is not a sandbox. Some allow-listed commands run code from the worktree. For example, `npm run`,
+`npm test`, `pytest`, `go test` and `cargo test` run scripts and test files that the author agent can edit. Thus an
+author can run any code through these commands, with the permissions of your user account.
+
+The allow-list stops casual misuse, but it is not an isolation boundary. Run Quorum on a computer or user account
+where this risk is acceptable. For stronger isolation, run Quorum in a container or a virtual machine. Quorum applies
+the allow-list to Claude Code. An opencode server uses its own permission settings.
 
 ## 6. Everyday use
 
@@ -209,6 +236,8 @@ folder: `QUORUM_USER_DATA=/tmp/quorum-2 ./Quorum.AppImage`.
   their SHA-256 is kept by the Leader. Revoke a teammate by re-inviting them (rotates the token) or with
   `quorum-leader revoke-agent`.
 * Agent-to-agent text is treated as untrusted data; tool permissions are enforced in code, not just in prompts.
+* The author Bash allow-list is not a sandbox: test and script commands run code that the author agent can edit.
+  See [§5](#5-agent-settings).
 * The Leader itself speaks plain HTTP/WebSocket. That is fine on a LAN or VPN; for teammates on the internet use an
   HTTPS tunnel (cloudflared/ngrok), a TLS reverse proxy, or `tls.certFile`/`tls.keyFile` in headless mode, so
   connections use `wss://`. Avoid raw port forwarding.
