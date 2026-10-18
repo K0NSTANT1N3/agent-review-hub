@@ -35,7 +35,7 @@ export function StateBadge({ state }: { state: TaskState }) {
   return <span className={`badge badge-${STATE_TONE[state]}`}>{STATE_LABEL[state]}</span>;
 }
 
-export function Dot({ tone, title }: { tone: 'ok' | 'warn' | 'danger' | 'muted'; title?: string }) {
+export function Dot({ tone, title }: { tone: 'ok' | 'warn' | 'danger' | 'info' | 'muted'; title?: string }) {
   return <span className={`dot dot-${tone}`} title={title} />;
 }
 
