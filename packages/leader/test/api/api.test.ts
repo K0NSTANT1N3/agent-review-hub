@@ -97,6 +97,14 @@ describe('REST API (§17)', () => {
     expect((await api('POST', `/api/tasks/${id}/cancel`, 'alice', {})).status).toBe(409);
   });
 
+  it('rejects cancel while the merge worker is merging the task', async () => {
+    const id = (await api('POST', '/api/tasks', 'alice', { title: 't', description: 'd' })).body!.id as number;
+    side.tasks.update(id, { state: 'MERGING', author_agent_id: 'alice-claude', branch: `quorum/task-${id}` });
+    const res = await api('POST', `/api/tasks/${id}/cancel`, 'alice', {});
+    expect(res).toEqual({ status: 409, body: { error: 'CONFLICT', message: 'the task is being merged; wait for it to finish' } });
+    expect(side.tasks.require(id).state).toBe('MERGING');
+  });
+
   it('send-back on an escalated task adds a human issue and returns it to the author', async () => {
     const id = (await api('POST', '/api/tasks', 'alice', { title: 't', description: 'd' })).body!.id as number;
     side.tasks.update(id, { state: 'ESCALATED', escalation_reason: 'author_blocked: which default?', author_agent_id: 'alice-claude', branch: `quorum/task-${id}` });
