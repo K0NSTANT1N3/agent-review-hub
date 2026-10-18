@@ -30,6 +30,11 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
   own agent connects through it. Friendly error if the VPN isn't connected.
 * Teammates who can't connect get a hint for the team's network type. Join codes remain the only way in (no discovery).
 
+## Pending v0.1.4
+
+* Plain connections work over Wi-Fi/LAN and private VPN addresses, including Tailscale's `100.64.0.0/10` and
+  `*.ts.net` names. Public plaintext addresses are allowed with an in-app warning; HTTPS tunnel URLs remain encrypted.
+
 ## In v0.1.2
 
 * **Fix:** teammates joining over a LAN (plain `ws://` to a non-localhost address) were refused by the Node's ws://

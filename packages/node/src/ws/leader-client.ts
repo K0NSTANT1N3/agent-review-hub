@@ -49,7 +49,7 @@ export class LeaderClient {
   private welcomeFrame: WelcomeFrame | null = null;
 
   constructor(private readonly options: LeaderClientOptions) {
-    this.url = normalizeLeaderUrl(options.config.leaderUrl, options.insecure ?? false);
+    this.url = normalizeLeaderUrl(options.config.leaderUrl);
   }
 
   get welcome(): WelcomeFrame | null {
@@ -256,7 +256,7 @@ export class LeaderClient {
   }
 }
 
-function normalizeLeaderUrl(value: string, insecure: boolean): string {
+function normalizeLeaderUrl(value: string): string {
   const url = new URL(value);
   if (url.protocol === 'http:') url.protocol = 'ws:';
   if (url.protocol === 'https:') url.protocol = 'wss:';
@@ -265,13 +265,5 @@ function normalizeLeaderUrl(value: string, insecure: boolean): string {
   }
   if (url.pathname === '/' || url.pathname === '') url.pathname = '/ws/node';
   if (url.pathname !== '/ws/node') throw new Error(`Leader URL path must be /ws/node: ${value}`);
-  if (url.protocol === 'ws:' && !isLocalhost(url.hostname) && !insecure) {
-    throw new Error('Refusing an unencrypted ws:// connection to a non-localhost Leader; pass --insecure to allow it.');
-  }
   return url.toString();
-}
-
-export function isLocalhost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127(?:\.\d{1,3}){3}$/.test(host);
 }

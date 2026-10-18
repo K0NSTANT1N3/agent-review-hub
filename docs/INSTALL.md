@@ -78,9 +78,14 @@ Quorum lists every address this computer has, labelled by network, and you pick 
 | Option in the list | Who can reach the host | Encrypted | What you need |
 |---|---|---|---|
 | **Local network** (e.g. `192.168.1.20`) | people on the same Wi-Fi / office | no (stays in your network) | nothing |
-| **Tailscale** (e.g. `ana-laptop.tail1234.ts.net`) — recommended for remote teams | everyone on your tailnet, from anywhere | yes | Tailscale on every computer (free plan) |
+| **Tailscale** (e.g. `ana-laptop.tail1234.ts.net`) — recommended for remote teams | everyone on your tailnet, from anywhere | yes (by the VPN) | Tailscale on every computer (free plan) |
 | **ZeroTier / WireGuard / other VPN** | everyone on that VPN | yes (by the VPN) | the VPN on every computer |
 | **Custom address or tunnel URL** | depends | a `https://` tunnel URL → yes | e.g. `cloudflared tunnel --url http://localhost:7420` |
+
+Wi-Fi/LAN and VPN connections need no extra Quorum setup. Quorum allows plain `ws://` over private network
+addresses and VPN addresses (including Tailscale's `100.64.0.0/10` and `*.ts.net` names). A plain public internet
+address is also allowed, but is not encrypted; the app warns you to prefer a VPN or a TLS tunnel for public access.
+Tunnel URLs beginning with `https://` continue to use encrypted `wss://` connections.
 
 Quorum works with **any** VPN — it doesn't install or control one; it only shows the addresses your computer already
 has. If no VPN shows up, connect it and reopen Host a team.

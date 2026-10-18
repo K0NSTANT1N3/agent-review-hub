@@ -3,8 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { LendModeSchema, parseNodeConfig, type LendMode, type NodeConfig, type NodeConfigInput } from '@quorum/protocol';
-import { decodeJoinCode, type JoinCode } from '@quorum/protocol/join-code';
-import { isLocalhost } from './ws/leader-client.js';
+import { decodeJoinCode, isPrivateNetworkHost, type JoinCode } from '@quorum/protocol/join-code';
 
 export const JOIN_USAGE = `quorum-node join <join code> [options]
 
@@ -144,7 +143,7 @@ function adapterConfig(options: JoinOptions): NodeConfigInput['adapter'] {
   }
 }
 
-/** The command that starts this Node. ws:// to a remote host needs --insecure; idle detection needs a human. */
+/** The command that starts this Node; idle detection needs a human. */
 export function startCommandFor(configPath: string, config: NodeConfig): string {
   const flags = [`--config ${shellQuote(configPath)}`];
   if (config.lendMode === 'when_idle') flags.push('--assume-idle');
@@ -154,7 +153,7 @@ export function startCommandFor(configPath: string, config: NodeConfig): string 
 
 export function needsInsecure(leaderUrl: string): boolean {
   const url = new URL(leaderUrl);
-  return url.protocol === 'ws:' && !isLocalhost(url.hostname);
+  return url.protocol === 'ws:' && !isPrivateNetworkHost(url.hostname);
 }
 
 /** Writes the config readable only by the current user: it holds the agent's secret token. */
@@ -187,7 +186,7 @@ export function runJoin(args: string[], out: (line: string) => void, cwd = proce
   out(`Wrote ${options.configPath} for ${code.ownerName} (agent ${code.agentId}, Leader ${code.leaderUrl}).`);
   out('The file holds the agent token and is readable only by you.');
   if (needsInsecure(code.leaderUrl)) {
-    out('Warning: this Leader uses unencrypted ws://. Use it only on a LAN or VPN, or ask the host for a TLS or tunnel address.');
+    out('Warning: this public connection uses unencrypted ws://; prefer a VPN or TLS tunnel.');
   }
   out('Start the Node with:');
   out(`  ${startCommand}`);

@@ -119,19 +119,16 @@ describe('LeaderClient', () => {
     expect(client.isConnected).toBe(false);
   });
 
-  it('requires TLS for remote Leaders unless insecure mode is enabled', async () => {
+  it('allows plaintext connections to private and public Leaders', async () => {
     const fixture = await createFixture();
     const remoteConfig = parseNodeConfig({
       ...fixture.config,
       leaderUrl: 'ws://leader.example.com/ws/node',
     });
-    expect(() => new LeaderClient({ config: remoteConfig, journal: fixture.journal, onCommand: () => {} }))
-      .toThrow(/Refusing an unencrypted/);
-
-    const insecure = new LeaderClient({
-      config: remoteConfig, journal: fixture.journal, onCommand: () => {}, insecure: true,
-    });
-    expect(insecure.url).toBe('ws://leader.example.com/ws/node');
+    const publicClient = new LeaderClient({ config: remoteConfig, journal: fixture.journal, onCommand: () => {} });
+    expect(publicClient.url).toBe('ws://leader.example.com/ws/node');
+    const lanConfig = parseNodeConfig({ ...fixture.config, leaderUrl: 'ws://192.168.1.20:7420/ws/node' });
+    expect(new LeaderClient({ config: lanConfig, journal: fixture.journal, onCommand: () => {} }).url).toBe('ws://192.168.1.20:7420/ws/node');
     const localhostConfig = parseNodeConfig({ ...fixture.config, leaderUrl: 'ws://localhost:7420' });
     const local = new LeaderClient({ config: localhostConfig, journal: fixture.journal, onCommand: () => {} });
     expect(local.url).toBe('ws://localhost:7420/ws/node');
