@@ -1,7 +1,7 @@
 import { readFile, writeFile, access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { git } from '../../src/git/git.js';
+import { assertGitSuccess, git } from '../../src/git/git.js';
 import {
   commitAndPushAfterAuthorTurn,
   createWorktree,
@@ -46,6 +46,21 @@ describe('git helper and worktree operations', () => {
 
     const failed = await git(cwd, ['not-a-git-command']);
     expect(failed.code).not.toBe(0);
+  });
+
+  it('runs concurrent fetches from worktrees of one clone without ref lock races', async () => {
+    const { config } = fixture;
+    await ensureBaseClone(config);
+    const worktrees = await Promise.all(['s1', 's2', 's3'].map((sid) => createWorktree(config, sid)));
+    for (let round = 0; round < 5; round += 1) {
+      await writeFile(join(fixture.seedPath, 'README.md'), `round ${round}\n`);
+      assertGitSuccess(await git(fixture.seedPath, ['commit', '-am', `round ${round}`]), 'commit round');
+      const refs = ['main', ...Array.from({ length: 10 }, (_, i) => `HEAD:refs/heads/quorum/task-${i}`)];
+      assertGitSuccess(await git(fixture.seedPath, ['push', '--force', 'origin', ...refs]), 'push round');
+      const fetched = await Promise.all(worktrees.map((cwd) => git(cwd, ['fetch', 'origin', '--prune'])));
+      for (const result of fetched) expect(result.stderr).not.toContain('cannot lock ref');
+      for (const result of fetched) expect(result.code).toBe(0);
+    }
   });
 
   it('creates the fixed session worktree and prepares new and existing task branches', async () => {
