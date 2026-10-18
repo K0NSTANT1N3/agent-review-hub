@@ -102,6 +102,32 @@ describe('node journal', () => {
     finalRestart.close();
   });
 
+  it('reports a queued turn command that never started exactly once', async () => {
+    let now = 700;
+    const journal = await openJournal(dataDir, () => now++);
+    journal.recordCommand('cmd-queued', {
+      type: 'directive.run',
+      sid: 'sid-4',
+      directiveId: 'directive-4',
+      requester: 'Alice',
+      text: 'Queued work.',
+      estimated: 1,
+    });
+    journal.recordCommand('cmd-open', { type: 'session.open', sid: 'sid-5', profile: 'author' });
+    journal.close();
+
+    const restarted = await openJournal(dataDir, () => now++);
+    expect(restarted.recoverOnStartup()).toBe(1);
+    expect(restarted.recoverOnStartup()).toBe(0);
+    expect(restarted.getCommand('cmd-queued')?.state).toBe('done');
+    expect(restarted.getCommand('cmd-open')?.state).toBe('received');
+    expect(restarted.unackedEvents()).toHaveLength(1);
+    expect(restarted.unackedEvents()[0]).toMatchObject({
+      evt: { inReplyTo: 'cmd-queued', sid: 'sid-4', code: 'INTERRUPTED' },
+    });
+    restarted.close();
+  });
+
   it('supports session create, read, list, update, and delete', async () => {
     const journal = await openJournal(dataDir, () => 1234);
     const created = journal.createSession({

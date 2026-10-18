@@ -217,7 +217,7 @@ export class NodeJournal {
         this.insertEvent(resultEvtMsgId, evt, this.now());
         this.db.prepare(`
           UPDATE inbox SET state = 'done', result_evt_msg_id = ?, finished_at = ?
-          WHERE msg_id = ? AND state = 'running'
+          WHERE msg_id = ? AND state IN ('running', 'received')
         `).run(resultEvtMsgId, this.now(), row.msg_id);
       }
       return rows.length;
