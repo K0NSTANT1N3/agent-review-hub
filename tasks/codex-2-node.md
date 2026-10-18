@@ -130,8 +130,8 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 - **Accept:** tests cover each function, including a real merge conflict and conflict-marker detection, and push to the temp bare remote.
 
 ### N2 — Project config + test runner · spec §6.3, §14.2 (last paragraph)
-- [ ] `src/runner/project-config.ts`: read `quorum.json` via `git show origin/<main>:quorum.json` (never from the worktree). Missing → defaults (no test → passed with `"no testCommand configured"`).
-- [ ] `src/runner/tests.ts`: `runSetupIfNeeded(worktree)` (lockfile hash stored in `{worktree}/.git`-adjacent node data, not in the repo) and `runTests(worktree)` → `TestResult` (`sh -c` / `cmd /c`, `testTimeoutSec`, kill the process tree on timeout, `outputTail` = last 200 lines capped at 20 KB).
+- [x] `src/runner/project-config.ts`: read `quorum.json` via `git show origin/<main>:quorum.json` (never from the worktree). Missing → defaults (no test → passed with `"no testCommand configured"`).
+- [x] `src/runner/tests.ts`: `runSetupIfNeeded(worktree)` (lockfile hash stored in `{worktree}/.git`-adjacent node data, not in the repo) and `runTests(worktree)` → `TestResult` (`sh -c` / `cmd /c`, `testTimeoutSec`, kill the process tree on timeout, `outputTail` = last 200 lines capped at 20 KB).
 - **Accept:** tests for passing, failing, timing out, missing config, and a config changed only on a branch being ignored.
 
 ### N3 — Node journal · spec §11.3
