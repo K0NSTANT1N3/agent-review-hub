@@ -357,6 +357,7 @@ CREATE TABLE sessions (
   id                TEXT PRIMARY KEY,               -- sid
   agent_id          TEXT NOT NULL REFERENCES agents(id),
   state             TEXT NOT NULL,                  -- 'opening'|'idle'|'locked'|'closing'|'closed'|'lost'
+  profile           TEXT,                           -- 'author'|'reviewer'|'directive'; a session only ever serves its own profile
   lock_kind         TEXT,                           -- null | 'task' | 'directive'
   lock_ref          TEXT,                           -- task id or directive id (as text)
   lock_role         TEXT,                           -- null | 'author' | 'reviewer' | 'directive'
@@ -693,7 +694,7 @@ Tie-breakers, in order: older `last_assigned_at` (null first), then `agentId` as
 ### 9.4 Session selection on a chosen agent
 
 ```
-candidates = sessions where agent_id=a and state='idle'
+candidates = sessions where agent_id=a and state='idle' and profile=<role being assigned>
              and context_tokens < sessionReuseMaxContextPct * a.context_window
 best = argmax over candidates of overlap(task.files ∪ predictedFiles, s.files)
 if best exists and its overlap >= sessionReuseMinAffinity:
@@ -703,7 +704,7 @@ else:
     when 'session.opened' arrives → lock it and send the work command
 ```
 
-`predictedFiles` is empty in v1. A session **never** gets work while `state='locked'`, whatever it is locked to. A `session.open` that fails, or isn't answered within 60s, marks the row `lost`. The task stays in its pre-assignment state, and the scheduler retries next tick, excluding that agent for 5 minutes (in-memory backoff map).
+`predictedFiles` is empty in v1. A Node fixes a session's profile when it opens it, so a session only ever receives work of its own profile: an idle reviewer session is never handed an author command or a directive. A session **never** gets work while `state='locked'`, whatever it is locked to. A `session.open` that fails, or isn't answered within 60s, marks the row `lost`. The task stays in its pre-assignment state, and the scheduler retries next tick, excluding that agent for 5 minutes (in-memory backoff map).
 
 Lock fields are written in the same transaction as the task transition: `state='locked', lock_kind, lock_ref, lock_role, lease_expires_at = now + leaseSec`.
 

@@ -306,6 +306,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
           if (s === undefined || s.agent_id !== body.agentId) throw new ApiHttpError('NOT_FOUND', 'session not found for this agent');
           if (s.state === 'locked') throw new ApiHttpError('SESSION_LOCKED', 'session is locked to other work');
           if (s.state !== 'idle') throw new ApiHttpError('CONFLICT', `session is ${s.state}`);
+          if (s.profile !== 'directive') throw new ApiHttpError('CONFLICT', `session is a ${s.profile ?? 'legacy'} session; directives need a directive session`);
         }
         const id = randomUUID();
         db.directives.insert({ id, requester: ctx.agent!.owner_name, agent_id: body.agentId, text: body.text, state: 'queued', created_at: now() });

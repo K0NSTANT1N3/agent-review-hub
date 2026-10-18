@@ -231,7 +231,7 @@ export class Scheduler {
       chosen = this.best(candidates);
     }
     if (chosen === undefined) return;
-    const sid = this.pickSession(chosen, taskFiles(task));
+    const sid = this.pickSession(chosen, taskFiles(task), 'author');
     if (sid !== null) this.bindAuthor(task, sid);
     else this.openSession(chosen.id, 'author', { taskId: task.id });
   }
@@ -279,7 +279,7 @@ export class Scheduler {
       }
       return;
     }
-    const sid = this.pickSession(chosen, taskFiles(task));
+    const sid = this.pickSession(chosen, taskFiles(task), 'reviewer');
     if (sid !== null) this.bindReviewer(task, sid);
     else this.openSession(chosen.id, 'reviewer', { taskId: task.id });
   }
@@ -318,7 +318,7 @@ export class Scheduler {
     const agent = this.db.agents.get(d.agent_id);
     if (agent === undefined || !this.isOnline(agent) || this.isRateLimited(agent) || !this.hasSlot(agent) || this.backedOff(agent.id)) return;
     if (agent.owner_name !== d.requester && !this.mayLend(agent)) return;
-    const sid = this.pickSession(agent, []);
+    const sid = this.pickSession(agent, [], 'directive');
     if (sid !== null) this.bindDirective(d.id, sid);
     else this.openSession(agent.id, 'directive', { directiveId: d.id });
   }
@@ -346,10 +346,11 @@ export class Scheduler {
   // ---------------------------------------------------------------------------
 
   /** Best reusable idle session for these files, or null to open a new one. */
-  private pickSession(agent: AgentRow, files: string[]): string | null {
+  /** An idle session of `profile` worth reusing, or null to open a new one. Nodes fix a session's profile at open. */
+  private pickSession(agent: AgentRow, files: string[], profile: SessionProfile): string | null {
     const maxContext = this.config.scheduler.sessionReuseMaxContextPct * agent.context_window;
     let best: { sid: string; score: number } | null = null;
-    for (const s of this.db.sessions.find({ agent_id: agent.id, state: 'idle' })) {
+    for (const s of this.db.sessions.find({ agent_id: agent.id, state: 'idle', profile })) {
       if (s.context_tokens >= maxContext) continue;
       // A never-used session is as good as a new one, so it always qualifies (at the threshold).
       const fresh = s.files === '[]' && s.task_history === '[]';
@@ -365,7 +366,7 @@ export class Scheduler {
     this.db.withTx(() => {
       const sid = randomUUID();
       const at = this.now();
-      this.db.sessions.insert({ id: sid, agent_id: agentId, state: 'opening', created_at: at, last_used_at: at });
+      this.db.sessions.insert({ id: sid, agent_id: agentId, state: 'opening', profile, created_at: at, last_used_at: at });
       const frame = this.options.locks.sendToAgent(agentId, { type: 'session.open', sid, profile });
       // Pending assignment lives on the session.open row (issue #9).
       this.db.messages.update(frame.msgId, { task_id: ref.taskId ?? null, directive_id: ref.directiveId ?? null });
@@ -472,7 +473,7 @@ export class Scheduler {
       const alive = session?.state === 'locked' && session.lock_ref === String(task.id) && session.lock_role === 'author';
       if (alive) this.resumeAuthor(task.id);
       else if (this.hasSlot(author) && !this.backedOff(author.id)) {
-        const sid = this.pickSession(author, taskFiles(task));
+        const sid = this.pickSession(author, taskFiles(task), 'author');
         if (sid !== null) this.replaceAuthorSession(task, sid);
         else this.openSession(author.id, 'author', { taskId: task.id });
       }

@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NotFoundError, openDatabase, withTx, type LeaderDb } from '../../src/db/repo.js';
 
@@ -25,7 +26,7 @@ describe('schema and migrations', () => {
   });
 
   it('enables foreign keys and refuses dangling references', () => {
-    expect(db.schemaVersion).toBe(1);
+    expect(db.schemaVersion).toBe(2);
     expect(db.foreignKeysEnabled).toBe(true);
     expect(() => db.sessions.insert({ id: 's', agent_id: 'missing', state: 'idle', created_at: 1, last_used_at: 1 })).toThrow(/FOREIGN KEY/);
   });
@@ -40,11 +41,33 @@ describe('schema and migrations', () => {
       first.close();
       const second = openDatabase(filename);
       try {
-        expect(second.schemaVersion).toBe(1);
+        expect(second.schemaVersion).toBe(2);
         expect(second.foreignKeysEnabled).toBe(true);
         expect(second.agents.require('persisted').owner_name).toBe('Owner');
         expect(second.integrity).toBe('ok');
       } finally { second.close(); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});
+
+describe('schema migration v1 to v2', () => {
+  it('adds sessions.profile and backfills it from the session.open command', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'quorum-db-'));
+    const filename = join(directory, 'leader.db');
+    try {
+      const v1 = new Database(filename);
+      v1.exec(readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8').replace(/^\s*profile .*\n/m, '').replace(/^PRAGMA .*;\s*$/gm, ''));
+      v1.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (1);');
+      v1.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at) VALUES ('bob', 'Bob', 'h', 1)").run();
+      v1.prepare("INSERT INTO sessions (id, agent_id, state, created_at, last_used_at) VALUES ('s1', 'bob', 'idle', 1, 1)").run();
+      v1.prepare(`INSERT INTO messages (id, direction, agent_id, session_id, type, payload, created_at)
+        VALUES ('m1', 'to_node', 'bob', 's1', 'session.open', ?, 1)`).run(JSON.stringify({ msgId: 'm1', cmd: { type: 'session.open', sid: 's1', profile: 'reviewer' } }));
+      v1.close();
+      const migrated = openDatabase(filename);
+      try {
+        expect(migrated.schemaVersion).toBe(2);
+        expect(migrated.sessions.require('s1').profile).toBe('reviewer');
+      } finally { migrated.close(); }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

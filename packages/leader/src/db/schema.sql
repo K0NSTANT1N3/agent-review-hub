@@ -25,6 +25,7 @@ CREATE TABLE sessions (
   id                TEXT PRIMARY KEY,               -- sid
   agent_id          TEXT NOT NULL REFERENCES agents(id),
   state             TEXT NOT NULL,                  -- 'opening'|'idle'|'locked'|'closing'|'closed'|'lost'
+  profile           TEXT,                           -- 'author'|'reviewer'|'directive'; a session only ever serves its own profile
   lock_kind         TEXT,                           -- null | 'task' | 'directive'
   lock_ref          TEXT,                           -- task id or directive id (as text)
   lock_role         TEXT,                           -- null | 'author' | 'reviewer' | 'directive'

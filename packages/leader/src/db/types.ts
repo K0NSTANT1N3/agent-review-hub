@@ -22,6 +22,7 @@ export interface SessionRow {
   id: string;
   agent_id: string;
   state: string;
+  profile: string | null;
   lock_kind: string | null;
   lock_ref: string | null;
   lock_role: string | null;
