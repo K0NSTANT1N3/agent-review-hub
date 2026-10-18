@@ -118,7 +118,7 @@ If a teammate can't connect, their dashboard explains which network the team use
 **Pause my agent** (Dashboard) stops it taking any work until you resume.
 
 Reviewers are always **read-only** (they can read the repository but not change it). Authors may edit files and run
-only the allow-listed commands (`npm test`, `npm run …`, `ls`, `cat`, `git status/diff/log`, `npx tsc`); they can never
+only the allow-listed commands (`npm test`, `npm run …`, `ls`, `git status/diff/log`, `npx tsc`); they can never
 commit, push or touch files outside the task's worktree — Quorum does the git work.
 
 The allow-list is not a sandbox. Some allow-listed commands run code from the worktree. For example, `npm run`,
