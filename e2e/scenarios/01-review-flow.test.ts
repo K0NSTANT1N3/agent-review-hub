@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { stateHistory, waitForState } from '../helpers/api.js';
+import { stateHistory, waitForState, waitFor } from '../helpers/api.js';
 import { E2E_READY, Harness, aliceAndBob } from '../helpers/harness.js';
 import { anyTask, approve, authorDone, authorRevised, requestChanges } from '../helpers/mock-script.js';
 import { GREET, mainLog, readMain, remoteBranches } from '../helpers/toy-project.js';
@@ -14,11 +14,19 @@ describe.skipIf(!E2E_READY)('review flow', () => {
     h = await Harness.create();
     const { alice } = await aliceAndBob(h, {
       alice: { author: anyTask([authorDone({ 'src/greet.js': GREET.withDefault })]) },
-      bob: { reviewer: anyTask([approve()]) },
+      bob: { reviewer: anyTask([approve()]), behaviors: { delayMs: 1500 } },
     });
 
     const task = await alice.api.createTask({ title: 'Add default name', description: 'greet() with no args says Hello world' });
     expect(task.state).toBe('QUEUED');
+    await waitForState(alice.api, task.id, 'IN_REVIEW');
+    const activity = await waitFor('review activity pair', () => alice.api.call('teamActivity'), (result) =>
+      result.activities.some((item) => item.taskId === task.id && item.role === 'reviewer'),
+    );
+    const authorActivity = activity.activities.find((item) => item.taskId === task.id && item.role === 'author');
+    const reviewerActivity = activity.activities.find((item) => item.taskId === task.id && item.role === 'reviewer');
+    expect(authorActivity).toMatchObject({ activityState: 'waiting', pairedAgentId: 'bob-claude' });
+    expect(reviewerActivity).toMatchObject({ activityState: 'working', pairedAgentId: 'alice-claude' });
     const done = await waitForState(alice.api, task.id, 'MERGED');
 
     expect(stateHistory(done)).toEqual(['QUEUED', 'AUTHORING', 'AWAITING_REVIEWER', 'IN_REVIEW', 'MERGE_QUEUED', 'MERGING', 'MERGED']);

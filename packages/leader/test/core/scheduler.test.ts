@@ -128,6 +128,19 @@ describe('author assignment (§9.2)', () => {
     expect(db.tasks.require(t.id).state).toBe('QUEUED');
   });
 
+  it('never reuses a session opened for another role (reviewer sessions are read-only)', () => {
+    session('r', 'alice-claude');
+    db.messages.insert({
+      id: 'open-r', direction: 'to_node', agent_id: 'alice-claude', session_id: 'r', type: 'session.open', created_at: now,
+      payload: JSON.stringify({ kind: 'cmd', msgId: 'open-r', cmd: { type: 'session.open', sid: 'r', profile: 'reviewer' } }),
+    });
+    const t = task();
+    scheduler.schedule();
+    expect(db.sessions.require('r').state).toBe('idle');
+    expect(sent('session.open').at(-1)!.frame.cmd).toMatchObject({ profile: 'author' });
+    expect(db.tasks.require(t.id).state).toBe('QUEUED');
+  });
+
   it('pool mode picks a lending agent when the requester is busy', () => {
     db.agents.update('alice-claude', { max_sessions: 1 });
     session('x', 'alice-claude', { profile: 'author', state: 'opening' });

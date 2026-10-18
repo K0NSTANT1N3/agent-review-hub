@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type WebSocket from 'ws';
 import type { LeaderConfig, UiEvent } from '@quorum/protocol';
 import { authenticate } from '../api/routes.js';
-import { agentView, directiveView, taskEventView, taskView } from '../api/views.js';
+import { agentView, directiveView, taskEventView, taskView, teamActivity } from '../api/views.js';
 import type { LeaderDb } from '../db/repo.js';
 
 // /ws/ui?token=… — pushes change notifications (spec §17). Polls the DB for changes only while clients are connected.
@@ -16,6 +16,7 @@ export class UiHub {
   private eventWatermark = 0;
   private readonly agentHashes = new Map<string, string>();
   private readonly directiveHashes = new Map<string, string>();
+  private activityHash = '';
 
   constructor(
     private readonly db: LeaderDb,
@@ -57,6 +58,7 @@ export class UiHub {
     this.eventWatermark = Math.max(0, ...this.db.taskEvents.all().map((e) => e.id));
     for (const a of this.db.agents.all()) this.agentHashes.set(a.id, JSON.stringify(a));
     for (const d of this.db.directives.all()) this.directiveHashes.set(d.id, JSON.stringify(d));
+    this.activityHash = JSON.stringify(teamActivity(this.db, this.now()));
   }
 
   private poll(): void {
@@ -81,6 +83,12 @@ export class UiHub {
         if (this.directiveHashes.get(d.id) === hash) continue;
         this.directiveHashes.set(d.id, hash);
         this.broadcast({ type: 'directive.updated', data: directiveView(d) });
+      }
+      const activities = teamActivity(this.db, this.now());
+      const activityHash = JSON.stringify(activities);
+      if (activityHash !== this.activityHash) {
+        this.activityHash = activityHash;
+        this.broadcast({ type: 'team.activity.updated', data: { activities } });
       }
     } catch {
       // A transient DB error must not kill the poller; the next tick retries.

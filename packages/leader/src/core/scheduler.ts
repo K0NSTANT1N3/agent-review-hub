@@ -356,6 +356,9 @@ export class Scheduler {
     let best: { sid: string; score: number } | null = null;
     for (const s of this.db.sessions.find({ agent_id: agent.id, state: 'idle', profile })) {
       if (s.context_tokens >= maxContext) continue;
+      // A session keeps the tool profile it was opened with (reviewers are read-only); never reuse it for another role.
+      const opened = this.sessionProfile(s.id);
+      if (opened !== undefined && opened !== profile) continue;
       // A never-used session is as good as a new one, so it always qualifies (at the threshold).
       const fresh = s.files === '[]' && s.task_history === '[]';
       const score = fresh ? this.config.scheduler.sessionReuseMinAffinity : overlap(files, JSON.parse(s.files) as string[]);
@@ -364,6 +367,13 @@ export class Scheduler {
     if (best === null) return null;
     // A fresh session beats reusing an unrelated one, except when there is nothing to compare (directives, first submissions).
     return files.length === 0 || best.score >= this.config.scheduler.sessionReuseMinAffinity ? best.sid : null;
+  }
+
+  /** The profile a session was opened with (from its session.open request); undefined for sessions without one. */
+  private sessionProfile(sid: string): SessionProfile | undefined {
+    const req = this.db.openRequestFor(sid);
+    if (req === undefined) return undefined;
+    return ((JSON.parse(req.payload) as CmdFrame).cmd as { profile?: SessionProfile }).profile;
   }
 
   private openSession(agentId: string, profile: SessionProfile, ref: { taskId?: number; directiveId?: string }): void {
