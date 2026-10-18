@@ -95,6 +95,23 @@ describe('parseOutput', () => {
     expect(duplicate).toMatchObject({ ok: false, error: 'responses must cover exactly the supplied issue codes (duplicated: I1).' });
   });
 
+  it('accepts a blocked author revision without issue responses', () => {
+    const result = parseOutput(
+      block('{"status":"blocked","summary":"Need a decision.","blockedReason":"Should this API remain backwards compatible?"}'),
+      AuthorReviseOutputSchema,
+      { blockingIssueCodes: ['I1'] },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: 'blocked',
+        summary: 'Need a decision.',
+        blockedReason: 'Should this API remain backwards compatible?',
+        responses: [],
+      },
+    });
+  });
+
   it('requires previousIssues to cover exactly the supplied prior codes', () => {
     const result = parseOutput(
       block('{"verdict":"approve","summary":"Looks good.","previousIssues":[{"issue":"I1","status":"resolved"}]}'),

@@ -71,7 +71,7 @@ function validateCoverage(value: unknown, options: ParseOutputOptions): string |
   const record = asRecord(value);
   if (record === null) return null;
 
-  if (options.blockingIssueCodes !== undefined) {
+  if (options.blockingIssueCodes !== undefined && record.status !== 'blocked') {
     const error = coverageError(
       'responses',
       getCodes(record.responses, 'issue'),

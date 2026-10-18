@@ -91,6 +91,10 @@ export function authorRevisePrompt(command: AuthorReviseCommand, worktree: strin
     '```quorum-json',
     '{"status":"done","summary":"...","responses":[{"issue":"I1","action":"fixed|disputed|wontfix","note":"..."}]}',
     '```',
+    'If you cannot proceed without a human decision, end with:',
+    '```quorum-json',
+    '{"status":"blocked","summary":"...","blockedReason":"<the exact question for the human>"}',
+    '```',
   ].filter(Boolean).join('\n\n');
 }
 
