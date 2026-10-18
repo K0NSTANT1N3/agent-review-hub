@@ -320,7 +320,8 @@ export class Scheduler {
     else this.openSession(agent.id, 'directive', { directiveId: d.id });
   }
 
-  private bindDirective(directiveId: string, sid: string): void {
+  /** Locks `sid` to the directive and sends directive.run (also used by POST /api/directives with a sessionId). */
+  bindDirective(directiveId: string, sid: string): void {
     this.db.withTx(() => {
       const d = this.db.directives.require(directiveId);
       this.db.directives.update(d.id, { state: 'running', session_id: sid });
@@ -484,6 +485,16 @@ export class Scheduler {
         this.options.onAttention?.(task.id, 'author_unavailable', 'The author agent is unavailable. Reassign to the pool, wait, or cancel.');
       }
     }
+  }
+
+  /** Human resume (T33): hand the task back to normal PAUSED handling, which resumes as soon as possible. */
+  resumeFromHumanPause(taskId: number): void {
+    this.db.withTx(() => {
+      const task = this.db.tasks.require(taskId);
+      if (task.state !== 'PAUSED') throw new Error('task is not paused');
+      this.db.tasks.update(taskId, { pause_reason: 'resume_requested', state_entered_at: this.now() });
+      this.handlePaused(taskId);
+    });
   }
 
   /** PAUSED → paused_from_state on the same, still-locked author session (T23). */

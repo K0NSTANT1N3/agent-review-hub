@@ -1,0 +1,186 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import WebSocket from 'ws';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parseLeaderConfig, type LeaderConfig, type UiEvent } from '@quorum/protocol';
+import { addAgent, listAgents, revokeAgent, startLeader, type LeaderHandle } from '../../src/index.js';
+import { openDatabase, type LeaderDb } from '../../src/db/repo.js';
+import { silentLogger } from '../../src/logging.js';
+
+let dir: string;
+let config: LeaderConfig;
+let leader: LeaderHandle;
+let base: string;
+let tokens: Record<string, string>;
+let side: LeaderDb;
+
+const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim();
+
+async function api(method: string, path: string, who: string | null, body?: unknown) {
+  const headers: Record<string, string> = {};
+  if (who !== null) headers.authorization = `Bearer ${tokens[who]}`;
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  const res = await fetch(`${base}${path}`, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+  const text = await res.text();
+  return { status: res.status, body: text === '' ? null : (JSON.parse(text) as Record<string, unknown>) };
+}
+
+beforeEach(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'quorum-api-'));
+  const bare = join(dir, 'remote.git');
+  const seed = join(dir, 'seed');
+  execFileSync('git', ['init', '--bare', '-b', 'main', bare]);
+  execFileSync('git', ['init', '-b', 'main', seed]);
+  writeFileSync(join(seed, 'a.txt'), 'one\n');
+  git(seed, 'add', '-A');
+  git(seed, 'commit', '-m', 'init');
+  git(seed, 'remote', 'add', 'origin', bare);
+  git(seed, 'push', '-u', 'origin', 'main');
+  writeFileSync(join(seed, 'a.txt'), 'two\n');
+  git(seed, 'commit', '-am', 'two');
+  git(seed, 'push', 'origin', 'main');
+
+  config = parseLeaderConfig({
+    listen: { host: '127.0.0.1', port: 0 },
+    dbPath: join(dir, 'leader.db'),
+    repo: { remoteUrl: bare, clonePath: join(dir, 'clone') },
+    admins: ['admin'],
+  });
+  tokens = {};
+  for (const [id, owner] of [['alice-claude', 'alice'], ['bob-claude', 'bob'], ['admin-console', 'admin']] as const) {
+    tokens[owner] = (await addAgent(config.dbPath, { id, owner })).token;
+  }
+  leader = await startLeader(config, { logger: silentLogger });
+  base = `http://127.0.0.1:${leader.port}`;
+  side = openDatabase(config.dbPath);
+});
+
+afterEach(async () => {
+  side.close();
+  await leader.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe('REST API (§17)', () => {
+  it('health needs no auth; everything else needs a valid token', async () => {
+    expect(await api('GET', '/api/health', null)).toEqual({ status: 200, body: { ok: true } });
+    expect((await api('GET', '/api/tasks', null)).status).toBe(401);
+    tokens.bogus = 'qrm_nope';
+    expect((await api('GET', '/api/tasks', 'bogus')).body).toMatchObject({ error: 'UNAUTHORIZED' });
+  });
+
+  it('creates a task (201, QUEUED, creation event) and lists it', async () => {
+    const created = await api('POST', '/api/tasks', 'alice', { title: 'Add greeting', description: 'Say hello', tags: ['js'] });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ state: 'QUEUED', requesterOwner: 'alice', mode: 'own', priority: 1, tags: ['js'] });
+    const id = created.body!.id as number;
+
+    const detail = await api('GET', `/api/tasks/${id}`, 'bob');
+    expect(detail.body).toMatchObject({ task: { id }, conversations: [], issues: [] });
+    expect((detail.body!.events as { toState: string; reason: string }[])[0]).toMatchObject({ toState: 'QUEUED', reason: 'created' });
+
+    expect(((await api('GET', '/api/tasks?mine=true', 'alice')).body!.tasks as unknown[]).length).toBe(1);
+    expect(((await api('GET', '/api/tasks?mine=true', 'bob')).body!.tasks as unknown[]).length).toBe(0);
+    expect((await api('GET', '/api/tasks/999', 'alice')).status).toBe(404);
+    expect((await api('POST', '/api/tasks', 'alice', { title: '' })).body).toMatchObject({ error: 'VALIDATION' });
+  });
+
+  it('enforces requester-or-admin permissions and legal states', async () => {
+    const id = (await api('POST', '/api/tasks', 'alice', { title: 't', description: 'd' })).body!.id as number;
+    expect((await api('POST', `/api/tasks/${id}/cancel`, 'bob', {})).status).toBe(403);
+    expect((await api('POST', `/api/tasks/${id}/approve`, 'alice', {})).body).toMatchObject({ error: 'ILLEGAL_TRANSITION' });
+    expect((await api('PATCH', `/api/tasks/${id}`, 'alice', { priority: 3 })).body).toMatchObject({ priority: 3 });
+    const cancelled = await api('POST', `/api/tasks/${id}/cancel`, 'admin', {});
+    expect(cancelled.body).toMatchObject({ state: 'CANCELLED' });
+    expect((await api('POST', `/api/tasks/${id}/cancel`, 'alice', {})).status).toBe(409);
+  });
+
+  it('send-back on an escalated task adds a human issue and returns it to the author', async () => {
+    const id = (await api('POST', '/api/tasks', 'alice', { title: 't', description: 'd' })).body!.id as number;
+    side.tasks.update(id, { state: 'ESCALATED', escalation_reason: 'author_blocked: which default?', author_agent_id: 'alice-claude', branch: `quorum/task-${id}` });
+    const res = await api('POST', `/api/tasks/${id}/send-back`, 'alice', { comment: 'Use "world".' });
+    expect(res.status).toBe(200);
+    // The author agent is offline, so the task pauses waiting for it.
+    expect(res.body).toMatchObject({ state: 'PAUSED', pausedFromState: 'AUTHORING', escalationReason: null });
+    const detail = await api('GET', `/api/tasks/${id}`, 'alice');
+    expect(detail.body!.issues).toEqual([expect.objectContaining({ code: 'I1', source: 'human', severity: 'blocking', comment: 'Use "world".' })]);
+  });
+
+  it('approve from ESCALATED queues the merge and merges the branch', async () => {
+    const id = (await api('POST', '/api/tasks', 'alice', { title: 'Merge me', description: 'd' })).body!.id as number;
+    const clone = join(dir, 'work');
+    git(dir, 'clone', join(dir, 'remote.git'), clone);
+    git(clone, 'checkout', '-b', `quorum/task-${id}`);
+    writeFileSync(join(clone, 'b.txt'), 'b\n');
+    git(clone, 'add', '-A');
+    git(clone, 'commit', '-m', 'b');
+    git(clone, 'push', 'origin', `quorum/task-${id}`);
+    const head = git(clone, 'rev-parse', 'HEAD');
+    side.tasks.update(id, { state: 'ESCALATED', author_agent_id: 'alice-claude', branch: `quorum/task-${id}`, head_commit: head, base_commit: head });
+    expect((await api('POST', `/api/tasks/${id}/approve`, 'alice', {})).body).toMatchObject({ state: 'MERGE_QUEUED' });
+    for (let i = 0; i < 100 && side.tasks.require(id).state !== 'MERGED'; i += 1) await new Promise((r) => setTimeout(r, 50));
+    expect(side.tasks.require(id).state).toBe('MERGED');
+    expect(git(join(dir, 'remote.git'), 'show', 'main:b.txt')).toBe('b');
+  });
+
+  it('diff endpoint validates ids and returns git output', async () => {
+    const id = (await api('POST', '/api/tasks', 'alice', { title: 't', description: 'd' })).body!.id as number;
+    expect((await api('GET', `/api/tasks/${id}/diff`, 'alice')).status).toBe(409);
+    const seed = join(dir, 'seed');
+    const first = git(seed, 'rev-parse', 'HEAD~1');
+    const second = git(seed, 'rev-parse', 'HEAD');
+    side.tasks.update(id, { base_commit: first, head_commit: second });
+    const diff = await api('GET', `/api/tasks/${id}/diff`, 'alice');
+    expect(diff.body!.diff).toContain('+two');
+    expect((await api('GET', `/api/tasks/${id}/diff?from=--output=/tmp/x&to=${second}`, 'alice')).body).toMatchObject({ error: 'VALIDATION' });
+  });
+
+  it('directives: 409 SESSION_LOCKED on a locked session; otherwise queued and retrievable', async () => {
+    const t = side.tasks.insert({ title: 'x', description: 'd', requester_agent_id: 'alice-claude', state: 'AUTHORING', created_at: 1, updated_at: 1, state_entered_at: 1 });
+    side.sessions.insert({ id: 's-locked', agent_id: 'bob-claude', state: 'locked', lock_kind: 'task', lock_ref: String(t.id), lock_role: 'reviewer', created_at: 1, last_used_at: 1 });
+    expect((await api('POST', '/api/directives', 'alice', { agentId: 'bob-claude', text: 'hi', sessionId: 's-locked' })).body).toMatchObject({ error: 'SESSION_LOCKED' });
+    const d = await api('POST', '/api/directives', 'alice', { agentId: 'bob-claude', text: 'What is 6*7?' });
+    expect(d.status).toBe(201);
+    expect(d.body).toMatchObject({ state: 'queued', requester: 'alice', agentId: 'bob-claude' });
+    expect((await api('GET', `/api/directives/${d.body!.id as string}`, 'bob')).body).toMatchObject({ text: 'What is 6*7?' });
+  });
+
+  it('lists agents with budget fields and pushes task updates over /ws/ui', async () => {
+    const agents = (await api('GET', '/api/agents', 'alice')).body!.agents as { id: string; budgetRemaining: number }[];
+    expect(agents.map((a) => a.id).sort()).toEqual(['admin-console', 'alice-claude', 'bob-claude']);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=${tokens.alice}`);
+    await new Promise((r) => ws.once('open', r));
+    const got = new Promise<UiEvent>((resolve) =>
+      ws.on('message', (raw) => {
+        const e = JSON.parse(raw.toString()) as UiEvent;
+        if (e.type === 'task.updated') resolve(e);
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    await api('POST', '/api/tasks', 'alice', { title: 'Pushed', description: 'd' });
+    const event = await got;
+    expect(event.data).toMatchObject({ title: 'Pushed' });
+    ws.close();
+
+    const bad = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui?token=nope`);
+    expect(await new Promise((r) => bad.once('close', (code) => r(code)))).toBe(1008);
+  });
+});
+
+describe('agent token helpers', () => {
+  it('rotates, revokes and lists', async () => {
+    const before = tokens.bob!;
+    const { token } = await addAgent(config.dbPath, { id: 'bob-claude', owner: 'bob' });
+    expect(token).not.toBe(before);
+    expect((await api('GET', '/api/tasks', 'bob')).status).toBe(401);
+    tokens.bob = token;
+    expect((await api('GET', '/api/tasks', 'bob')).status).toBe(200);
+    await revokeAgent(config.dbPath, 'bob-claude');
+    expect((await api('GET', '/api/tasks', 'bob')).status).toBe(401);
+    expect((await listAgents(config.dbPath)).find((a) => a.id === 'bob-claude')).toMatchObject({ revoked: true });
+    await expect(addAgent(config.dbPath, { id: 'bad id!', owner: 'x' })).rejects.toThrow(/agent id/);
+  });
+});
