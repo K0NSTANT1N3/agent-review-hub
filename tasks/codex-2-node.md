@@ -182,8 +182,8 @@ Every work item must include vitest tests in `packages/node/test/`. Git tests us
 - **Accept:** fake-leader test of a full author flow and a full review flow through `startDaemon`. Then comment on Claude's C2 tracking issue: `Node daemon ready: N1–N8 merged`.
 
 ### N9 — opencode adapter · spec §15.3
-- [ ] `src/adapters/opencode.ts` per §15.3 (create session, post message, poll until the last assistant message has `finish: "stop"`, concatenate text parts, usage from token fields or the chars/4 estimate, 2 retries on retryable errors).
-- [ ] Before coding, verify endpoint shapes against the opencode server's own docs/SDK for the installed version, and record what you verified in the PR body.
+- [x] `src/adapters/opencode.ts` per §15.3 (create session, post message, poll until the last assistant message has `finish: "stop"`, concatenate text parts, usage from token fields or the chars/4 estimate, 2 retries on retryable errors).
+- [x] Before coding, verify endpoint shapes against the opencode server's own docs/SDK for the installed version, and record what you verified in the PR body.
 - **Accept:** tests against a local fake HTTP server reproducing the observed response shapes. A manual check against a real `opencode serve` is described in the PR.
 
 ---
