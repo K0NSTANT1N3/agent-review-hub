@@ -226,10 +226,15 @@ export class NodeHub {
   }
 
   private recordInbound(agentId: string, frame: Extract<NodeToLeaderFrame, { kind: 'evt' }>): void {
+    // Session-level events (e.g. session.compacted) carry no task id; attribute them to the task the
+    // session is locked to so they appear in that task's transcript.
+    const session = this.db.sessions.get(frame.evt.sid);
+    const lockedTask = session?.lock_kind === 'task' && session.lock_ref !== null ? Number(session.lock_ref) : null;
+    const lockedDirective = session?.lock_kind === 'directive' ? session.lock_ref : null;
     this.db.messages.insert({
       id: frame.msgId, direction: 'from_node', agent_id: agentId, session_id: frame.evt.sid,
-      task_id: 'taskId' in frame.evt ? frame.evt.taskId ?? null : null,
-      directive_id: 'directiveId' in frame.evt ? frame.evt.directiveId ?? null : null,
+      task_id: 'taskId' in frame.evt && frame.evt.taskId !== undefined ? frame.evt.taskId : lockedTask,
+      directive_id: 'directiveId' in frame.evt && frame.evt.directiveId !== undefined ? frame.evt.directiveId : lockedDirective,
       conversation_id: 'conversationId' in frame.evt ? frame.evt.conversationId : null,
       type: frame.evt.type, payload: JSON.stringify(frame), created_at: this.now(), acked_at: this.now(),
     });
