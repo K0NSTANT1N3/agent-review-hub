@@ -8,6 +8,8 @@ import {
   PRIORITY_LABEL,
   TASK_COLUMNS,
   buildBoard,
+  ownerInScope,
+  ownerOptions,
   pageSize,
   taskRole,
   type TaskBoardQuery,
@@ -33,7 +35,16 @@ export function Tasks({
 }) {
   const width = useWindowWidth();
   const tasks = useLive(() => call('listTasks', { query: { mine: mine ? 'true' : 'false' } }), [mine], { events: ['task.updated'] });
-  const model = buildBoard({ tasks: tasks.data?.tasks, query, extra, width });
+  const loadedTasks = tasks.data?.tasks;
+  const owner = ownerInScope(loadedTasks === undefined ? [] : ownerOptions(loadedTasks), query.owner, loadedTasks !== undefined);
+  if (owner !== query.owner) onQuery({ ...query, owner });
+  const model = buildBoard({
+    tasks: tasks.data?.tasks,
+    query: { ...query, owner },
+    extra,
+    width,
+    scope: mine ? 'mine' : 'all',
+  });
   const filtersActive = mine || query.search !== '' || query.status !== 'all' || query.owner !== 'all' || query.priority !== 'all';
 
   return (
@@ -58,7 +69,7 @@ export function Tasks({
             <option key={col.title} value={col.title}>{col.title}</option>
           ))}
         </select>
-        <select aria-label="Owner" value={query.owner} onChange={(e) => onQuery({ ...query, owner: e.target.value })}>
+        <select aria-label="Owner" value={owner} onChange={(e) => onQuery({ ...query, owner: e.target.value })}>
           <option value="all">All owners</option>
           {model.owners.map((owner) => (
             <option key={owner} value={owner}>{owner}</option>
@@ -83,6 +94,7 @@ export function Tasks({
       <ErrorNote error={tasks.error} />
       {model.status === 'loading' && <Empty>Loading…</Empty>}
       {model.status === 'empty' && <Empty>No tasks yet.</Empty>}
+      {model.status === 'empty-mine' && <Empty>No tasks requested by you. Clear &quot;Only mine&quot; to see the team&apos;s tasks.</Empty>}
       {model.status === 'no-results' && <Empty>No tasks match these filters.</Empty>}
       {model.status === 'ready' && (
         <div className={model.layout === 'list' ? 'board board-list' : 'board'}>
