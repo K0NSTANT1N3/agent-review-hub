@@ -51,9 +51,10 @@ export function taskRole(state: TaskState): string | null {
     case 'AUTHORING':
     case 'SYNCING':
       return 'Author';
-    case 'AWAITING_REVIEWER':
     case 'IN_REVIEW':
       return 'Reviewer';
+    case 'AWAITING_REVIEWER':
+      return null;
     case 'MERGE_QUEUED':
     case 'MERGING':
       return 'Merge';

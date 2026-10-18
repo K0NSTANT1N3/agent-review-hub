@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskState, TaskView } from '@quorum/protocol';
-import { DEFAULT_QUERY, DONE_PAGE, buildBoard, layoutForWidth, type TaskBoardQuery } from '../src/renderer/task-board.js';
+import { DEFAULT_QUERY, DONE_PAGE, buildBoard, layoutForWidth, taskRole, type TaskBoardQuery } from '../src/renderer/task-board.js';
 
 function task(partial: Partial<TaskView> & Pick<TaskView, 'id' | 'title' | 'state'>): TaskView {
   return {
@@ -89,6 +89,12 @@ describe('task board search, filters, and sort', () => {
 });
 
 describe('task board layout and completed tasks', () => {
+  it('labels an in-review task as reviewer work and a task still waiting as unassigned', () => {
+    expect(taskRole('IN_REVIEW')).toBe('Reviewer');
+    expect(taskRole('AWAITING_REVIEWER')).toBeNull();
+    expect(taskRole('AUTHORING')).toBe('Author');
+  });
+
   it('uses one column below the kanban width and six columns at and above it', () => {
     expect(layoutForWidth(1199)).toBe('list');
     expect(layoutForWidth(1200)).toBe('kanban');

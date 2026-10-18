@@ -14,10 +14,23 @@ import {
   type TaskSort,
 } from '../task-board';
 
-export function Tasks({ onOpen }: { onOpen: (id: number) => void }) {
-  const [mine, setMine] = useState(true);
-  const [query, setQuery] = useState<TaskBoardQuery>(DEFAULT_QUERY);
-  const [extra, setExtra] = useState<Record<string, number>>({});
+export function Tasks({
+  onOpen,
+  mine,
+  query,
+  extra,
+  onMine,
+  onQuery,
+  onExtra,
+}: {
+  onOpen: (id: number) => void;
+  mine: boolean;
+  query: TaskBoardQuery;
+  extra: Record<string, number>;
+  onMine: (mine: boolean) => void;
+  onQuery: (query: TaskBoardQuery) => void;
+  onExtra: (extra: Record<string, number>) => void;
+}) {
   const width = useWindowWidth();
   const tasks = useLive(() => call('listTasks', { query: { mine: mine ? 'true' : 'false' } }), [mine], { events: ['task.updated'] });
   const model = buildBoard({ tasks: tasks.data?.tasks, query, extra, width });
@@ -29,7 +42,7 @@ export function Tasks({ onOpen }: { onOpen: (id: number) => void }) {
         <h2 className="grow">Tasks</h2>
         <span className="badge">Sorted by {model.sortLabel}</span>
         <label className="row inline">
-          <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> Only mine
+          <input type="checkbox" checked={mine} onChange={(e) => onMine(e.target.checked)} /> Only mine
         </label>
       </div>
       <div className="task-filters">
@@ -37,15 +50,15 @@ export function Tasks({ onOpen }: { onOpen: (id: number) => void }) {
           aria-label="Search tasks"
           placeholder="Search title or ID"
           value={query.search}
-          onChange={(e) => setQuery({ ...query, search: e.target.value })}
+          onChange={(e) => onQuery({ ...query, search: e.target.value })}
         />
-        <select aria-label="Status" value={query.status} onChange={(e) => setQuery({ ...query, status: e.target.value })}>
+        <select aria-label="Status" value={query.status} onChange={(e) => onQuery({ ...query, status: e.target.value })}>
           <option value="all">All statuses</option>
           {TASK_COLUMNS.map((col) => (
             <option key={col.title} value={col.title}>{col.title}</option>
           ))}
         </select>
-        <select aria-label="Owner" value={query.owner} onChange={(e) => setQuery({ ...query, owner: e.target.value })}>
+        <select aria-label="Owner" value={query.owner} onChange={(e) => onQuery({ ...query, owner: e.target.value })}>
           <option value="all">All owners</option>
           {model.owners.map((owner) => (
             <option key={owner} value={owner}>{owner}</option>
@@ -54,18 +67,18 @@ export function Tasks({ onOpen }: { onOpen: (id: number) => void }) {
         <select
           aria-label="Priority"
           value={query.priority === 'all' ? 'all' : String(query.priority)}
-          onChange={(e) => setQuery({ ...query, priority: e.target.value === 'all' ? 'all' : Number(e.target.value) })}
+          onChange={(e) => onQuery({ ...query, priority: e.target.value === 'all' ? 'all' : Number(e.target.value) })}
         >
           <option value="all">All priorities</option>
           {PRIORITY_LABEL.map((label, priority) => (
             <option key={label} value={priority}>{label}</option>
           ))}
         </select>
-        <select aria-label="Sort" value={query.sort} onChange={(e) => setQuery({ ...query, sort: e.target.value as TaskSort })}>
+        <select aria-label="Sort" value={query.sort} onChange={(e) => onQuery({ ...query, sort: e.target.value as TaskSort })}>
           <option value="updated">Recently updated</option>
           <option value="priority">Priority</option>
         </select>
-        <button type="button" disabled={!filtersActive} onClick={() => { setMine(false); setQuery({ ...DEFAULT_QUERY, sort: query.sort }); }}>Clear filters</button>
+        <button type="button" disabled={!filtersActive} onClick={() => { onMine(false); onQuery({ ...DEFAULT_QUERY, sort: query.sort }); }}>Clear filters</button>
       </div>
       <ErrorNote error={tasks.error} />
       {model.status === 'loading' && <Empty>Loading…</Empty>}
@@ -85,7 +98,7 @@ export function Tasks({ onOpen }: { onOpen: (id: number) => void }) {
               {col.hidden > 0 && (
                 <button
                   type="button"
-                  onClick={() => setExtra((current) => ({ ...current, [col.title]: (current[col.title] ?? 0) + pageSize(col.title) }))}
+                  onClick={() => onExtra({ ...extra, [col.title]: (extra[col.title] ?? 0) + pageSize(col.title) })}
                 >
                   Show {Math.min(pageSize(col.title), col.hidden)} more
                 </button>
