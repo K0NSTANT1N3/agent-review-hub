@@ -14,7 +14,7 @@ import {
   type UiEvent,
 } from '@quorum/protocol';
 import type { ApiCallOptions, ApiResult, AppState, DesktopSettings, HostSetup, JoinSetup, Mode } from '../shared/ipc.js';
-import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl } from './join-code.js';
+import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, publicLeaderUrl } from './join-code.js';
 import { UiStream } from './ui-stream.js';
 
 const execFileAsync = promisify(execFile);
@@ -34,7 +34,7 @@ export interface DaemonHandleLike {
 export interface ServiceDeps {
   startLeader(config: LeaderConfig): Promise<LeaderHandleLike>;
   addAgent(dbPath: string, args: { id: string; owner: string }): Promise<{ token: string }>;
-  startDaemon(config: NodeConfig, opts: { idleSeconds?: () => number | null }): Promise<DaemonHandleLike>;
+  startDaemon(config: NodeConfig, opts: { idleSeconds?: () => number | null; insecure?: boolean }): Promise<DaemonHandleLike>;
   secrets: { encrypt(plain: string): string; decrypt(stored: string): string };
   idleSeconds?: () => number | null;
   claudeExecutable?: () => string | undefined;
@@ -98,12 +98,13 @@ export class Services {
           ? {
               running: this.leader !== null,
               port: this.leader?.port ?? c.host?.port ?? null,
-              publicUrl: c.host !== undefined ? `ws://${c.host.publicHost}:${c.host.port}/ws/node` : null,
+              publicUrl: c.host !== undefined ? publicLeaderUrl(c.host.publicHost, c.host.port) : null,
               error: this.leaderError,
             }
           : null,
       node: { running: this.daemon !== null, error: this.nodeError, status: safeStatus(this.daemon) },
       connected: this.connected,
+      encrypted: c === null ? false : isEncryptedLeaderUrl(c.mode === 'host' && c.host !== undefined ? publicLeaderUrl(c.host.publicHost, c.host.port) : c.leaderUrl),
       settings: c?.settings ?? null,
       dataDir: this.dataDir,
     };
@@ -173,7 +174,7 @@ export class Services {
     const { token } = await this.deps.addAgent(this.leaderConfig().dbPath, { id: agentId, owner: ownerName });
     return {
       joinCode: encodeJoinCode({
-        leaderUrl: `ws://${c.host.publicHost}:${c.host.port}/ws/node`,
+        leaderUrl: publicLeaderUrl(c.host.publicHost, c.host.port),
         agentId,
         ownerName,
         token,
@@ -328,6 +329,8 @@ export class Services {
     this.nodeError = null;
     try {
       this.daemon = await this.deps.startDaemon(this.nodeConfig(), {
+        // The host chose this address (LAN, VPN or tunnel); the Node's ws:// guard is meant for headless setups.
+        insecure: true,
         ...(this.deps.idleSeconds !== undefined ? { idleSeconds: this.deps.idleSeconds } : {}),
       });
     } catch (error) {

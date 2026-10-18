@@ -90,14 +90,16 @@ export function Setup() {
           </label>
           <label className="span-2">
             Address teammates use to reach this computer
-            <input list="addresses" value={publicHost} onChange={(e) => setPublicHost(e.target.value)} />
+            <input list="addresses" value={publicHost} onChange={(e) => setPublicHost(e.target.value)} placeholder="192.168.1.20 or https://name.trycloudflare.com" />
             <datalist id="addresses">
               {addresses.map((a) => (
                 <option key={a} value={a} />
               ))}
             </datalist>
             <span className="hint">
-              Teammates must be able to reach <code>{publicHost || '…'}:{port}</code> — same network, a VPN such as Tailscale, or a forwarded port.
+              Same Wi-Fi/office: use this computer's IP. Teammates elsewhere: paste a tunnel URL (e.g. from{' '}
+              <code>cloudflared tunnel --url http://localhost:{port}</code>) for an encrypted link with no VPN or router changes, or use a VPN
+              such as Tailscale. See the install guide.
             </span>
           </label>
         </div>

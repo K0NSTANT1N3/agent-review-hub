@@ -25,6 +25,8 @@ export interface AppState {
   leader: { running: boolean; port: number | null; publicUrl: string | null; error: string | null } | null;
   node: { running: boolean; error: string | null; status: NodeStatus | null };
   connected: boolean;
+  /** Whether teammates' connections to the Leader are encrypted (wss://). */
+  encrypted: boolean;
   settings: DesktopSettings | null;
   dataDir: string;
 }

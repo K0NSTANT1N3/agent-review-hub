@@ -1,6 +1,6 @@
 # Project status — single source of truth
 
-> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1.1 released.
+> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1.2 released.
 
 ## State
 
@@ -22,6 +22,14 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
   order is stable (#36).
 * Codex-1 was auto-resumed after its limit and opened #41; superseded by #44 and closed (see the PR for why).
 
+## In v0.1.2
+
+* **Fix:** teammates joining over a LAN (plain `ws://` to a non-localhost address) were refused by the Node's ws://
+  guard; the desktop app now allows the address the host chose. Covered by a real-daemon LAN join test.
+* **No VPN needed:** the host's address may be a tunnel URL (`cloudflared tunnel --url http://localhost:7420`, ngrok);
+  join codes then use encrypted `wss://`. Verified end to end through a live Cloudflare quick tunnel. The Team page
+  shows whether connections are encrypted. See docs/INSTALL.md → Connecting teammates.
+
 ## Who did what
 
 | Agent | Work |
@@ -36,7 +44,7 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 |---|---|
 | Code signing | Installers are unsigned (macOS: right-click → Open; Windows: More info → Run anyway). Add certificates to the Release workflow when available. |
 | macOS Intel build | The Release workflow builds on `macos-latest` (Apple Silicon). Add an `macos-13` matrix entry for x64 if needed. |
-| TLS for the Leader | Supported headless (`tls.certFile/keyFile`); the desktop host mode uses plain WS — use a VPN (e.g. Tailscale) or a TLS proxy. |
+| Built-in tunnel | Remote teammates currently use a tunnel URL (cloudflared/ngrok) or Tailscale; the app could start a tunnel itself. |
 | Second-opinion reviews, GitHub PR integration, task decomposition | Out of scope for v0.1 (spec §23). |
 
 ## How to work on it
