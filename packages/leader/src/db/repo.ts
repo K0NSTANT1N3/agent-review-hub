@@ -184,6 +184,11 @@ export class LeaderDb {
     return this.sql.prepare('SELECT * FROM conversations WHERE created_at >= ? ORDER BY created_at').all(since) as ConversationRow[];
   }
 
+  /** A task's transcript in issue order. */
+  messagesForTask(taskId: number): MessageRow[] {
+    return this.sql.prepare('SELECT * FROM messages WHERE task_id = ? ORDER BY rowid').all(taskId) as MessageRow[];
+  }
+
   /** The session.open message that requested this session, if any. */
   openRequestFor(sid: string): MessageRow | undefined {
     return this.sql.prepare(`SELECT * FROM messages WHERE direction = 'to_node' AND type = 'session.open' AND session_id = ?
