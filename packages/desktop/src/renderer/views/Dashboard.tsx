@@ -33,6 +33,7 @@ export function Dashboard({ state }: { state: AppState }) {
           <p>
             <Dot tone={state.connected ? 'ok' : 'warn'} /> {state.connected ? 'Connected to the Leader' : 'Connecting to the Leader…'}
           </p>
+          {!state.connected && <ConnectionHint state={state} />}
           <div className="row">
             <button onClick={() => void togglePause()}>{settings?.paused ? 'Resume my agent' : 'Pause my agent'}</button>
             <button onClick={() => void bridge().restart()}>Restart</button>
@@ -100,4 +101,21 @@ export function Dashboard({ state }: { state: AppState }) {
       </Card>
     </div>
   );
+}
+
+const HINTS: Record<string, string> = {
+  tailscale: 'This team is reached through Tailscale. Make sure Tailscale is running and signed in on this computer, and that you accepted the host\'s share (or joined their tailnet).',
+  zerotier: 'This team is reached through ZeroTier. Make sure you are connected to the same ZeroTier network as the host.',
+  wireguard: 'This team is reached through a WireGuard VPN. Make sure your WireGuard tunnel is up.',
+  vpn: 'This team is reached through a VPN. Make sure you are connected to it.',
+  local: 'The host is on a local network. You must be on the same Wi-Fi / office network as the host.',
+  tunnel: 'The host shares the Leader through a tunnel URL. If the host restarted the tunnel, its address changed — ask for a new join code.',
+  public: 'Check that the host\'s app is running and their router forwards the Leader port.',
+  loopback: 'The Leader runs on this computer; it may still be starting. Try Restart if this persists.',
+};
+
+function ConnectionHint({ state }: { state: AppState }) {
+  if (state.leaderNetwork === null) return null;
+  const hint = state.mode === 'host' && state.leaderNetwork !== 'loopback' ? HINTS.loopback : HINTS[state.leaderNetwork];
+  return <div className="note note-warn small">{hint}</div>;
 }

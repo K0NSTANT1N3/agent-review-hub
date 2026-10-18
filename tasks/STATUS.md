@@ -1,6 +1,6 @@
 # Project status — single source of truth
 
-> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1.2 released.
+> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1.3 released.
 
 ## State
 
@@ -21,6 +21,14 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 * Reviewer failover now prefers a reviewer who hasn't already dropped the task (#32), with fallback; conversation
   order is stable (#36).
 * Codex-1 was auto-resumed after its limit and opened #41; superseded by #44 and closed (see the PR for why).
+
+## In v0.1.3
+
+* **Works with any VPN, no external server required.** Host a team lists the computer's addresses labelled by
+  network (local, Tailscale incl. its stable MagicDNS name, ZeroTier, WireGuard, other VPN; container bridges hidden).
+* **Only accept connections through this address**: the Leader binds to the chosen VPN/LAN address only; the host's
+  own agent connects through it. Friendly error if the VPN isn't connected.
+* Teammates who can't connect get a hint for the team's network type. Join codes remain the only way in (no discovery).
 
 ## In v0.1.2
 
@@ -44,7 +52,6 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 |---|---|
 | Code signing | Installers are unsigned (macOS: right-click → Open; Windows: More info → Run anyway). Add certificates to the Release workflow when available. |
 | macOS Intel build | The Release workflow builds on `macos-latest` (Apple Silicon). Add an `macos-13` matrix entry for x64 if needed. |
-| Built-in tunnel | Remote teammates currently use a tunnel URL (cloudflared/ngrok) or Tailscale; the app could start a tunnel itself. |
 | Second-opinion reviews, GitHub PR integration, task decomposition | Out of scope for v0.1 (spec §23). |
 
 ## How to work on it

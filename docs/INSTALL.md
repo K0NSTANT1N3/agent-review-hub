@@ -41,8 +41,8 @@ Building it yourself instead: see [§7](#7-building-from-source).
 1. Open Quorum → **Host a team**.
 2. Fill in your name, the **team repository** URL and its main branch.
 3. **Leader port** (default 7420) and **the address teammates use to reach you** — see
-   [Connecting teammates](#connecting-teammates-no-vpn-required) below. On the same Wi-Fi/office network just pick your
-   LAN IP (the app suggests it).
+   [Connecting teammates](#connecting-teammates) below. On the same Wi-Fi/office network just keep the suggested
+   local address.
 4. Choose your agent settings (see [§5](#5-agent-settings)) → **Start hosting**.
 5. **Team → Invite a teammate**: type their name → **Create join code** → send the code privately (it contains
    their secret token). Inviting the same name again replaces their token.
@@ -50,23 +50,35 @@ Building it yourself instead: see [§7](#7-building-from-source).
 The host's computer must be on (with Quorum running) for the team to work. Its data lives in the app data folder
 (shown in **Settings**); the Leader keeps all tasks, reviews and history there.
 
-### Connecting teammates (no VPN required)
+### Connecting teammates
 
-Teammates' apps open a connection to the host's computer. Pick whichever fits:
+There is no automatic discovery: **join codes are the only way in**. A join code contains the host's address; a
+teammate's app connects to exactly that address. So the host's computer must be reachable at it. In **Host a team**
+Quorum lists every address this computer has, labelled by network, and you pick one:
 
-| Where are teammates? | What to enter as the address | Encrypted? | Setup |
+| Option in the list | Who can reach the host | Encrypted | What you need |
 |---|---|---|---|
-| **Same Wi-Fi / office network** | the host's LAN IP, e.g. `192.168.1.20` | no (stays inside your network) | none — allow port 7420 if the OS firewall asks |
-| **Anywhere, no VPN, no router changes** | a tunnel URL, e.g. `https://words-words.trycloudflare.com` | **yes** | on the host run `cloudflared tunnel --url http://localhost:7420` ([install cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), free, no account) and paste the printed `https://…trycloudflare.com` URL |
-| **Anywhere, permanent address** | the host's Tailscale IP or name (`100.x.y.z` / `pc.tailnet.ts.net`) | yes (by Tailscale) | install [Tailscale](https://tailscale.com) (free) on every computer |
-| Anywhere, via your router | your public IP | **no** — tokens and code travel in plain text | forward TCP 7420 to the host; not recommended |
+| **Local network** (e.g. `192.168.1.20`) | people on the same Wi-Fi / office | no (stays in your network) | nothing |
+| **Tailscale** (e.g. `ana-laptop.tail1234.ts.net`) — recommended for remote teams | everyone on your tailnet, from anywhere | yes | Tailscale on every computer (free plan) |
+| **ZeroTier / WireGuard / other VPN** | everyone on that VPN | yes (by the VPN) | the VPN on every computer |
+| **Custom address or tunnel URL** | depends | a `https://` tunnel URL → yes | e.g. `cloudflared tunnel --url http://localhost:7420` |
 
-Notes:
-* A quick Cloudflare tunnel gets a **new URL every time `cloudflared` restarts**. After a restart, host again with the new
-  URL (Settings → Disconnect → Host a team; your Leader data is kept) and re-invite teammates — or use a named tunnel /
-  Tailscale for a stable address.
-* `ngrok http 7420` works the same way as `cloudflared` (paste its `https://` URL).
-* The **Team** page tells you whether teammates' connections are encrypted.
+Quorum works with **any** VPN — it doesn't install or control one; it only shows the addresses your computer already
+has. If no VPN shows up, connect it and reopen Host a team.
+
+**Only accept connections through this address** (on by default for VPN addresses): the Leader listens on that
+address only, so other networks you're on (café, office Wi-Fi) can't reach it at all. If the VPN isn't connected when
+Quorum starts, the dashboard says so — connect it and click **Restart**.
+
+#### Setting up Tailscale (free)
+
+1. **Host:** install [Tailscale](https://tailscale.com/download), sign in (Google / Microsoft / GitHub / Apple account).
+2. **Host:** in the Tailscale admin page, **share** your computer with each teammate (or invite them to your tailnet).
+3. **Teammates:** install Tailscale, sign in, accept the share.
+4. **Host:** open Quorum → **Host a team** → pick the Tailscale name (it's pre-selected) → Start hosting → invite
+   teammates as usual. The name never changes, so join codes keep working.
+
+If a teammate can't connect, their dashboard explains which network the team uses and what to check.
 
 ## 4. Join a team (everyone else)
 
