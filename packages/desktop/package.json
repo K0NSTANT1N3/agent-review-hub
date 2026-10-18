@@ -38,5 +38,10 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "vite": "^7.0.0"
+  },
+  "homepage": "https://github.com/K0NSTANT1N3/agent-review-hub",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/K0NSTANT1N3/agent-review-hub.git"
   }
 }

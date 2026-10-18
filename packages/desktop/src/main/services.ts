@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { promisify } from 'node:util';
 import { join } from 'node:path';
 import {
   API_ROUTES,
@@ -14,6 +16,8 @@ import {
 import type { ApiCallOptions, ApiResult, AppState, DesktopSettings, HostSetup, JoinSetup, Mode } from '../shared/ipc.js';
 import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl } from './join-code.js';
 import { UiStream } from './ui-stream.js';
+
+const execFileAsync = promisify(execFile);
 
 // Owns the in-process Leader (host mode) and Node daemon; no Electron imports so it is testable with plain Node.
 
@@ -33,6 +37,7 @@ export interface ServiceDeps {
   startDaemon(config: NodeConfig, opts: { idleSeconds?: () => number | null }): Promise<DaemonHandleLike>;
   secrets: { encrypt(plain: string): string; decrypt(stored: string): string };
   idleSeconds?: () => number | null;
+  claudeExecutable?: () => string | undefined;
 }
 
 interface StoredConfig {
@@ -188,6 +193,30 @@ export class Services {
       this.daemon.updateSettings(ownerSettings(settings));
     }
     return this.changed();
+  }
+
+  /** Cheap readiness check of the configured agent (no model call, no tokens). */
+  async checkAgent(): Promise<{ ok: boolean; detail: string }> {
+    const adapter = this.requireConfig().settings.adapter;
+    if (adapter.type === 'mock') {
+      return existsSync(adapter.scriptPath) ? { ok: true, detail: 'Mock script found.' } : { ok: false, detail: `Mock script not found: ${adapter.scriptPath}` };
+    }
+    if (adapter.type === 'opencode') {
+      try {
+        const res = await fetch(new URL('/doc', adapter.baseUrl), { signal: AbortSignal.timeout(5000) });
+        return { ok: res.ok, detail: res.ok ? `opencode server reachable at ${adapter.baseUrl}.` : `opencode answered HTTP ${res.status}.` };
+      } catch (error) {
+        return { ok: false, detail: `Cannot reach opencode at ${adapter.baseUrl}: ${describe(error)}` };
+      }
+    }
+    const bin = this.deps.claudeExecutable?.();
+    if (bin === undefined) return { ok: false, detail: 'The bundled Claude Code CLI was not found. Reinstall Quorum or set QUORUM_CLAUDE_PATH.' };
+    try {
+      const { stdout } = await execFileAsync(bin, ['--version'], { timeout: 20_000 });
+      return { ok: true, detail: `Claude Code ${stdout.trim()} is ready. If agent turns fail, run \`claude\` once in a terminal to sign in.` };
+    } catch (error) {
+      return { ok: false, detail: `Claude Code could not start: ${describe(error)}` };
+    }
   }
 
   async restart(): Promise<AppState> {

@@ -63,6 +63,7 @@ export interface QuorumBridge {
   restart(): Promise<AppState>;
   reset(): Promise<AppState>;
   networkAddresses(): Promise<string[]>;
+  checkAgent(): Promise<{ ok: boolean; detail: string }>;
   openExternal(url: string): Promise<void>;
   api<R extends ApiRouteName>(route: R, options?: ApiCallOptions): Promise<ApiResult<R>>;
   onState(listener: (state: AppState) => void): () => void;
@@ -78,6 +79,7 @@ export const IPC = {
   restart: 'quorum:restart',
   reset: 'quorum:reset',
   networkAddresses: 'quorum:network-addresses',
+  checkAgent: 'quorum:check-agent',
   openExternal: 'quorum:open-external',
   api: 'quorum:api',
   state: 'quorum:state',

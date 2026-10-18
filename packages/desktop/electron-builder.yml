@@ -1,5 +1,7 @@
 appId: dev.agentreviewhub.quorum
 productName: Quorum
+executableName: quorum
+artifactName: Quorum-${version}-${os}-${arch}.${ext}
 directories:
   output: release
   buildResources: build
@@ -13,6 +15,7 @@ asarUnpack:
 npmRebuild: false
 linux:
   target: [AppImage, deb]
+  executableName: quorum
   category: Development
   maintainer: Agent Review Hub contributors <noreply@example.com>
 mac:

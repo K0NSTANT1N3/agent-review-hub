@@ -1,5 +1,6 @@
-import { realpathSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { CanUseTool, Options, PermissionResult, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AdapterError, type AgentAdapter, type Profile, type TurnResult } from './types.js';
 
@@ -102,11 +103,37 @@ function contextOf(u: UsageLike): number {
   return n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens);
 }
 
+/**
+ * Path of the Claude Code CLI shipped in the SDK's per-platform package. Packaged Electron apps keep it in
+ * app.asar.unpacked (executables cannot run from inside an asar archive). QUORUM_CLAUDE_PATH overrides it.
+ */
+export function resolveClaudeExecutable(): string | undefined {
+  const override = process.env.QUORUM_CLAUDE_PATH;
+  if (override !== undefined && override !== '') return override;
+  const report = (process as { report?: { getReport(): { header?: { glibcVersionRuntime?: string } } } }).report;
+  const musl = process.platform === 'linux' && report?.getReport().header?.glibcVersionRuntime === undefined;
+  const platformPackage = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}${musl ? '-musl' : ''}`;
+  try {
+    const req = createRequire(import.meta.url);
+    const sdkDir = dirname(req.resolve('@anthropic-ai/claude-agent-sdk'));
+    const pkgJson = createRequire(join(sdkDir, 'package.json')).resolve(`${platformPackage}/package.json`);
+    let bin = join(dirname(pkgJson), process.platform === 'win32' ? 'claude.exe' : 'claude');
+    const unpacked = bin.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`);
+    if (unpacked !== bin && existsSync(unpacked)) bin = unpacked;
+    return existsSync(bin) ? bin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class ClaudeCodeAdapter implements AgentAdapter {
   private readonly queryFn: QueryFn;
 
+  private readonly executable: string | undefined;
+
   constructor(private readonly options: ClaudeCodeAdapterOptions) {
     this.queryFn = options.queryFn ?? defaultQuery;
+    this.executable = options.queryFn === undefined ? resolveClaudeExecutable() : undefined;
   }
 
   // Claude Code creates sessions lazily; the id arrives with the first turn's init message.
@@ -144,6 +171,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // Isolation: the owner's personal settings/hooks must not widen these permissions.
       settingSources: [],
       abortController: controller,
+      ...(this.executable !== undefined ? { pathToClaudeCodeExecutable: this.executable } : {}),
       ...(this.options.model !== undefined ? { model: this.options.model } : {}),
       ...(opts.nativeId !== null ? { resume: opts.nativeId } : {}),
     };

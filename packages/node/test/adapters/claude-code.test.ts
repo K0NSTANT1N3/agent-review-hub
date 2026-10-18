@@ -200,3 +200,17 @@ describe('path confinement and profiles', () => {
     expect(await ask('author', 'Bash', {})).toMatchObject({ behavior: 'deny' });
   });
 });
+
+describe('resolveClaudeExecutable', () => {
+  it('finds the platform CLI shipped with the SDK, or honours QUORUM_CLAUDE_PATH', async () => {
+    const { resolveClaudeExecutable } = await import('../../src/adapters/claude-code.js');
+    const found = resolveClaudeExecutable();
+    if (found !== undefined) expect(found).toMatch(/claude(\.exe)?$/);
+    process.env.QUORUM_CLAUDE_PATH = '/opt/claude';
+    try {
+      expect(resolveClaudeExecutable()).toBe('/opt/claude');
+    } finally {
+      delete process.env.QUORUM_CLAUDE_PATH;
+    }
+  });
+});
