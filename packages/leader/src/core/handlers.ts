@@ -96,7 +96,9 @@ export class EventHandlers {
       if (before.state !== 'IN_REVIEW' || conversation.state !== 'active' || conversation.task_id !== taskId) throw new Error('Task is not ready for this review');
       const task = this.db.tasks.update(taskId, { review_round: before.review_round + 1 });
       const estimated = this.estimate(task, conversation.reviewer_agent_id, 'reviewer');
-      const command = kind === 'start' ? commands.reviewStart(this.db, task, conversation, estimated)
+      // A human can send back or approve before the first review completes; then there is no reviewed commit yet.
+      const start = kind === 'start' || task.last_reviewed_commit === null;
+      const command = start ? commands.reviewStart(this.db, task, conversation, estimated)
         : commands.reviewRereview(this.db, task, conversation, estimated, summary, reason);
       return this.locks.sendToSession(conversation.reviewer_session_id, command);
     });

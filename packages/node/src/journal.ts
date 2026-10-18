@@ -207,15 +207,17 @@ export class NodeJournal {
 
   recoverOnStartup(): number {
     const recover = this.db.transaction(() => {
-      const rows = this.db.prepare("SELECT * FROM inbox WHERE state = 'running' ORDER BY received_at, msg_id")
-        .all() as InboxRow[];
+      // Turn commands still queued behind another command were acked but never run; report them too,
+      // or the Leader waits forever (a resend is deduplicated by msg_id).
+      const rows = (this.db.prepare("SELECT * FROM inbox WHERE state IN ('running', 'received') ORDER BY received_at, msg_id")
+        .all() as InboxRow[]).filter((row) => row.state === 'running' || isTurnCommand(row));
       for (const row of rows) {
         const evt = interruptedEvent(row);
         const resultEvtMsgId = randomUUID();
         this.insertEvent(resultEvtMsgId, evt, this.now());
         this.db.prepare(`
           UPDATE inbox SET state = 'done', result_evt_msg_id = ?, finished_at = ?
-          WHERE msg_id = ? AND state = 'running'
+          WHERE msg_id = ? AND state IN ('running', 'received')
         `).run(resultEvtMsgId, this.now(), row.msg_id);
       }
       return rows.length;
@@ -239,6 +241,15 @@ export async function openJournal(dataDir: string, now: () => number = Date.now)
 
 export function recoverOnStartup(journal: NodeJournal): number {
   return journal.recoverOnStartup();
+}
+
+function isTurnCommand(row: InboxRow): boolean {
+  try {
+    const type = (JSON.parse(row.cmd) as { type?: unknown }).type;
+    return typeof type === 'string' && (type.startsWith('author.') || type.startsWith('review.') || type === 'directive.run');
+  } catch {
+    return false;
+  }
 }
 
 function interruptedEvent(row: InboxRow): Event {

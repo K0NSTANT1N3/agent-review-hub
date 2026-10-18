@@ -41,6 +41,11 @@ function session(id: string, agentId: string, patch: Partial<Parameters<typeof d
   return db.sessions.insert({ id, agent_id: agentId, state: 'idle', created_at: now, last_used_at: now, ...patch });
 }
 
+/** An idle session that the Leader opened with `profile`. */
+function openedSession(id: string, agentId: string, profile: 'author' | 'reviewer' | 'directive', patch: Partial<Parameters<typeof db.sessions.insert>[0]> = {}) {
+  return session(id, agentId, { profile, ...patch });
+}
+
 function task(patch: Partial<Parameters<typeof db.tasks.insert>[0]> = {}): TaskRow {
   return db.tasks.insert({
     title: 'Task', description: 'Do it', requester_agent_id: 'alice-claude', state: 'QUEUED',
@@ -332,6 +337,30 @@ describe('sessions and directives', () => {
     scheduler.schedule();
     expect(db.sessions.require('a').state).toBe('closing');
     expect(sent('session.close')[0]!.frame.cmd.sid).toBe('a');
+  });
+
+  it('never reuses an idle session opened for another role', () => {
+    agent('bob-claude');
+    openedSession('b-review', 'bob-claude', 'reviewer');
+    db.directives.insert({ id: 'd1', requester: 'alice', agent_id: 'bob-claude', text: 'Where is X?', state: 'queued', created_at: now });
+    scheduler.schedule();
+    expect(db.directives.require('d1')).toMatchObject({ state: 'queued', session_id: null });
+    expect(sent('directive.run')).toHaveLength(0);
+    expect(sent('session.open').at(-1)!.frame.cmd).toMatchObject({ profile: 'directive' });
+  });
+
+  it('reviews on a reviewer session even when the agent has an idle author session on the same files', () => {
+    agent('bob-claude');
+    openedSession('b-author', 'bob-claude', 'author', { files: JSON.stringify(['src/auth/login.ts']), task_history: '[7]' });
+    const t = awaitingReview();
+    scheduler.schedule();
+    expect(db.tasks.require(t.id).state).toBe('AWAITING_REVIEWER');
+    expect(sent('review.start')).toHaveLength(0);
+    const open = sent('session.open').at(-1)!;
+    expect(open).toMatchObject({ agentId: 'bob-claude', frame: { cmd: { profile: 'reviewer' } } });
+    handlers.handle('bob-claude', { type: 'session.opened', inReplyTo: open.frame.msgId, sid: open.frame.cmd.sid, ok: true });
+    expect(db.tasks.require(t.id).state).toBe('IN_REVIEW');
+    expect(sent('review.start')[0]!.frame.cmd).toMatchObject({ sid: open.frame.cmd.sid });
   });
 
   it('runs a queued directive on an idle session with the requester name', () => {

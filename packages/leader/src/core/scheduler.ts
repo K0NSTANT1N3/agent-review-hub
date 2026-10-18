@@ -293,6 +293,7 @@ export class Scheduler {
       const current = this.db.tasks.require(task.id);
       if (current.author_agent_id === null || current.author_session_id === null) throw new Error('task has no author');
       const session = this.db.sessions.require(sid);
+      this.db.tasks.update(task.id, { turn_retries: 0 });
       const conversationId = randomUUID();
       this.db.conversations.insert({
         id: conversationId,
@@ -348,7 +349,6 @@ export class Scheduler {
   // Sessions — spec §9.4
   // ---------------------------------------------------------------------------
 
-  /** Best reusable idle session for these files, or null to open a new one. */
   /** An idle session of `profile` worth reusing, or null to open a new one. Nodes fix a session's profile at open. */
   private pickSession(agent: AgentRow, files: string[], profile: SessionProfile): string | null {
     const maxContext = this.config.scheduler.sessionReuseMaxContextPct * agent.context_window;

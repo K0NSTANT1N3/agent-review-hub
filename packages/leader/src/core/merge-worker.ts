@@ -59,7 +59,7 @@ export class MergeWorker {
       return;
     }
     this.running = true;
-    this.idle = this.drain().finally(() => {
+    this.idle = this.drain().catch((error: unknown) => this.log.error({ err: error }, 'merge queue drain failed')).finally(() => {
       this.running = false;
       if (this.again) {
         this.again = false;

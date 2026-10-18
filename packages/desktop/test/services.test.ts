@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addAgent, startLeader } from '@quorum/leader';
 import type { NodeConfig, OwnerSettings } from '@quorum/protocol';
 import { DEFAULT_SETTINGS } from '../src/shared/ipc.js';
-import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, publicLeaderUrl } from '../src/main/join-code.js';
+import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, isValidPublicHost, publicLeaderUrl } from '../src/main/join-code.js';
 import { networkInterfaces } from 'node:os';
 import { startDaemon } from '@quorum/node';
 import { Services, type DaemonHandleLike, type ServiceDeps } from '../src/main/services.js';
@@ -65,6 +65,17 @@ beforeEach(() => {
 afterEach(async () => {
   for (const s of services.splice(0)) await s.stopAll();
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe('isValidPublicHost', () => {
+  it('accepts bare hosts, bracketed IPv6 and tunnel URLs; rejects ports and paths on bare hosts', () => {
+    for (const ok of ['', '192.168.1.5', 'devbox.local', '[fe80::1]', 'https://abc.trycloudflare.com', 'wss://leader.example.com/x']) {
+      expect(isValidPublicHost(ok)).toBe(true);
+    }
+    for (const bad of ['192.168.1.5:7420', 'host/path', 'two words', 'fe80::1', 'https://']) {
+      expect(isValidPublicHost(bad)).toBe(false);
+    }
+  });
 });
 
 describe('join codes', () => {
