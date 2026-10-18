@@ -171,7 +171,9 @@ interface Wait {
   to: Party;
   taskId: number | null;
   reason: string;
-  since: number;
+  /** When the wait started, if known; rate-limit waits only know when they end. */
+  since: number | null;
+  until: number | null;
 }
 
 const PARTY: Record<Party['kind'], { tag: string; tone: Tone | 'accent' }> = {
@@ -196,6 +198,7 @@ function waitsFor(activities: TeamActivityView[], queue: QueueEntryView[]): Wait
         taskId: row.taskId,
         reason: row.waitingReason ?? 'Waiting',
         since: row.stateChangedAt,
+        until: null,
       });
     } else if (row.waitingOn === 'rate_limit' && row.rateLimitedUntil !== null) {
       waits.push({
@@ -204,22 +207,26 @@ function waitsFor(activities: TeamActivityView[], queue: QueueEntryView[]): Wait
         to: { kind: 'limit', label: 'rate-limit reset' },
         taskId: null,
         reason: `Resets at ${new Date(row.rateLimitedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-        since: row.stateChangedAt,
+        // No rate-limit start time is stored (stateChangedAt follows heartbeats here), so show the time left.
+        since: null,
+        until: row.rateLimitedUntil,
       });
     }
   }
   for (const entry of queue) {
     if (entry.waitingOn === 'scheduler' || entry.waitingOn === 'merge') continue;
+    // The task's author can never review it, so it is not who the task waits on.
+    const able = entry.candidates.filter((c) => c.blocker !== `wrote #${entry.taskId}`);
     const to: Party = entry.needs === 'human'
       ? { kind: 'human', label: `a human (${entry.requesterOwner})` }
       : entry.waitingOn === 'rate_limit'
         ? { kind: 'limit', label: 'rate-limit reset' }
-        : entry.candidates.length === 1 && entry.candidates[0] !== undefined
-          ? { kind: 'agent', label: `${entry.candidates[0].ownerName}'s agent` }
+        : able.length === 1 && able[0] !== undefined
+          ? { kind: 'agent', label: `${able[0].ownerName}'s agent` }
           : { kind: 'free', label: `a free ${entry.needs}` };
-    waits.push({ key: `task:${entry.taskId}`, from: { kind: 'task', label: `Task #${entry.taskId}` }, to, taskId: entry.taskId, reason: entry.reason, since: entry.waitingSince });
+    waits.push({ key: `task:${entry.taskId}`, from: { kind: 'task', label: `Task #${entry.taskId}` }, to, taskId: entry.taskId, reason: entry.reason, since: entry.waitingSince, until: null });
   }
-  return waits.sort((a, b) => a.since - b.since);
+  return waits.sort((a, b) => (a.since ?? Number.MAX_SAFE_INTEGER) - (b.since ?? Number.MAX_SAFE_INTEGER));
 }
 
 function Chip({ party }: { party: Party }) {
@@ -249,7 +256,7 @@ export function WaitsFor({ activities, queue, onOpenTask }: { activities: TeamAc
               ) : (
                 <span className="wait-reason muted" title={w.reason}>{w.reason}</span>
               )}
-              <span className="mono muted small">{duration(w.since, now)}</span>
+              <span className="mono muted small">{w.since !== null ? duration(w.since, now) : w.until !== null ? `${duration(now, w.until)} left` : ''}</span>
             </div>
           ))}
         </div>
