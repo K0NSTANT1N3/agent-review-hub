@@ -13,7 +13,9 @@
   "bin": {
     "quorum-node": "./dist/cli.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
@@ -21,6 +23,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.302",
     "@quorum/protocol": "workspace:*",
     "better-sqlite3": "^12.11.1",
     "pino": "^9.14.0",
