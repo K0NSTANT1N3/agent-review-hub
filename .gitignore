@@ -31,3 +31,7 @@ transcripts/
 Thumbs.db
 .idea/
 .vscode/
+
+# Quorum runtime data
+data/
+release/
