@@ -10,15 +10,31 @@ interface OpencodeModule {
   createOpencodeAdapter(config: Extract<AdapterConfig, { type: 'opencode' }>): AgentAdapter | Promise<AgentAdapter>;
 }
 
+interface CodexModule {
+  createCodexAdapter(config: Extract<AdapterConfig, { type: 'codex' }>): AgentAdapter;
+}
+
+interface PiModule {
+  createPiAdapter(config: Extract<AdapterConfig, { type: 'pi' | 'omp' }>): AgentAdapter;
+}
+
 /** Load only the selected adapter so mock-only installations need no provider SDK. */
 export async function createAdapter(
   config: AdapterConfig,
   options: { authorBashAllow?: readonly string[] } = {},
 ): Promise<AgentAdapter> {
   switch (config.type) {
-    case 'codex':
+    case 'codex': {
+      const modulePath: string = './codex.js';
+      const adapterModule = await import(modulePath) as CodexModule;
+      return adapterModule.createCodexAdapter(config);
+    }
     case 'pi':
-    case 'omp':
+    case 'omp': {
+      const modulePath: string = './pi.js';
+      const adapterModule = await import(modulePath) as PiModule;
+      return adapterModule.createPiAdapter(config);
+    }
     case 'kilo':
       throw new Error(`${config.type} adapter not implemented yet`);
     case 'mock':
