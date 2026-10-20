@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNodeConfig, ownerSettingsFromNodeConfig, type NodeConfig, type OwnerSettings } from '@quorum/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import WebSocket from 'ws';
 import { LeaderClient } from '../../src/ws/leader-client.js';
 import { openJournal, type NodeJournal } from '../../src/journal.js';
 import { FakeLeader, welcomeFrame } from '../helpers/fake-leader.js';
@@ -13,6 +14,7 @@ const journals: NodeJournal[] = [];
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(clients.splice(0).map((client) => client.stop()));
   await Promise.all(leaders.splice(0).map((leader) => leader.stop()));
   for (const journal of journals.splice(0)) journal.close();
@@ -32,6 +34,7 @@ describe('LeaderClient', () => {
       getSettings: () => settings,
       idleSeconds: () => 42,
       getRateLimitedUntil: () => 5000,
+      detectedAgents: [{ type: 'codex', version: '1.2.3', trust: 'sandboxed' }],
     });
     client.start();
     const connection = await fixture.leader.waitForConnection();
@@ -40,6 +43,7 @@ describe('LeaderClient', () => {
       agentId: 'agent-1', token: 'secret', protocolVersion: expect.any(Number),
       settings: ownerSettingsFromNodeConfig(fixture.config), adapterType: 'mock',
       sessions: [{ sid: 'sid-open', alive: true, busy: true, contextTokens: 1234 }],
+      trust: 'enforced', detectedAgents: [{ type: 'codex', version: '1.2.3', trust: 'sandboxed' }],
     });
 
     connection.send(welcomeFrame({ heartbeatIntervalSec: 1 }));
@@ -49,6 +53,7 @@ describe('LeaderClient', () => {
       humanIdleSec: 42,
       rateLimitedUntil: 5000,
       sessions: [{ sid: 'sid-open', alive: true, busy: true, contextTokens: 1234 }],
+      trust: 'enforced', detectedAgents: [{ type: 'codex', version: '1.2.3', trust: 'sandboxed' }],
     });
 
     settings = { ...settings, paused: true };
@@ -117,6 +122,74 @@ describe('LeaderClient', () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(fixture.leader.connections).toHaveLength(1);
     expect(client.isConnected).toBe(false);
+  });
+
+  it('journals, replays, and ACKs transcripts while sending task events first', async () => {
+    const fixture = await createFixture();
+    const client = createClient(fixture, { random: () => 0 });
+    client.start();
+    const first = await fixture.leader.waitForConnection();
+    await first.next('hello');
+    first.send(welcomeFrame({ capabilities: ['transcript-v1'], resendUnackedSec: 1 }));
+    await first.next('heartbeat');
+    const batch = { sid: 'sid-1', taskId: 1, events: [{ kind: 'status' as const, text: 'working', seq: 1, at: 1234 }] };
+    const msgId = client.enqueueTranscript(batch)!;
+    const eventId = client.enqueueEvent({ type: 'session.opened', inReplyTo: 'open', sid: 'sid-1', ok: true });
+    await first.next('evt', (frame) => frame.msgId === eventId);
+    const transcript = await first.next('transcript');
+    expect(transcript).toEqual({ kind: 'transcript', msgId, ...batch });
+    expect(first.frames.findIndex((frame) => frame.kind === 'evt')).toBeLessThan(first.frames.findIndex((frame) => frame.kind === 'transcript'));
+    expect(await first.next('transcript', () => true, 2500)).toEqual(transcript);
+    await fixture.leader.restart();
+    await waitFor(() => !client.isConnected);
+    const offlineId = client.enqueueTranscript({ ...batch, events: [{ kind: 'status', text: 'offline', seq: 2, at: 2345 }] });
+    expect(offlineId).not.toBeNull();
+    const second = await fixture.leader.waitForConnection(2, 5000);
+    await second.next('hello');
+    second.send(welcomeFrame({ capabilities: ['transcript-v1'] }));
+    await second.next('heartbeat');
+    expect(await second.next('transcript')).toEqual(transcript);
+    expect(await second.next('transcript', (frame) => frame.msgId === offlineId)).toMatchObject({ events: [{ seq: 2, text: 'offline' }] });
+    second.send({ kind: 'ack', msgId });
+    second.send({ kind: 'ack', msgId: offlineId! });
+    await waitFor(() => fixture.journal.nextTranscript() === null);
+    expect(fixture.journal.nextTranscript()).toBeNull();
+  });
+
+  it('drops transcripts for old Leaders, before welcome, and after disconnect', async () => {
+    const fixture = await createFixture();
+    const client = createClient(fixture);
+    const batch = { sid: 'sid-1', taskId: 1, events: [{ kind: 'status' as const, text: 'working', seq: 1, at: 1 }] };
+    expect(client.enqueueTranscript(batch)).toBeNull();
+    fixture.journal.enqueueTranscript(batch);
+    client.start();
+    const connection = await fixture.leader.waitForConnection();
+    await connection.next('hello');
+    connection.send(welcomeFrame());
+    await connection.next('heartbeat');
+    expect(client.supportsTranscripts).toBe(false);
+    expect(client.enqueueTranscript(batch)).toBeNull();
+    expect(fixture.journal.nextTranscript()).toBeNull();
+    expect(connection.frames.some((frame) => frame.kind === 'transcript')).toBe(false);
+    await client.stop();
+    expect(client.enqueueTranscript(batch)).toBeNull();
+  });
+
+  it('defers transcript sends under socket pressure while task events remain immediate', async () => {
+    const fixture = await createFixture();
+    const client = createClient(fixture);
+    client.start();
+    const connection = await fixture.leader.waitForConnection();
+    await connection.next('hello');
+    connection.send(welcomeFrame({ capabilities: ['transcript-v1'] }));
+    await connection.next('heartbeat');
+    const pressure = vi.spyOn(WebSocket.prototype, 'bufferedAmount', 'get').mockReturnValue(100000);
+    client.enqueueTranscript({ sid: 'sid-1', taskId: 1, events: [{ kind: 'status', text: 'queued', seq: 1, at: 1 }] });
+    const eventId = client.enqueueEvent({ type: 'session.opened', inReplyTo: 'open', sid: 'sid-1', ok: true });
+    await connection.next('evt', (frame) => frame.msgId === eventId);
+    expect(connection.frames.some((frame) => frame.kind === 'transcript')).toBe(false);
+    pressure.mockRestore();
+    expect(await connection.next('transcript')).toMatchObject({ sid: 'sid-1', events: [{ text: 'queued' }] });
   });
 
   it('allows plaintext connections to private and public Leaders', async () => {

@@ -5,6 +5,7 @@ import {
   ownerSettingsFromNodeConfig,
   parseLeaderToNodeFrame,
   type Command,
+  type DetectedAgent,
   type Event,
   type NodeConfig,
   type NodeStatus,
@@ -12,8 +13,10 @@ import {
   type OwnerSettings,
   type RejectReason,
   type WelcomeFrame,
+  type TranscriptBatch,
 } from '@quorum/protocol';
 import type { NodeJournal } from '../journal.js';
+import { adapterTrust } from '../detect.js';
 
 const NODE_VERSION = '0.1.0';
 const MAX_BACKOFF_MS = 30_000;
@@ -28,6 +31,7 @@ export interface LeaderClientOptions {
   assumeIdle?: boolean;
   insecure?: boolean;
   getRateLimitedUntil?: () => number | null;
+  detectedAgents?: readonly DetectedAgent[];
   onWelcome?: (welcome: WelcomeFrame) => void;
   onReject?: (reason: RejectReason) => void;
   onError?: (error: Error) => void;
@@ -47,6 +51,9 @@ export class LeaderClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private resendTimer: ReturnType<typeof setInterval> | null = null;
   private welcomeFrame: WelcomeFrame | null = null;
+  private transcriptTimer: ReturnType<typeof setImmediate> | null = null;
+  private transcriptRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private transcriptCursor = 0;
 
   constructor(private readonly options: LeaderClientOptions) {
     this.url = normalizeLeaderUrl(options.config.leaderUrl);
@@ -58,6 +65,10 @@ export class LeaderClient {
 
   get isConnected(): boolean {
     return this.welcomed && this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  get supportsTranscripts(): boolean {
+    return !this.stopped && !this.terminal && this.welcomeFrame?.capabilities?.includes('transcript-v1') === true;
   }
 
   start(): void {
@@ -91,7 +102,14 @@ export class LeaderClient {
   /** Journal the event before attempting delivery; it remains queued until acked. */
   enqueueEvent(event: Event): string {
     const msgId = this.options.journal.enqueueEvent(event);
-    this.flushOutbox();
+    this.flushEvents();
+    return msgId;
+  }
+
+  enqueueTranscript(batch: TranscriptBatch): string | null {
+    if (!this.supportsTranscripts) return null;
+    const msgId = this.options.journal.enqueueTranscript(batch);
+    this.scheduleTranscripts();
     return msgId;
   }
 
@@ -117,6 +135,8 @@ export class LeaderClient {
         settings: this.settings(),
         sessions: this.sessionReports(),
         adapterType: this.options.config.adapter.type,
+        trust: adapterTrust(this.options.config.adapter.type),
+        detectedAgents: [...this.options.detectedAgents ?? []],
       });
     });
     socket.on('message', (data) => this.handleMessage(socket, data.toString()));
@@ -142,6 +162,8 @@ export class LeaderClient {
         this.welcomed = true;
         this.reconnectAttempt = 0;
         this.welcomeFrame = frame;
+        if (!frame.capabilities?.includes('transcript-v1')) this.options.journal.discardTranscripts();
+        this.transcriptCursor = 0;
         this.startTimers(frame);
         this.options.onWelcome?.(frame);
         this.sendHeartbeat();
@@ -197,6 +219,8 @@ export class LeaderClient {
       humanIdleSec,
       rateLimitedUntil: this.options.getRateLimitedUntil?.() ?? null,
       sessions: this.sessionReports(),
+      trust: adapterTrust(this.options.config.adapter.type),
+      detectedAgents: [...this.options.detectedAgents ?? []],
     };
     this.sendFrame({ kind: 'heartbeat', status });
   }
@@ -215,10 +239,38 @@ export class LeaderClient {
   }
 
   private flushOutbox(): void {
+    this.flushEvents();
+    this.transcriptCursor = 0;
+    this.scheduleTranscripts();
+  }
+
+  private flushEvents(): void {
     if (!this.isConnected) return;
     for (const event of this.options.journal.unackedEvents()) {
       this.sendFrame({ kind: 'evt', msgId: event.msgId, evt: event.evt });
     }
+  }
+
+  private scheduleTranscripts(): void {
+    if (!this.isConnected || !this.supportsTranscripts || this.transcriptTimer !== null || this.transcriptRetryTimer !== null) return;
+    this.transcriptTimer = setImmediate(() => {
+      this.transcriptTimer = null;
+      if (!this.isConnected || !this.supportsTranscripts) return;
+      // Leave room for task events; send at most one transcript per event-loop turn.
+      if ((this.socket?.bufferedAmount ?? 0) > 65536) {
+        this.transcriptRetryTimer = setTimeout(() => {
+          this.transcriptRetryTimer = null;
+          this.scheduleTranscripts();
+        }, 25);
+        return;
+      }
+      const record = this.options.journal.nextTranscript(this.transcriptCursor);
+      if (record === null) return;
+      this.transcriptCursor = record.rowid;
+      this.options.journal.markTranscriptSent(record.msgId);
+      this.sendFrame({ kind: 'transcript', msgId: record.msgId, ...record.batch });
+      this.scheduleTranscripts();
+    });
   }
 
   private sendFrame(frame: NodeToLeaderFrame): void {
@@ -245,6 +297,10 @@ export class LeaderClient {
   }
 
   private clearTimers(): void {
+    if (this.transcriptTimer !== null) clearImmediate(this.transcriptTimer);
+    this.transcriptTimer = null;
+    if (this.transcriptRetryTimer !== null) clearTimeout(this.transcriptRetryTimer);
+    this.transcriptRetryTimer = null;
     if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer);
     if (this.resendTimer !== null) clearInterval(this.resendTimer);
     this.heartbeatTimer = null;

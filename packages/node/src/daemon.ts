@@ -18,6 +18,7 @@ import { ensureBaseClone, type WorktreeConfig } from './git/worktrees.js';
 import { NodeJournal, openJournal } from './journal.js';
 import { CommandRunner } from './runner/command-runner.js';
 import { LeaderClient } from './ws/leader-client.js';
+import { adapterTrust, detectAgents } from './detect.js';
 
 const DEFAULT_TURN_TIMEOUT_SEC = 1800;
 const ASSUMED_IDLE_SECONDS = Number.MAX_SAFE_INTEGER;
@@ -64,6 +65,8 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
     const adapter = options.adapter ?? await createAdapter(config.adapter, {
       authorBashAllow: config.authorBashAllow,
     });
+    const detectedAgents = await detectAgents(config.adapter);
+    const trust = adapterTrust(config.adapter.type);
     let settings = ownerSettingsFromNodeConfig(config);
     let mainBranch = 'main';
     let turnTimeoutSec = DEFAULT_TURN_TIMEOUT_SEC;
@@ -97,6 +100,8 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
         humanIdleSec,
         rateLimitedUntil: getRateLimitedUntil(),
         sessions,
+        trust,
+        detectedAgents,
       });
     };
 
@@ -105,6 +110,8 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
       journal,
       adapter,
       enqueueEvent: (event) => clientRef.current?.enqueueEvent(event) ?? journal.enqueueEvent(event),
+      enqueueTranscript: (batch) => { clientRef.current?.enqueueTranscript(batch); },
+      transcriptsEnabled: () => clientRef.current?.supportsTranscripts === true,
       mainBranch: () => mainBranch,
       turnTimeoutSec: () => turnTimeoutSec,
       getContextWindow: () => settings.contextWindow,
@@ -132,6 +139,7 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
       ...(options.assumeIdle === undefined ? {} : { assumeIdle: options.assumeIdle }),
       ...(options.insecure === undefined ? {} : { insecure: options.insecure }),
       getRateLimitedUntil,
+      detectedAgents,
       onWelcome: (welcome) => {
         mainBranch = welcome.mainBranch;
         turnTimeoutSec = welcome.turnTimeoutSec;
