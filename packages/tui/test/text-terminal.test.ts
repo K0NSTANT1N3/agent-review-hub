@@ -1,0 +1,41 @@
+import { EventEmitter } from 'node:events';
+import { describe, expect, it, vi } from 'vitest';
+import { cleanText, editText, editorLine, emptyEditor, fit, widthOf, wrap } from '../src/text.js';
+import { registerTerminalCleanup } from '../src/terminal.js';
+
+describe('terminal text', () => {
+  it('strips remote terminal escape sequences, hyperlinks, controls and handles wide/combining characters', () => {
+    expect(cleanText('\u001b[31mred\u001b[0m\u0007\u001b]8;;https://evil.test\u0007link\u001b]8;;\u0007')).toBe('redlink');
+    expect(widthOf('你e\u0301')).toBe(3);
+    expect(fit('你e\u0301x', 3)).toBe('你e\u0301');
+    expect(wrap('你你ab\nc', 3)).toEqual(['你', '你a', 'b', 'c']);
+  });
+
+  it('edits graphemes with arrows, home/end, delete/backspace and a length cap', () => {
+    let editor = editText(emptyEditor, 'a🙂b', {});
+    editor = editText(editor, '', { leftArrow: true });
+    editor = editText(editor, '', { backspace: true });
+    expect(editor).toEqual({ value: 'ab', cursor: 1 });
+    editor = editText(editor, 'X', {});
+    expect(editor.value).toBe('aXb');
+    editor = editText(editor, '', { home: true });
+    editor = editText(editor, '', { delete: true });
+    expect(editor).toEqual({ value: 'Xb', cursor: 0 });
+    editor = editText(editor, '', { end: true });
+    expect(editText(editor, 'long', {}, 3)).toEqual(editor);
+    expect(editorLine(editor, 10)).toBe('Xb▏');
+    expect(editText(emptyEditor, 'a\nb', {}).value).toBe('a b');
+  });
+});
+
+it('unmounts on SIGINT/SIGTERM so Ink restores alternate screen and raw mode; removes listeners', () => {
+  const target = new EventEmitter();
+  const unmount = vi.fn();
+  const remove = registerTerminalCleanup({ unmount }, target as unknown as NodeJS.Process);
+  target.emit('SIGINT');
+  target.emit('SIGTERM');
+  expect(unmount).toHaveBeenCalledTimes(2);
+  remove();
+  expect(target.listenerCount('SIGINT')).toBe(0);
+  expect(target.listenerCount('SIGTERM')).toBe(0);
+});
