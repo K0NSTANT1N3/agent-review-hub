@@ -1,0 +1,139 @@
+import { AgentEventSchema } from '@quorum/protocol';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createCodexAdapter } from '../../src/adapters/codex.js';
+import { createAdapter } from '../../src/adapters/index.js';
+import type { AgentEventInput, Profile } from '../../src/adapters/types.js';
+import { fixture, jsonLines, replaySpawn, ReplayProcess, turn } from './cli-fixtures.js';
+
+afterEach(() => vi.useRealTimers());
+
+const threadId = '01a15b11-f651-70a0-a2e6-9291f3c055a2';
+const config = { type: 'codex', contextWindow: 200_000 } as const;
+const completed = { type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 2 } };
+const message = (text: string) => ({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
+const transcript = (...events: unknown[]) => jsonLines({ type: 'thread.started', thread_id: threadId }, ...events, completed);
+
+describe('Codex adapter', () => {
+  it('replays both captures with ordered tools, final text, session recall and raw usage', async () => {
+    const replay = replaySpawn([fixture('codex-t1'), fixture('codex-t2')]);
+    const adapter = createCodexAdapter(config, replay);
+    expect(await adapter.createSession({ cwd: '/work/repo', profile: 'author' })).toEqual({ nativeId: null });
+    const first: AgentEventInput[] = [];
+    const result = await turn(adapter, { onEvent: (event) => first.push(event) });
+    expect(result).toMatchObject({ nativeId: threadId, text: 'DONE 3', usage: { inputTokens: 107_008, outputTokens: 339 } });
+    expect(result.contextTokens).toBeGreaterThan(0);
+    expect(result.contextTokens).toBeLessThan(result.usage.inputTokens);
+    expect(first.map((event) => event.kind)).toEqual([
+      'text', 'tool_call', 'tool_result', 'tool_call', 'tool_call', 'tool_result', 'tool_result',
+      'tool_call', 'tool_result', 'tool_call', 'tool_result', 'tool_call', 'tool_result', 'text', 'usage',
+    ]);
+    first.forEach((event, index) => AgentEventSchema.parse({ ...event, seq: index + 1, at: 0 }));
+    const calls = first.filter((event) => event.kind === 'tool_call');
+    const results = first.filter((event) => event.kind === 'tool_result');
+    expect(calls.map((event) => event.toolKind)).toEqual(['bash', 'bash', 'bash', 'bash', 'edit', 'bash']);
+    expect(results.map((event) => event.id).sort()).toEqual(calls.map((event) => event.id).sort());
+    expect(results.find((event) => event.exitCode === 1)).toMatchObject({ ok: false, output: '' });
+    expect(calls[4]).toMatchObject({ name: 'file_change', paths: ['/work/repo/math.js'] });
+    expect(results.find((event) => event.id === calls[4]!.id)).toEqual({ kind: 'tool_result', id: calls[4]!.id, ok: true, output: '' });
+    expect(results.at(-1)).toMatchObject({ ok: true, exitCode: 0, output: '3\n' });
+    expect(first.at(-1)).toEqual({ kind: 'usage', inputTokens: 107_008, outputTokens: 339 });
+    const second: AgentEventInput[] = [];
+    const resumed = await turn(adapter, { nativeId: result.nativeId, onEvent: (event) => second.push(event) });
+    expect(resumed).toMatchObject({ nativeId: threadId, text: 'subtract', usage: { inputTokens: 143_706, outputTokens: 357 } });
+    expect(resumed.contextTokens).toBeGreaterThan(result.contextTokens);
+    expect(second.map((event) => event.kind)).toEqual(['text', 'usage']);
+    expect(replay.calls[1]![1].slice(0, 3)).toEqual(['exec', 'resume', threadId]);
+    await adapter.closeSession(threadId);
+  });
+
+  it.each<Profile>(['author', 'reviewer', 'directive'])('sets the %s sandbox on fresh and resumed turns', async (profile) => {
+    const replay = replaySpawn([fixture('codex-t2'), fixture('codex-t2')]);
+    const adapter = createCodexAdapter({ ...config, binaryPath: '/custom/codex', model: 'test-model' }, replay);
+    const prompt = '-literal $(prompt); text';
+    await turn(adapter, { profile, prompt });
+    await turn(adapter, { nativeId: threadId, profile, prompt });
+    const sandbox = profile === 'author' ? 'workspace-write' : 'read-only';
+    expect(replay.calls[0]).toEqual(['/custom/codex', [
+      'exec', '--json', '-s', sandbox, '--skip-git-repo-check', '-C', '/work/repo', '-m', 'test-model', '--', prompt,
+    ], { cwd: '/work/repo', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }]);
+    expect(replay.calls[1]![1]).toEqual([
+      'exec', 'resume', threadId, '--json', '-c', `sandbox_mode="${sandbox}"`, '--skip-git-repo-check', '-m', 'test-model', '--', prompt,
+    ]);
+  });
+
+  it('namespaces reused item ids across turns and adapter restarts', async () => {
+    const events: AgentEventInput[] = [];
+    const replay = replaySpawn([fixture('codex-t1'), fixture('codex-t1'), fixture('codex-t1')]);
+    const adapter = createCodexAdapter(config, replay);
+    const onEvent = (event: AgentEventInput) => events.push(event);
+    await turn(adapter, { onEvent });
+    await turn(adapter, { nativeId: threadId, onEvent });
+    await turn(createCodexAdapter(config, replay), { nativeId: threadId, onEvent });
+    const ids = events.filter((event) => event.kind === 'tool_call').map((event) => event.id);
+    expect(ids).toHaveLength(18);
+    expect(new Set(ids).size).toBe(18);
+  });
+
+  it('splits final text and bounds summaries, paths and UTF-8 tool output', async () => {
+    const text = '😀'.repeat(10_000);
+    const item = { id: 'item_2', type: 'file_change', changes: Array.from({ length: 25 }, () => ({ path: 'a'.repeat(1100), kind: 'update' })) };
+    const replay = replaySpawn([transcript(
+      { type: 'item.started', item },
+      { type: 'item.completed', item: { ...item, status: 'completed' } },
+      { type: 'item.completed', item: { id: 'item_3', type: 'command_execution', aggregated_output: '界'.repeat(3_000), status: 'completed' } },
+      message(text),
+    )]);
+    const events: AgentEventInput[] = [];
+    const result = await turn(createCodexAdapter(config, replay), { onEvent: (event) => events.push(event) });
+    expect(result.text).toBe(text);
+    events.forEach((event, index) => AgentEventSchema.parse({ ...event, seq: index + 1, at: 0 }));
+    const chunks = events.filter((event) => event.kind === 'text');
+    expect(chunks).toHaveLength(2);
+    expect(new Set(chunks.map((event) => event.messageId)).size).toBe(1);
+    expect(chunks.map((event) => event.text).join('')).toBe(text);
+    expect(events[0]).toMatchObject({ argsSummary: expect.any(String), paths: expect.any(Array) });
+    expect(events[2]).toMatchObject({ output: '界'.repeat(1_365) });
+  });
+
+  it.each([
+    { stdout: transcript(message('usage limit reached')), stderr: '' },
+    { stdout: transcript(message('normal reply')), stderr: 'rate limit reached' },
+    { stdout: jsonLines({ type: 'turn.failed', error: { message: 'HTTP 429' } }), stderr: '' },
+  ])('maps rate limits from agent text, stderr and failures', async ({ stdout, stderr }) => {
+    const replay = replaySpawn([stdout], stderr, 1);
+    await expect(turn(createCodexAdapter(config, replay))).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('rejects incomplete turns and reports the stderr tail plus malformed lines', async () => {
+    const replay = replaySpawn(['not JSON\n' + jsonLines(message('partial'))], 'x'.repeat(9_000) + 'diagnostic tail', 2);
+    await expect(turn(createCodexAdapter(config, replay))).rejects.toMatchObject({
+      code: 'ADAPTER_ERROR', message: expect.stringContaining('diagnostic tail'),
+    });
+    await expect(turn(createCodexAdapter(config, replaySpawn([jsonLines(completed)])))).rejects.toMatchObject({ code: 'ADAPTER_ERROR' });
+    await expect(turn(createCodexAdapter(config, replaySpawn([transcript()])))).rejects.toMatchObject({ code: 'ADAPTER_ERROR' });
+    await expect(turn(createCodexAdapter(config, replaySpawn([jsonLines({ type: 'thread.started', thread_id: threadId }, message('partial'))])))).rejects.toMatchObject({ code: 'ADAPTER_ERROR' });
+  });
+
+  it('tolerates NULs, malformed lines and unrelated JSON without losing completion', async () => {
+    const replay = replaySpawn(['garbage\nnull\n[]\n42\n' + transcript(message('DONE 3')).replaceAll('\n', '\0\n')]);
+    expect(await turn(createCodexAdapter(config, replay))).toMatchObject({ text: 'DONE 3' });
+  });
+
+  it.each(['CANCELLED', 'TIMEOUT'] as const)('maps %s after stopping the child', async (code) => {
+    vi.useFakeTimers();
+    const child = new ReplayProcess();
+    const controller = new AbortController();
+    const adapter = createCodexAdapter(config, { spawnFn: () => child });
+    const rejected = expect(turn(adapter, { signal: controller.signal, timeoutMs: 10 })).rejects.toMatchObject({ code });
+    if (code === 'CANCELLED') controller.abort();
+    await vi.advanceTimersByTimeAsync(10);
+    await rejected;
+    expect(child.signals).toEqual(['SIGTERM']);
+  });
+
+  it('registers Codex lazily without launching a turn', async () => {
+    const adapter = await createAdapter(config);
+    expect(await adapter.createSession({ cwd: '/repo', profile: 'reviewer' })).toEqual({ nativeId: null });
+    await expect(createAdapter({ type: 'kilo', contextWindow: 200_000 })).rejects.toThrow('kilo adapter not implemented yet');
+  });
+});

@@ -1,0 +1,101 @@
+import { randomUUID } from 'node:crypto';
+import type { AdapterConfig } from '@quorum/protocol';
+import { runCliProcess, type SpawnFn } from './cli-process.js';
+import { splitText, truncateUtf8 } from './event-utils.js';
+import { AdapterError, type AgentAdapter } from './types.js';
+
+type CodexConfig = Extract<AdapterConfig, { type: 'codex' }>;
+
+export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: SpawnFn } = {}): AgentAdapter {
+  const contextEstimates = new Map<string, number>();
+  return {
+    createSession: async () => ({ nativeId: null }),
+    runTurn: async ({ nativeId, cwd, profile, prompt, signal, timeoutMs, onEvent }) => {
+      const turnId = randomUUID();
+      const sandbox = profile === 'author' ? 'workspace-write' : 'read-only';
+      // exec resume has no -s or -C flags. Its config override reasserts the sandbox on every turn.
+      const argv = nativeId === null
+        ? ['exec', '--json', '-s', sandbox, '--skip-git-repo-check', '-C', cwd]
+        : ['exec', 'resume', nativeId, '--json', '-c', `sandbox_mode="${sandbox}"`, '--skip-git-repo-check'];
+      if (config.model !== undefined) argv.push('-m', config.model);
+      argv.push('--', prompt);
+      let id = nativeId;
+      let text = '';
+      let agentText = '';
+      let completed = false;
+      let receivedMessage = false;
+      let turnError = '';
+      let observedChars = prompt.length;
+      let usage = { inputTokens: 0, outputTokens: 0 };
+      const result = await runCliProcess({
+        binary: config.binaryPath ?? 'codex', argv, cwd, signal, timeoutMs, spawnFn: options.spawnFn,
+        onJson: (value) => {
+          const event = record(value);
+          const item = record(event.item);
+          if (event.type === 'thread.started' && typeof event.thread_id === 'string') id = event.thread_id;
+          if (event.type === 'error' || event.type === 'turn.failed') {
+            turnError = typeof event.message === 'string' ? event.message : JSON.stringify(event.error ?? event);
+          }
+          if (event.type === 'turn.completed') {
+            completed = true;
+            const counters = record(event.usage);
+            usage = { inputTokens: tokens(counters.input_tokens) ?? 0, outputTokens: tokens(counters.output_tokens) ?? 0 };
+            if (tokens(counters.input_tokens) !== undefined || tokens(counters.output_tokens) !== undefined) {
+              onEvent?.({ kind: 'usage', inputTokens: tokens(counters.input_tokens), outputTokens: tokens(counters.output_tokens) });
+            }
+          }
+          if (typeof item.id !== 'string') return;
+          const itemId = `${turnId}:${item.id}`.slice(0, 256);
+          if (event.type === 'item.completed' && item.type === 'agent_message' && typeof item.text === 'string') {
+            receivedMessage = true;
+            text = item.text;
+            agentText += item.text;
+            observedChars += item.text.length;
+            for (const chunk of splitText(text)) onEvent?.({ kind: 'text', mode: 'final', text: chunk, messageId: itemId });
+          }
+          if (item.type !== 'command_execution' && item.type !== 'file_change') return;
+          const changes = Array.isArray(item.changes) ? item.changes.map(record) : [];
+          if (event.type === 'item.started') {
+            const paths = changes.map((change) => change.path).filter((path): path is string => typeof path === 'string' && path.length > 0)
+              .slice(0, 20).map((path) => path.slice(0, 1024));
+            const summary = item.type === 'command_execution'
+              ? (typeof item.command === 'string' ? item.command : '')
+              : changes.map((change) => `${change.kind}: ${change.path}`).join(', ');
+            onEvent?.({
+              kind: 'tool_call', id: itemId, name: item.type, toolKind: item.type === 'file_change' ? 'edit' : 'bash',
+              argsSummary: summary.slice(0, 256), ...(paths.length === 0 ? {} : { paths }),
+            });
+          }
+          if (event.type === 'item.completed') {
+            const output = item.type === 'command_execution' && typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
+            observedChars += output.length;
+            const exitCode = typeof item.exit_code === 'number' && Number.isInteger(item.exit_code) ? item.exit_code : undefined;
+            onEvent?.({
+              kind: 'tool_result', id: itemId, ok: item.status === 'completed' && (exitCode === undefined || exitCode === 0),
+              ...(exitCode === undefined ? {} : { exitCode }), output: truncateUtf8(output),
+            });
+          }
+        },
+      });
+      const detail = [turnError, result.stderr, agentText].filter(Boolean).join('\n');
+      if (/rate limit|usage limit|429/i.test(detail)) throw new AdapterError('RATE_LIMITED', detail);
+      if (!completed || !receivedMessage || id === null || id.length === 0 || turnError !== '') {
+        throw new AdapterError('ADAPTER_ERROR', `Codex turn did not complete (exit ${result.code}, signal ${result.signal}). ${detail}\n${result.malformedLines.join('\n')}`);
+      }
+      // Codex exposes cumulative turn input, not context size. Estimate visible retained history
+      // at four characters/token; hidden prompts, reasoning and native compaction are unmeasured.
+      const contextTokens = (contextEstimates.get(id) ?? 0) + Math.ceil(observedChars / 4);
+      contextEstimates.set(id, contextTokens);
+      return { nativeId: id, text, usage, contextTokens };
+    },
+    closeSession: async (nativeId) => { contextEstimates.delete(nativeId); },
+  };
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function tokens(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
