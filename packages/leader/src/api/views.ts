@@ -46,6 +46,8 @@ export function agentView(db: LeaderDb, a: AgentRow, now: number, tz: string): A
     idleSessions: db.sessions.find({ agent_id: a.id, state: 'idle' }).length,
     lentToday: lentToday(db, a.id, now, tz),
     budgetRemaining: budgetRemaining(db, a, now, tz),
+    ...(a.trust === null ? {} : { trust: a.trust as AgentView['trust'] }),
+    ...(a.detected_agents === null ? {} : { detectedAgents: JSON.parse(a.detected_agents) as AgentView['detectedAgents'] }),
   };
 }
 

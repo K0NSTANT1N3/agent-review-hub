@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parseLeaderConfig, type Event, type HelloFrame, type NodeStatus, type SessionReport } from '@quorum/protocol';
+import { parseLeaderConfig, type Event, type HelloFrame, type NodeStatus, type SessionReport, type TranscriptAppended, type TranscriptFrame } from '@quorum/protocol';
+import { mintApiToken } from '../../src/core/api-tokens.js';
+import { silentLogger } from '../../src/logging.js';
 import { LockManager } from '../../src/core/locks.js';
 import { openDatabase, type LeaderDb, type SessionRow } from '../../src/db/repo.js';
 import { NodeHub, POISON_EVENT_ATTEMPTS, type HubOptions } from '../../src/ws/node-hub.js';
@@ -27,13 +29,13 @@ function seed() {
   }
 }
 
-async function start(options: Partial<HubOptions> = {}, resendUnackedSec = 10) {
+async function start(options: Partial<HubOptions> = {}, resendUnackedSec = 10, transcriptMaxBytesPerTask?: number) {
   locks = new LockManager(db, { leaseSec: 120, now: () => now, deliver: (agentId, frame) => { hub.deliver(agentId, frame); } });
   const config = parseLeaderConfig({
     listen: { host: '127.0.0.1', port: 0 }, dbPath: ':memory:',
     repo: { remoteUrl: 'file:///unused', mainBranch: 'main' }, timeouts: { resendUnackedSec },
   });
-  hub = new NodeHub(db, config, { locks, now: () => now, ...options });
+  hub = new NodeHub(db, { ...config, ...(transcriptMaxBytesPerTask === undefined ? {} : { transcriptMaxBytesPerTask }) }, { locks, now: () => now, ...options });
   const result = await hub.start();
   url = result.url;
   expect(result.port).toBeGreaterThan(0);
@@ -80,7 +82,7 @@ describe('node authentication and connections', () => {
     await start();
     const settings = { ...DEFAULT_OWNER_SETTINGS, maxSessions: 4, lendMode: 'always' as const, lendTokensPerDay: 12_345, paused: true, tags: ['typescript'], contextWindow: 100_000, idleThresholdSec: 90 };
     const node = await connect('alice', { settings });
-    expect(await node.next('welcome')).toEqual({ kind: 'welcome', serverTime: now, heartbeatIntervalSec: 10, resendUnackedSec: 10, turnTimeoutSec: 1800, mainBranch: 'main' });
+    expect(await node.next('welcome')).toEqual({ kind: 'welcome', serverTime: now, heartbeatIntervalSec: 10, resendUnackedSec: 10, turnTimeoutSec: 1800, mainBranch: 'main', capabilities: ['transcript-v1'] });
     expect(hub.ownerSettings('alice')).toEqual(settings);
     expect(hub.ownerSettings('unknown')).toBeUndefined();
     expect(db.agents.require('alice')).toMatchObject({ status: 'online', last_heartbeat_at: now, max_sessions: 4, lend_mode: 'always', lend_tokens_per_day: 12_345, paused: 1, tags: '["typescript"]', context_window: 100_000 });
@@ -364,5 +366,217 @@ describe('poison-message protection', () => {
     node.event(evt, id);
     await node.next('ack', (f) => f.msgId === id);
     expect(calls).toBe(POISON_EVENT_ATTEMPTS);
+  });
+});
+
+describe('transcript ingest', () => {
+  function frame(taskId: number, msgId = 'transcript-1', seq = 1): TranscriptFrame {
+    return { kind: 'transcript', msgId, taskId, sid: 'a', events: [{ seq, at: now, kind: 'text', mode: 'final', text: 'done' }] };
+  }
+
+  async function setup(options: Partial<HubOptions> = {}, cap?: number) {
+    await start(options, 10, cap);
+    db.sessions.update('a', { profile: 'author' });
+    const task = lockAuthor();
+    const node = await connect('alice', { sessions: [report('a')] });
+    await node.next('welcome');
+    return { task, node };
+  }
+
+  it('stores events separately from the state machine and deduplicates msgId and overlapping seq batches', async () => {
+    const appended: TranscriptAppended[] = [];
+    const onEvent = vi.fn();
+    const { task, node } = await setup({ onEvent, onTranscript: (batch) => { appended.push(batch); } });
+    const first = frame(task.id);
+    node.send(first);
+    await node.next('ack');
+    expect(db.taskTranscript(task.id)[0]).toEqual({ sid: 'a', agentId: 'alice', profile: 'author', events: first.events });
+    expect(db.messages.all()).toEqual([]);
+    expect(onEvent).not.toHaveBeenCalled();
+    node.send({ ...first, events: [{ ...first.events[0]!, text: 'changed', kind: 'text', mode: 'final' }] });
+    await node.next('ack');
+    node.send({ ...frame(task.id, 'transcript-2', 2), events: [...first.events, ...frame(task.id, 'unused', 2).events] });
+    await node.next('ack');
+    node.send(frame(task.id, 'transcript-3', 1));
+    await node.next('ack');
+    expect(db.taskTranscript(task.id)[0]!.events.map((e) => e.seq)).toEqual([1, 2]);
+    expect(appended.map((batch) => batch.events.map((e) => e.seq))).toEqual([[1], [2]]);
+    expect(db.transcriptReceipts.all()).toHaveLength(3);
+  });
+
+  it('accepts a maximum-size text batch beyond the old 1 MiB WebSocket limit', async () => {
+    const { task, node } = await setup();
+    const events = Array.from({ length: 100 }, (_, index) => ({ seq: index + 1, at: now, kind: 'text' as const, mode: 'final' as const, text: '界'.repeat(16384) }));
+    node.send({ ...frame(task.id), events });
+    await node.next('ack');
+    expect(db.taskTranscript(task.id)[0]!.events).toHaveLength(100);
+    expect(db.transcriptBytes(task.id)).toBeGreaterThan(1024 * 1024);
+  });
+
+  it('drops and logs unknown, foreign, unassigned, older-task and missing-profile sessions, ACKing to stop replay', async () => {
+    const warn = vi.fn();
+    const { task, node } = await setup({ logger: { ...silentLogger, warn } });
+    const other = db.tasks.insert({ title: 'other', description: 'd', requester_agent_id: 'alice', state: 'QUEUED', created_at: now, updated_at: now, state_entered_at: now });
+    db.sessions.update('a', { task_history: JSON.stringify([other.id, task.id]) });
+    for (const [index, patch] of [{ sid: 'ghost' }, { sid: 'b' }, { sid: 'a2' }, { taskId: other.id }, { taskId: 999 }].entries()) {
+      const invalid = { ...frame(task.id, `drop-${index}`), ...patch };
+      node.send(invalid);
+      await node.next('ack', (ack) => ack.msgId === invalid.msgId);
+    }
+    db.sessions.update('a', { profile: null });
+    node.send(frame(task.id, 'missing-profile'));
+    await node.next('ack');
+    expect(warn).toHaveBeenCalledTimes(6);
+    expect(db.transcriptEvents.all()).toEqual([]);
+    expect(node.socket.readyState).toBe(1);
+  });
+
+  it('accepts trailing events only for the last task after release, rejecting older history after reuse', async () => {
+    const { task, node } = await setup();
+    locks.releaseSession('a', 'idle');
+    const older = db.tasks.insert({ title: 'old', description: 'd', requester_agent_id: 'alice', state: 'QUEUED', created_at: 1, updated_at: 1, state_entered_at: 1 });
+    db.sessions.update('a', { task_history: JSON.stringify([older.id, task.id]) });
+    node.send(frame(task.id));
+    await node.next('ack');
+    node.send(frame(older.id, 'older', 2));
+    await node.next('ack');
+    expect(db.taskTranscript(task.id)[0]!.events).toHaveLength(1);
+    expect(db.taskTranscript(older.id)).toEqual([]);
+  });
+
+  it('uses the last turn command for released sessions, including a later directive invalidating old task history', async () => {
+    const { task, node } = await setup();
+    locks.releaseSession('a', 'idle');
+    const command = { id: 'last-turn', direction: 'to_node', agent_id: 'alice', session_id: 'a', task_id: task.id, type: 'author.start', payload: '{}', created_at: now, acked_at: now };
+    db.messages.insert(command);
+    node.send(frame(task.id));
+    await node.next('ack');
+    db.sessions.update('a', { task_history: JSON.stringify([task.id]) });
+    db.messages.insert({ ...command, id: 'directive-turn', task_id: null, type: 'directive.run' });
+    node.send(frame(task.id, 'after-directive', 2));
+    await node.next('ack');
+    expect(db.taskTranscript(task.id)[0]!.events.map((e) => e.seq)).toEqual([1]);
+  });
+
+  it('retries a failed transaction without affecting subsequent state machine events', async () => {
+    const onEvent = vi.fn();
+    const { task, node } = await setup({ onEvent });
+    const append = vi.spyOn(db, 'appendTranscript').mockImplementationOnce(() => { throw new Error('storage failed'); });
+    const first = frame(task.id);
+    node.send(first);
+    node.send(frame(task.id, 'later-batch', 2));
+    node.event({ type: 'session.compacted', sid: 'a', contextTokensBefore: 200, contextTokensAfter: 100 }, 'state-event');
+    await node.next('ack', (ack) => ack.msgId === 'state-event');
+    await vi.waitFor(() => expect(append).toHaveBeenCalledOnce());
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(db.transcriptReceipts.get(first.msgId)).toBeUndefined();
+    expect(db.sessions.require('a').transcript_seq).toBe(0);
+    expect(db.transcriptReceipts.get('later-batch')).toBeUndefined();
+    node.send(first);
+    await node.next('ack', (ack) => ack.msgId === first.msgId);
+    expect(db.taskTranscript(task.id)[0]!.events).toHaveLength(1);
+    node.send(frame(task.id, 'later-batch', 2));
+    await node.next('ack', (ack) => ack.msgId === 'later-batch');
+    expect(db.taskTranscript(task.id)[0]!.events.map((event) => event.seq)).toEqual([1, 2]);
+  });
+
+  it('bounds transcript backlog and replays overflow in sequence while state events keep flowing', async () => {
+    const onEvent = vi.fn();
+    const { task, node } = await setup({ onEvent });
+    for (let seq = 1; seq <= 100; seq++) node.send(frame(task.id, `burst-${seq}`, seq));
+    node.event({ type: 'session.compacted', sid: 'a', contextTokensBefore: 200, contextTokensAfter: 100 }, 'burst-state');
+    await node.next('ack', (ack) => ack.msgId === 'burst-state');
+    await vi.waitFor(() => expect(db.transcriptReceipts.get('burst-32')).toBeDefined());
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(db.transcriptReceipts.all().length).toBeLessThan(100);
+    for (let seq = 1; seq <= 100; seq++) {
+      if (db.transcriptReceipts.get(`burst-${seq}`) !== undefined) continue;
+      node.send(frame(task.id, `burst-${seq}`, seq));
+      await node.next('ack', (ack) => ack.msgId === `burst-${seq}`);
+    }
+    expect(db.taskTranscript(task.id)[0]!.events.map((event) => event.seq)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+  });
+
+  it('does not roll back or withhold ACK when the UI notification fails', async () => {
+    const { task, node } = await setup({ onTranscript: () => { throw new Error('subscriber failed'); } });
+    node.send(frame(task.id));
+    await node.next('ack');
+    expect(db.taskTranscript(task.id)[0]!.events).toHaveLength(1);
+  });
+
+  it('pushes retained tool output and preserves sequence dedupe after pruning', async () => {
+    const appended: TranscriptAppended[] = [];
+    const { task, node } = await setup({ onTranscript: (batch) => { appended.push(batch); } }, 130);
+    const first = { ...frame(task.id), events: [{ seq: 1, at: now, kind: 'tool_result', id: 'tool', ok: true, output: '界'.repeat(1000) }] } as const;
+    node.send({ ...first, events: [...first.events] });
+    await node.next('ack');
+    expect(appended[0]!.events[0]).toMatchObject({ output: '' });
+    node.send(frame(task.id, 'new', 2));
+    await node.next('ack');
+    node.send({ ...first, msgId: 'pruned-replay', events: [...first.events] });
+    await node.next('ack');
+    expect(db.taskTranscript(task.id)[0]!.events.map((e) => e.seq)).toEqual([2]);
+    expect(appended).toHaveLength(2);
+  });
+
+  it('persists transcript receipts and seq watermarks across restart', async () => {
+    db.close();
+    directory = mkdtempSync(join(tmpdir(), 'quorum-transcript-restart-'));
+    const path = join(directory, 'leader.db');
+    db = openDatabase(path);
+    seed();
+    const { task, node } = await setup();
+    const first = frame(task.id);
+    node.send(first);
+    await node.next('ack');
+    await hub.close();
+    await node.waitClosed();
+    db.close();
+    db = openDatabase(path);
+    const onTranscript = vi.fn();
+    await start({ onTranscript });
+    const reconnected = await connect('alice', { sessions: [report('a')] });
+    await reconnected.next('welcome');
+    for (const msgId of [first.msgId, 'new-msgId-same-seq']) {
+      reconnected.send({ ...first, msgId });
+      await reconnected.next('ack', (ack) => ack.msgId === msgId);
+    }
+    expect(db.taskTranscript(task.id)[0]!.events).toEqual(first.events);
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(db.sessions.require('a').transcript_seq).toBe(1);
+  });
+
+  it('rejects msgId collisions across agents and between transcript and evt frames', async () => {
+    const { task, node } = await setup();
+    node.send(frame(task.id));
+    await node.next('ack');
+    const bob = await connect('bob');
+    await bob.next('welcome');
+    bob.send(frame(task.id));
+    expect(await bob.waitClosed()).toBe(1008);
+    node.event({ type: 'session.compacted', sid: 'a', contextTokensBefore: 200, contextTokensAfter: 100 }, 'transcript-1');
+    expect(await node.waitClosed()).toBe(1008);
+  });
+
+  it.each(['requester', 'owner'] as const)('rejects a %s API token as a Node credential', async (scope) => {
+    await start();
+    const { token } = mintApiToken(db, 'alice', '', now, scope);
+    const node = await connect('alice', { token });
+    expect((await node.next('reject')).reason).toBe('bad_token');
+    expect(await node.waitClosed()).toBe(1008);
+  });
+
+  it('stores hello and heartbeat adapter metadata and clears absent metadata to unknown', async () => {
+    await start();
+    const detectedAgents = [{ type: 'codex', version: '1.0', trust: 'sandboxed' }] as const;
+    const node = await connect('alice', { trust: 'low', detectedAgents: [...detectedAgents] });
+    await node.next('welcome');
+    expect(db.agents.require('alice')).toMatchObject({ trust: 'low', detected_agents: JSON.stringify(detectedAgents) });
+    node.heartbeat(status({ trust: 'enforced', detectedAgents: [] }));
+    await vi.waitFor(() => expect(db.agents.require('alice').trust).toBe('enforced'));
+    expect(db.agents.require('alice').detected_agents).toBe('[]');
+    node.heartbeat(status());
+    await vi.waitFor(() => expect(db.agents.require('alice').trust).toBeNull());
+    expect(db.agents.require('alice').detected_agents).toBeNull();
   });
 });

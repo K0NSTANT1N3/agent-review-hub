@@ -1,10 +1,9 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { ApiTokenView, TokenScope } from '@quorum/protocol';
+import { ApiTokenScopeSchema, type ApiTokenScope, type ApiTokenView, type TokenScope } from '@quorum/protocol';
 import type { AgentRow, ApiTokenRow, LeaderDb } from '../db/repo.js';
 
-// Requester-scope API tokens: credentials an owner hands to scripts and coding agents (the `quorum` CLI).
-// They act as the owner but can never approve, send back, cancel, pause, reassign or mint tokens,
-// and the Node hub never accepts them (it only checks agents.token_hash).
+// API tokens act as their owner, subject to route scope flags and requester/admin checks.
+// They cannot manage tokens; the Node hub only checks agents.token_hash.
 
 export interface Principal {
   agent: AgentRow;
@@ -31,19 +30,21 @@ export function resolvePrincipal(db: LeaderDb, token: string | undefined): Princ
     if (!matches(row.token_hash, digest)) continue;
     const agent = db.agents.get(row.agent_id);
     if (row.revoked_at !== null || agent === undefined || agent.revoked !== 0) return null;
-    return { agent, scope: 'requester', tokenId: row.id };
+    const scope = ApiTokenScopeSchema.safeParse(row.scope);
+    return scope.success ? { agent, scope: scope.data, tokenId: row.id } : null;
   }
   return null;
 }
 
-/** Creates a requester token for `agentId`. The plaintext is returned once and only its hash is stored. */
-export function mintApiToken(db: LeaderDb, agentId: string, label: string, now: number): { row: ApiTokenRow; token: string } {
+/** Creates an API token for `agentId`. The plaintext is returned once and only its hash is stored. */
+export function mintApiToken(db: LeaderDb, agentId: string, label: string, now: number, scope: ApiTokenScope = 'requester'): { row: ApiTokenRow; token: string } {
+  ApiTokenScopeSchema.parse(scope);
   const token = `qrq_${randomBytes(32).toString('base64url')}`;
   const row = db.apiTokens.insert({
     id: randomUUID(),
     agent_id: agentId,
     token_hash: sha256(token).toString('hex'),
-    scope: 'requester',
+    scope,
     label,
     created_at: now,
   });
@@ -59,7 +60,7 @@ export function apiTokenView(row: ApiTokenRow): ApiTokenView {
   return {
     id: row.id,
     agentId: row.agent_id,
-    scope: 'requester',
+    scope: ApiTokenScopeSchema.parse(row.scope),
     label: row.label,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,

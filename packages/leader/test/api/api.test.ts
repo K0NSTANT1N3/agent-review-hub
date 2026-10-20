@@ -3,11 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseLeaderConfig, type LeaderConfig, type UiEvent } from '@quorum/protocol';
 import { addAgent, listAgents, revokeAgent, startLeader, type LeaderHandle } from '../../src/index.js';
 import { openDatabase, type LeaderDb } from '../../src/db/repo.js';
 import { silentLogger } from '../../src/logging.js';
+import { mintApiToken } from '../../src/core/api-tokens.js';
+import { DEFAULT_OWNER_SETTINGS, FakeNode } from '../helpers/fake-node.js';
 
 let dir: string;
 let config: LeaderConfig;
@@ -64,6 +66,39 @@ afterEach(async () => {
 });
 
 describe('REST API (§17)', () => {
+  it('pushes transcript.appended to task.event subscribers, with authenticated session identity', async () => {
+    const now = Date.now();
+    const task = side.tasks.insert({ title: 'Live chat', description: 'd', requester_agent_id: 'alice-claude', author_agent_id: 'alice-claude', state: 'AUTHORING', created_at: now, updated_at: now, state_entered_at: now });
+    side.sessions.insert({ id: 'chat', agent_id: 'alice-claude', profile: 'author', state: 'locked', lock_kind: 'task', lock_ref: String(task.id), lock_role: 'author', created_at: now, last_used_at: now });
+    side.tasks.update(task.id, { author_session_id: 'chat' });
+    const token = mintApiToken(side, 'bob-claude', '', now, 'owner').token;
+    const ws = new WebSocket(`ws://127.0.0.1:${leader.port}/ws/ui`, { headers: { Authorization: `Bearer ${token}` } });
+    const events: UiEvent[] = [];
+    ws.on('message', (raw) => events.push(JSON.parse(raw.toString()) as UiEvent));
+    await new Promise((r) => ws.once('open', r));
+    const node = await FakeNode.connect(leader.url, FakeNode.hello('alice-claude', tokens.alice!, {
+      settings: { ...DEFAULT_OWNER_SETTINGS, paused: true },
+      sessions: [{ sid: 'chat', alive: true, busy: true, contextTokens: 10 }],
+    }));
+    try {
+      await node.next('welcome');
+      node.send({ kind: 'transcript', msgId: 'chat-batch', sid: 'chat', taskId: task.id, events: [{ seq: 1, at: now, kind: 'text', mode: 'final', text: 'hello' }] });
+      await node.next('ack', (ack) => ack.msgId === 'chat-batch');
+      side.taskEvents.insert({ task_id: task.id, to_state: 'AUTHORING', reason: 'chat_test', actor: 'leader', at: now });
+      await vi.waitFor(() => {
+        expect(events).toContainEqual({ type: 'transcript.appended', data: { taskId: task.id, sid: 'chat', agentId: 'alice-claude', profile: 'author', events: [{ seq: 1, at: now, kind: 'text', mode: 'final', text: 'hello' }] } });
+        expect(events.some((event) => event.type === 'task.event' && event.data.taskId === task.id)).toBe(true);
+      });
+      node.send({ kind: 'transcript', msgId: 'chat-batch', sid: 'chat', taskId: task.id, events: [{ seq: 1, at: now, kind: 'text', mode: 'final', text: 'hello' }] });
+      await node.next('ack', (ack) => ack.msgId === 'chat-batch');
+      expect(events.filter((event) => event.type === 'transcript.appended')).toHaveLength(1);
+      expect((await api('GET', `/api/tasks/${task.id}/transcript`, 'bob')).body).toMatchObject({ sessions: [{ sid: 'chat', agentId: 'alice-claude', profile: 'author' }] });
+    } finally {
+      ws.close();
+      await node.close();
+    }
+  });
+
   it('health needs no auth; everything else needs a valid token', async () => {
     expect(await api('GET', '/api/health', null)).toEqual({ status: 200, body: { ok: true } });
     expect((await api('GET', '/api/tasks', null)).status).toBe(401);
