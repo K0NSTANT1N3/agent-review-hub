@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { AgentEventSchema, ProfileSchema, type AgentEvent, type SessionProfile, type TranscriptSession } from '@quorum/protocol';
 import { migrate, SCHEMA_VERSION } from './migrations.js';
 import type { ConversationRow, Inserts, KeyColumn, MessageRow, Patch, RowKey, Tables } from './types.js';
 
@@ -107,6 +108,8 @@ export class LeaderDb {
   readonly directives: TableRepo<'directives'>;
   readonly mergeQueue: TableRepo<'merge_queue'>;
   readonly apiTokens: TableRepo<'api_tokens'>;
+  readonly transcriptEvents: TableRepo<'transcript_events'>;
+  readonly transcriptReceipts: TableRepo<'transcript_receipts'>;
 
   constructor(private readonly sql: Database.Database) {
     migrate(sql);
@@ -121,6 +124,70 @@ export class LeaderDb {
     this.directives = new TableRepo(this, sql, 'directives');
     this.mergeQueue = new TableRepo(this, sql, 'merge_queue');
     this.apiTokens = new TableRepo(this, sql, 'api_tokens');
+    this.transcriptEvents = new TableRepo(this, sql, 'transcript_events');
+    this.transcriptReceipts = new TableRepo(this, sql, 'transcript_receipts');
+  }
+
+  appendTranscript(taskId: number, sid: string, agentId: string, profile: SessionProfile, events: AgentEvent[], turnId: string, maxBytes: number): AgentEvent[] {
+    return this.withTx(() => {
+      const session = this.sessions.require(sid);
+      const appended = events.filter((event) => event.seq > session.transcript_seq);
+      if (appended.length === 0) return [];
+      this.sql.prepare('INSERT OR IGNORE INTO transcript_sessions (task_id, sid, agent_id, profile) VALUES (?, ?, ?, ?)')
+        .run(taskId, sid, agentId, profile);
+      for (const event of appended) this.transcriptEvents.insert({
+        task_id: taskId, sid, agent_id: agentId, profile, seq: event.seq, at: event.at,
+        kind: event.kind, payload: JSON.stringify(event), turn_id: turnId,
+      });
+      this.sessions.update(sid, { transcript_seq: appended.at(-1)!.seq });
+      this.pruneTranscript(taskId, maxBytes);
+      // Push the retained version, including blanked tool output.
+      return this.sql.prepare('SELECT payload FROM transcript_events WHERE task_id = ? AND sid = ? AND seq > ? ORDER BY seq')
+        .all(taskId, sid, session.transcript_seq).map((row) => AgentEventSchema.parse(JSON.parse((row as { payload: string }).payload)));
+    });
+  }
+
+  taskTranscript(taskId: number, afterSeq = 0, sid?: string): TranscriptSession[] {
+    const sessions = this.sql.prepare(`SELECT sid, agent_id, profile FROM transcript_sessions WHERE task_id = ?${sid === undefined ? '' : ' AND sid = ?'} ORDER BY sid`)
+      .all(taskId, ...(sid === undefined ? [] : [sid])) as { sid: string; agent_id: string; profile: string }[];
+    return sessions.map((session) => ({
+      sid: session.sid, agentId: session.agent_id, profile: ProfileSchema.parse(session.profile),
+      events: this.sql.prepare('SELECT payload FROM transcript_events WHERE task_id = ? AND sid = ? AND seq > ? ORDER BY seq')
+        .all(taskId, session.sid, afterSeq).map((row) => AgentEventSchema.parse(JSON.parse((row as { payload: string }).payload))),
+    }));
+  }
+
+  transcriptBytes(taskId: number): number {
+    return (this.sql.prepare('SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) AS bytes FROM transcript_events WHERE task_id = ?')
+      .get(taskId) as { bytes: number }).bytes;
+  }
+
+  private pruneTranscript(taskId: number, maxBytes: number): void {
+    let bytes = this.transcriptBytes(taskId);
+    if (bytes <= maxBytes) return;
+    const rows = this.sql.prepare('SELECT * FROM transcript_events WHERE task_id = ? ORDER BY id').all(taskId) as Tables['transcript_events'][];
+    for (const row of rows) {
+      if (bytes <= maxBytes) return;
+      if (row.kind !== 'tool_result') continue;
+      const event = AgentEventSchema.parse(JSON.parse(row.payload));
+      if (event.kind !== 'tool_result' || event.output === '') continue;
+      const payload = JSON.stringify({ ...event, output: '' });
+      this.transcriptEvents.update(row.id, { payload });
+      bytes -= Buffer.byteLength(row.payload) - Buffer.byteLength(payload);
+      row.payload = payload;
+    }
+    const latestTurns = new Map<string, string>();
+    for (const row of rows) latestTurns.set(row.sid, row.turn_id);
+    const removable = rows.filter((row) => {
+      const event = AgentEventSchema.parse(JSON.parse(row.payload));
+      return !(event.kind === 'text' && event.mode === 'final' && row.turn_id === latestTurns.get(row.sid));
+    });
+    for (const row of [...removable.filter((row) => row.kind === 'thinking'), ...removable.filter((row) => row.kind !== 'thinking')]) {
+      if (bytes <= maxBytes) return;
+      this.transcriptEvents.delete(row.id);
+      bytes -= Buffer.byteLength(row.payload);
+    }
+    // Latest-turn final snapshots take precedence if they alone exceed the cap.
   }
 
   withTx<T>(fn: () => SyncResult<T>): T {

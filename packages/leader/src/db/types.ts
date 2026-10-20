@@ -16,6 +16,8 @@ export interface AgentRow {
   cost_ratio_ema: number;
   last_assigned_at: number | null;
   created_at: number;
+  trust: string | null;
+  detected_agents: string | null;
 }
 
 export interface SessionRow {
@@ -33,6 +35,25 @@ export interface SessionRow {
   created_at: number;
   last_used_at: number;
   closed_at: number | null;
+  transcript_seq: number;
+}
+
+export interface TranscriptEventRow {
+  id: number;
+  task_id: number;
+  sid: string;
+  agent_id: string;
+  profile: string;
+  seq: number;
+  at: number;
+  kind: string;
+  payload: string;
+  turn_id: string;
+}
+
+export interface TranscriptReceiptRow {
+  id: string;
+  agent_id: string;
 }
 
 export interface TaskRow {
@@ -181,6 +202,8 @@ export interface Tables {
   directives: DirectiveRow;
   merge_queue: MergeQueueRow;
   api_tokens: ApiTokenRow;
+  transcript_events: TranscriptEventRow;
+  transcript_receipts: TranscriptReceiptRow;
 }
 
 type InsertWith<R, K extends keyof R> = Pick<R, K> & Partial<Omit<R, K>>;
@@ -197,6 +220,8 @@ export interface Inserts {
   directives: InsertWith<DirectiveRow, 'id' | 'requester' | 'agent_id' | 'text' | 'state' | 'created_at'>;
   merge_queue: MergeQueueRow;
   api_tokens: InsertWith<ApiTokenRow, 'id' | 'agent_id' | 'token_hash' | 'scope' | 'created_at'>;
+  transcript_events: Omit<TranscriptEventRow, 'id'>;
+  transcript_receipts: TranscriptReceiptRow;
 }
 
 export type KeyColumn<N extends keyof Tables> = N extends 'merge_queue' ? 'task_id' : 'id';

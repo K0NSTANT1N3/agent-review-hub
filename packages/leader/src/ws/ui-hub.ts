@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type WebSocket from 'ws';
-import type { LeaderConfig, QueueEntryView, TaskWaitReason, TeamActivityResponse, UiEvent } from '@quorum/protocol';
+import type { LeaderConfig, QueueEntryView, TaskWaitReason, TeamActivityResponse, TranscriptAppended, UiEvent } from '@quorum/protocol';
 import { authenticate } from '../api/routes.js';
 import { agentView, directiveView, taskEventView, taskView, teamActivity } from '../api/views.js';
 import type { LeaderDb, TaskRow } from '../db/repo.js';
@@ -57,6 +57,10 @@ export class UiHub {
 
   attention = (taskId: number, reason: 'no_reviewer' | 'author_unavailable' | 'escalated', message: string): void => {
     this.broadcast({ type: 'task.needs_attention', data: { taskId, reason, message } });
+  };
+
+  transcript = (batch: TranscriptAppended): void => {
+    this.broadcast({ type: 'transcript.appended', data: batch });
   };
 
   private resetWatermarks(): void {

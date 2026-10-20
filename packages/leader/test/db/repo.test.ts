@@ -19,14 +19,14 @@ beforeEach(() => { db = openDatabase(':memory:'); });
 afterEach(() => { db.close(); });
 
 describe('schema and migrations', () => {
-  it('matches the authoritative SQL verbatim', () => {
+  it('preserves the authoritative base schema before appended migrations', () => {
     const spec = readFileSync(new URL('../../../../docs/implementation-spec.md', import.meta.url), 'utf8');
     const sql = spec.split('## 7. Data model (Leader SQLite)')[1]?.split('```sql\n')[1]?.split('```')[0];
-    expect(readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8')).toBe(sql);
+    expect(readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8').split('-- v3:')[0]!.trimEnd()).toBe(sql?.trimEnd());
   });
 
   it('enables foreign keys and refuses dangling references', () => {
-    expect(db.schemaVersion).toBe(2);
+    expect(db.schemaVersion).toBe(3);
     expect(db.foreignKeysEnabled).toBe(true);
     expect(() => db.sessions.insert({ id: 's', agent_id: 'missing', state: 'idle', created_at: 1, last_used_at: 1 })).toThrow(/FOREIGN KEY/);
   });
@@ -41,7 +41,7 @@ describe('schema and migrations', () => {
       first.close();
       const second = openDatabase(filename);
       try {
-        expect(second.schemaVersion).toBe(2);
+        expect(second.schemaVersion).toBe(3);
         expect(second.foreignKeysEnabled).toBe(true);
         expect(second.agents.require('persisted').owner_name).toBe('Owner');
         expect(second.integrity).toBe('ok');
@@ -67,9 +67,34 @@ describe('schema migration v1 to v2', () => {
       v1.close();
       const migrated = openDatabase(filename);
       try {
-        expect(migrated.schemaVersion).toBe(2);
+        expect(migrated.schemaVersion).toBe(3);
         expect(migrated.sessions.require('s1').profile).toBe('reviewer');
         expect(migrated.apiTokens.all()).toEqual([]);
+      } finally { migrated.close(); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});
+
+describe('schema migration v2 to v3', () => {
+  it('appends transcript storage and unknown adapter metadata without changing existing data', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'quorum-db-v2-'));
+    const filename = join(directory, 'leader.db');
+    try {
+      const old = new Database(filename);
+      const schema = readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8');
+      old.exec(schema.split('-- v3:')[0]!);
+      old.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (2);');
+      old.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at) VALUES ('a', 'Alice', 'h', 1)").run();
+      old.prepare("INSERT INTO sessions (id, agent_id, profile, state, created_at, last_used_at) VALUES ('s', 'a', 'author', 'idle', 1, 1)").run();
+      old.close();
+      const migrated = openDatabase(filename);
+      try {
+        expect(migrated.schemaVersion).toBe(3);
+        expect(migrated.agents.require('a')).toMatchObject({ owner_name: 'Alice', trust: null, detected_agents: null });
+        expect(migrated.sessions.require('s')).toMatchObject({ profile: 'author', transcript_seq: 0 });
+        expect(migrated.transcriptEvents.all()).toEqual([]);
+        expect(migrated.transcriptReceipts.all()).toEqual([]);
+        expect(migrated.integrity).toBe('ok');
       } finally { migrated.close(); }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });

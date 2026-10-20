@@ -2,7 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import pino from 'pino';
-import { parseLeaderConfig, type LeaderConfig } from '@quorum/protocol';
+import { ApiTokenScopeSchema } from '@quorum/protocol';
+import { LeaderRuntimeConfigSchema, type LeaderRuntimeConfig } from './config.js';
 import { addAgent, addApiToken, listAgents, revokeAgent, startLeader } from './index.js';
 import { createInvite } from './invite.js';
 
@@ -15,11 +16,11 @@ Commands:
   add-agent --id <id> --owner <name>   register an agent (or rotate its token); prints the token once
   revoke-agent --id <id>         revoke an agent's token
   list-agents                    list registered agents
-  add-token --id <agent id> [--label <text>]   mint a requester-scope API token for the quorum CLI; prints it once`;
+  add-token --id <agent id> [--label <text>] [--scope requester|owner]   mint an API token for the quorum CLI; prints it once`;
 
-function loadConfig(path: string | undefined): LeaderConfig {
+function loadConfig(path: string | undefined): LeaderRuntimeConfig {
   if (path === undefined) throw new Error('--config is required');
-  return parseLeaderConfig(JSON.parse(readFileSync(path, 'utf8')));
+  return LeaderRuntimeConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
 }
 
 async function main(): Promise<void> {
@@ -31,6 +32,7 @@ async function main(): Promise<void> {
       id: { type: 'string' },
       owner: { type: 'string' },
       label: { type: 'string' },
+      scope: { type: 'string' },
       name: { type: 'string' },
       'public-host': { type: 'string' },
       port: { type: 'string' },
@@ -80,7 +82,8 @@ async function main(): Promise<void> {
     case 'add-token': {
       const config = loadConfig(values.config);
       if (values.id === undefined) throw new Error('--id is required');
-      const { token } = await addApiToken(config.dbPath, { agentId: values.id, ...(values.label !== undefined ? { label: values.label } : {}) });
+      const scope = ApiTokenScopeSchema.parse(values.scope ?? 'requester');
+      const { token } = await addApiToken(config.dbPath, { agentId: values.id, scope, ...(values.label !== undefined ? { label: values.label } : {}) });
       process.stdout.write(`${token}\n`);
       return;
     }
