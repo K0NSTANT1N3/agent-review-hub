@@ -5,7 +5,7 @@ import type { AdapterConfig } from '@quorum/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAdapter } from '../../src/adapters/index.js';
 import { createMockAdapter } from '../../src/adapters/mock.js';
-import { AdapterError, type AgentAdapter, type Profile } from '../../src/adapters/types.js';
+import { AdapterError, type AgentAdapter, type AgentEventInput, type Profile } from '../../src/adapters/types.js';
 import { seedSessionPrompt, summarizePrompt } from '../../src/prompts/index.js';
 
 interface MockFixture {
@@ -23,6 +23,41 @@ afterEach(async () => {
 });
 
 describe('mock adapter', () => {
+  it('emits deterministic write events and final text without changing its reply', async () => {
+    const fixture = await createFixture({ author: [{ match: { any: true }, turns: [{
+      writeFiles: { 'a.txt': 'a', 'b.txt': 'b' }, reply: { status: 'done', summary: 'saved' },
+    }] }] });
+    const adapter = await loadAdapter(fixture);
+    const session = await makeSession(adapter, fixture, 'sid-events', 'author');
+    const events: AgentEventInput[] = [];
+    const result = await run(adapter, session, 'author', taskPrompt('1', 'Events'), { onEvent: (event) => events.push(event) });
+    expect(events).toEqual([
+      { kind: 'status', text: 'Mock turn started' },
+      { kind: 'tool_call', id: 'mock-write-1', name: 'Write', toolKind: 'write', argsSummary: 'a.txt', paths: ['a.txt'] },
+      { kind: 'tool_result', id: 'mock-write-1', ok: true, output: 'Wrote a.txt' },
+      { kind: 'tool_call', id: 'mock-write-2', name: 'Write', toolKind: 'write', argsSummary: 'b.txt', paths: ['b.txt'] },
+      { kind: 'tool_result', id: 'mock-write-2', ok: true, output: 'Wrote b.txt' },
+      { kind: 'text', mode: 'final', text: result.text },
+    ]);
+    expect(result.text).toBe('```quorum-json\n{"status":"done","summary":"saved"}\n```');
+  });
+
+  it('uses explicit event sequences exactly, including an empty override', async () => {
+    const explicit = [{ kind: 'thinking', text: 'scripted' }, { kind: 'text', mode: 'delta', text: 'partial', messageId: 'm' }];
+    const fixture = await createFixture({ author: [{ match: { any: true }, turns: [
+      { events: explicit, writeFiles: { 'a.txt': 'saved' }, rawReply: 'same reply' },
+      { events: [], rawReply: 'empty events' },
+    ] }] });
+    const adapter = await loadAdapter(fixture);
+    const session = await makeSession(adapter, fixture, 'sid-explicit', 'author');
+    const events: AgentEventInput[] = [];
+    const options = { onEvent: (event: AgentEventInput) => events.push(event) };
+    expect((await run(adapter, session, 'author', taskPrompt('1', 'Events'), options)).text).toBe('same reply');
+    expect(events).toEqual(explicit);
+    expect(await readFile(join(session.cwd, 'a.txt'), 'utf8')).toBe('saved');
+    await run(adapter, session, 'author', taskPrompt('1', 'Events'), options);
+    expect(events).toEqual(explicit);
+  });
   it('matches task titles, advances per (sid, taskId), writes files, and falls back to any', async () => {
     const fixture = await createFixture({
       author: [
@@ -241,7 +276,7 @@ function run(
   session: { nativeId: string; cwd: string },
   profile: Profile,
   prompt: string,
-  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  options: { signal?: AbortSignal; timeoutMs?: number; onEvent?: (event: AgentEventInput) => void } = {},
 ) {
   return adapter.runTurn({
     nativeId: session.nativeId,
@@ -250,6 +285,7 @@ function run(
     prompt,
     signal: options.signal ?? new AbortController().signal,
     timeoutMs: options.timeoutMs ?? 1000,
+    ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
   });
 }
 

@@ -28,9 +28,11 @@ describe('Node daemon', () => {
   it('runs a full author and review flow and applies updated settings on the next heartbeat', async () => {
     const fixture = await createFixture();
     const hello = await fixture.connection.next('hello');
-    expect(hello).toMatchObject({ agentId: 'daemon-test', adapterType: 'mock' });
-    fixture.connection.send(welcomeFrame({ heartbeatIntervalSec: 1 }));
-    await fixture.connection.next('heartbeat');
+    expect(hello).toMatchObject({ agentId: 'daemon-test', adapterType: 'mock', trust: 'enforced', detectedAgents: expect.any(Array) });
+    fixture.connection.send(welcomeFrame({ heartbeatIntervalSec: 1, capabilities: ['transcript-v1'] }));
+    const heartbeat = await fixture.connection.next('heartbeat');
+    expect(heartbeat.status.detectedAgents).toEqual(hello.detectedAgents);
+    expect(fixture.daemon.status()).toMatchObject({ trust: 'enforced', detectedAgents: hello.detectedAgents });
 
     fixture.daemon.updateSettings({ paused: true });
     const updatedHeartbeat = await fixture.connection.next(
@@ -64,6 +66,9 @@ describe('Node daemon', () => {
       tests: { passed: true },
     });
     if (submitted.type !== 'author.submitted') throw new Error('Expected author.submitted event');
+    expect(await fixture.connection.next('transcript')).toMatchObject({ sid: 'sid-author', taskId: 801, events: [
+      { kind: 'status', seq: 1 }, { kind: 'tool_call', seq: 2 }, { kind: 'tool_result', seq: 3 }, { kind: 'text', seq: 4 },
+    ] });
 
     await sendCommand(fixture.connection, 'open-reviewer', {
       type: 'session.open', sid: 'sid-reviewer', profile: 'reviewer',

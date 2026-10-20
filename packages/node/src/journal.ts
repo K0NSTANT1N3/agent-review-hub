@@ -2,7 +2,15 @@ import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Command, Event } from '@quorum/protocol';
+import { TranscriptBatchSchema, type Command, type Event, type TranscriptBatch } from '@quorum/protocol';
+
+export const MAX_UNACKED_TRANSCRIPT_BYTES = 1024 * 1024;
+
+export interface TranscriptRecord {
+  rowid: number;
+  msgId: string;
+  batch: TranscriptBatch;
+}
 
 export type InboxState = 'received' | 'running' | 'done';
 
@@ -92,6 +100,20 @@ export class NodeJournal {
         state TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS transcript_state (
+        sid TEXT PRIMARY KEY,
+        seq INTEGER NOT NULL DEFAULT 0,
+        drops INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS transcript_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        msg_id TEXT UNIQUE NOT NULL,
+        sid TEXT NOT NULL,
+        batch TEXT NOT NULL,
+        bytes INTEGER NOT NULL,
+        sent INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS transcript_outbox_sid ON transcript_outbox(sid);
     `);
     return new NodeJournal(db, now);
   }
@@ -136,6 +158,81 @@ export class NodeJournal {
 
   markAcked(msgId: string): void {
     this.db.prepare('UPDATE outbox SET acked_at = COALESCE(acked_at, ?) WHERE msg_id = ?').run(this.now(), msgId);
+    this.db.prepare('DELETE FROM transcript_outbox WHERE msg_id = ?').run(msgId);
+  }
+
+  nextTranscriptSeq(sid: string): number {
+    const row = this.db.prepare(`
+      INSERT INTO transcript_state (sid, seq) VALUES (?, 1)
+      ON CONFLICT(sid) DO UPDATE SET seq = seq + 1 RETURNING seq
+    `).get(sid) as { seq: number };
+    return row.seq;
+  }
+
+  transcriptStats(sid: string): { bytes: number; drops: number } {
+    const row = this.db.prepare('SELECT COALESCE(SUM(bytes), 0) AS bytes FROM transcript_outbox WHERE sid = ?').get(sid) as { bytes: number };
+    const state = this.db.prepare('SELECT drops FROM transcript_state WHERE sid = ?').get(sid) as { drops: number } | undefined;
+    return { bytes: row.bytes, drops: state?.drops ?? 0 };
+  }
+
+  enqueueTranscript(input: TranscriptBatch, maxBytes = MAX_UNACKED_TRANSCRIPT_BYTES): string | null {
+    const batch = TranscriptBatchSchema.parse(input);
+    const msgId = randomUUID();
+    return this.db.transaction(() => {
+      this.db.prepare('INSERT OR IGNORE INTO transcript_state (sid) VALUES (?)').run(batch.sid);
+      const json = JSON.stringify(batch);
+      this.db.prepare('INSERT INTO transcript_outbox (msg_id, sid, batch, bytes) VALUES (?, ?, ?, ?)')
+        .run(msgId, batch.sid, json, Buffer.byteLength(json));
+      let { bytes } = this.transcriptStats(batch.sid);
+      let drops = 0;
+      // Only unsent payloads may change: a sent msgId must replay identical data.
+      for (const kind of ['tool_result', 'thinking', 'all'] as const) {
+        if (bytes <= maxBytes) break;
+        const rows = this.db.prepare('SELECT msg_id, batch, bytes FROM transcript_outbox WHERE sid = ? AND sent = 0 ORDER BY rowid')
+          .all(batch.sid) as Array<{ msg_id: string; batch: string; bytes: number }>;
+        for (const row of rows) {
+          const pending = JSON.parse(row.batch) as TranscriptBatch;
+          for (let i = 0; i < pending.events.length && bytes > maxBytes;) {
+            const event = pending.events[i]!;
+            if (kind === 'tool_result' && event.kind === 'tool_result' && event.output !== '') {
+              event.output = '';
+            } else if ((kind === 'thinking' && event.kind === 'thinking') || kind === 'all') {
+              pending.events.splice(i, 1);
+              i -= 1;
+            } else {
+              i += 1;
+              continue;
+            }
+            drops += 1;
+            const updated = JSON.stringify(pending);
+            const size = pending.events.length === 0 ? 0 : Buffer.byteLength(updated);
+            bytes += size - row.bytes;
+            row.bytes = size;
+            if (size === 0) this.db.prepare('DELETE FROM transcript_outbox WHERE msg_id = ?').run(row.msg_id);
+            else this.db.prepare('UPDATE transcript_outbox SET batch = ?, bytes = ? WHERE msg_id = ?').run(updated, size, row.msg_id);
+            i += 1;
+          }
+          if (bytes <= maxBytes) break;
+        }
+      }
+      this.db.prepare('UPDATE transcript_state SET drops = drops + ?, seq = MAX(seq, ?) WHERE sid = ?')
+        .run(drops, batch.events.at(-1)!.seq, batch.sid);
+      return this.db.prepare('SELECT 1 FROM transcript_outbox WHERE msg_id = ?').get(msgId) === undefined ? null : msgId;
+    })();
+  }
+
+  nextTranscript(afterRowid = 0): TranscriptRecord | null {
+    const row = this.db.prepare('SELECT rowid AS rowid, msg_id, batch FROM transcript_outbox WHERE rowid > ? ORDER BY rowid LIMIT 1')
+      .get(afterRowid) as { rowid: number; msg_id: string; batch: string } | undefined;
+    return row === undefined ? null : { rowid: row.rowid, msgId: row.msg_id, batch: JSON.parse(row.batch) as TranscriptBatch };
+  }
+
+  markTranscriptSent(msgId: string): void {
+    this.db.prepare('UPDATE transcript_outbox SET sent = 1 WHERE msg_id = ?').run(msgId);
+  }
+
+  discardTranscripts(): void {
+    this.db.prepare('DELETE FROM transcript_outbox').run();
   }
 
   unackedEvents(): OutboxRecord[] {

@@ -2,7 +2,8 @@ import { existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { CanUseTool, Options, PermissionResult, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { AdapterError, type AgentAdapter, type Profile, type TurnResult } from './types.js';
+import { AdapterError, type AgentAdapter, type AgentEventInput, type Profile, type TurnResult } from './types.js';
+import { splitText, toolKindFor, truncateUtf8 } from './event-utils.js';
 
 // Spec §15.2. Owned by Claude (see tasks/*.md §2).
 
@@ -160,6 +161,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     prompt: string;
     signal: AbortSignal;
     timeoutMs: number;
+    onEvent?: (event: AgentEventInput) => void;
   }): Promise<TurnResult & { nativeId: string }> {
     const controller = new AbortController();
     let timedOut = false;
@@ -194,7 +196,35 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (msg.session_id) sessionId = msg.session_id;
         if (msg.type === 'assistant') {
           if (msg.parent_tool_use_id === null && msg.message.usage) contextTokens = contextOf(msg.message.usage);
+          for (const block of msg.message.content ?? []) {
+            if (block.type === 'text') {
+              for (const text of splitText(block.text)) opts.onEvent?.({ kind: 'text', mode: 'final', text, messageId: msg.message.id });
+            } else if (block.type === 'thinking') {
+              for (const text of splitText(block.thinking)) opts.onEvent?.({ kind: 'thinking', text, messageId: msg.message.id });
+            } else if (block.type === 'tool_use') {
+              const input = block.input !== null && typeof block.input === 'object' ? block.input as Record<string, unknown> : {};
+              const paths = PATH_FIELDS.flatMap((field) => typeof input[field] === 'string' && input[field] !== '' ? [input[field].slice(0, 1024)] : []);
+              opts.onEvent?.({
+                kind: 'tool_call', id: block.id, name: block.name, toolKind: toolKindFor(block.name),
+                argsSummary: JSON.stringify(block.input).slice(0, 256),
+                ...(paths.length === 0 ? {} : { paths }),
+              });
+            }
+          }
+          if (msg.message.usage) {
+            opts.onEvent?.({
+              kind: 'usage', inputTokens: n(msg.message.usage.input_tokens), outputTokens: n(msg.message.usage.output_tokens),
+              ...(msg.parent_tool_use_id === null ? { contextTokens } : {}),
+            });
+          }
           if (msg.error === 'rate_limit') rateLimited = true;
+        } else if (msg.type === 'user' && Array.isArray(msg.message.content)) {
+          for (const block of msg.message.content) {
+            if (block.type !== 'tool_result') continue;
+            const output = typeof block.content === 'string' ? block.content : (block.content ?? [])
+              .flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+            opts.onEvent?.({ kind: 'tool_result', id: block.tool_use_id, ok: !block.is_error, output: truncateUtf8(output) });
+          }
         } else if (msg.type === 'rate_limit_event' && msg.rate_limit_info.status === 'rejected') {
           rateLimited = true;
           rateLimitedUntil = toMillis(msg.rate_limit_info.resetsAt);
