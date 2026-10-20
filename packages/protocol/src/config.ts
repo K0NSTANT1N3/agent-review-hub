@@ -118,13 +118,27 @@ export const MockAdapterConfigSchema = z.object({
   scriptPath: z.string().min(1),
   contextWindow: positiveInt().default(200000),
 });
+const cliAdapterFields = {
+  binaryPath: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  contextWindow: positiveInt().default(200000),
+};
+export const CodexAdapterConfigSchema = z.object({ type: z.literal('codex'), ...cliAdapterFields });
+export const PiAdapterConfigSchema = z.object({ type: z.literal('pi'), ...cliAdapterFields });
+export const OmpAdapterConfigSchema = z.object({ type: z.literal('omp'), ...cliAdapterFields });
+/** Reserved until the Kilo integration is implemented. */
+export const KiloAdapterConfigSchema = z.object({ type: z.literal('kilo'), ...cliAdapterFields });
 export const AdapterConfigSchema = z.discriminatedUnion('type', [
   ClaudeCodeAdapterConfigSchema,
+  CodexAdapterConfigSchema,
+  PiAdapterConfigSchema,
+  OmpAdapterConfigSchema,
   OpencodeAdapterConfigSchema,
+  KiloAdapterConfigSchema,
   MockAdapterConfigSchema,
 ]);
 export type AdapterConfig = z.output<typeof AdapterConfigSchema>;
-export type AdapterType = AdapterConfig['type'];
+export { type AdapterType } from './adapters.js';
 
 export const DEFAULT_AUTHOR_BASH_ALLOW = [
   'npm test',

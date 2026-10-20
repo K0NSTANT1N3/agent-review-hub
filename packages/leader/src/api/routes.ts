@@ -157,6 +157,9 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
   const handlersByRoute: { [R in ApiRouteName]: (ctx: Ctx) => unknown | Promise<unknown> } = {
     health: () => ({ ok: true }),
 
+    // Protocol-only Phase 1. Do not return an empty transcript as if it were persisted.
+    getTaskTranscript: () => { throw new ApiHttpError('INTERNAL', 'task transcript not implemented yet'); },
+
     listAgents: () => ({
       agents: db.agents.all().filter((a) => a.revoked === 0).map((a) => agentView(db, a, now(), config.dayBoundaryTz)),
     }),

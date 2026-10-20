@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { CommandSchema } from './commands.js';
 import { OwnerSettingsSchema } from './config.js';
 import { EventSchema } from './events.js';
+import { AdapterTypeSchema, AgentTrustSchema, DetectedAgentSchema } from './adapters.js';
+import { TranscriptBatchSchema } from './agent-events.js';
 
 // WebSocket /ws/node frame envelope — spec §11.1.
 
@@ -18,6 +20,8 @@ export const NodeStatusSchema = z.object({
   humanIdleSec: z.number().nonnegative().nullable(),
   rateLimitedUntil: z.number().int().nullable(),
   sessions: z.array(SessionReportSchema),
+  trust: AgentTrustSchema.optional(),
+  detectedAgents: z.array(DetectedAgentSchema).optional(),
 });
 export type NodeStatus = z.infer<typeof NodeStatusSchema>;
 
@@ -32,7 +36,9 @@ export const HelloFrameSchema = z.object({
   protocolVersion: z.number().int().positive(),
   settings: OwnerSettingsSchema,
   sessions: z.array(SessionReportSchema),
-  adapterType: z.enum(['claude-code', 'opencode', 'mock']),
+  adapterType: AdapterTypeSchema,
+  trust: AgentTrustSchema.optional(),
+  detectedAgents: z.array(DetectedAgentSchema).optional(),
 });
 
 export const WelcomeFrameSchema = z.object({
@@ -43,6 +49,8 @@ export const WelcomeFrameSchema = z.object({
   resendUnackedSec: z.number().int().positive(),
   turnTimeoutSec: z.number().int().positive(),
   mainBranch: z.string().min(1),
+  /** Send transcript frames only when the Leader explicitly advertises this capability. */
+  capabilities: z.array(z.string().min(1)).optional(),
 });
 
 export const RejectReasonSchema = z.enum(['bad_token', 'revoked', 'version_mismatch', 'already_connected']);
@@ -75,6 +83,12 @@ export const AckFrameSchema = z.object({
   msgId,
 });
 
+/** Node → Leader. Uses the same journal, msgId, ACK and replay rules as evt frames. */
+export const TranscriptFrameSchema = TranscriptBatchSchema.extend({
+  kind: z.literal('transcript'),
+  msgId,
+});
+
 export const FrameSchema = z.discriminatedUnion('kind', [
   HelloFrameSchema,
   WelcomeFrameSchema,
@@ -82,6 +96,7 @@ export const FrameSchema = z.discriminatedUnion('kind', [
   HeartbeatFrameSchema,
   CmdFrameSchema,
   EvtFrameSchema,
+  TranscriptFrameSchema,
   AckFrameSchema,
 ]);
 export type Frame = z.infer<typeof FrameSchema>;
@@ -95,12 +110,14 @@ export type HeartbeatFrame = FrameOf<'heartbeat'>;
 export type CmdFrame = FrameOf<'cmd'>;
 export type EvtFrame = FrameOf<'evt'>;
 export type AckFrame = FrameOf<'ack'>;
+export type TranscriptFrame = FrameOf<'transcript'>;
 
 /** Frames the Node may send. */
 export const NodeToLeaderFrameSchema = z.discriminatedUnion('kind', [
   HelloFrameSchema,
   HeartbeatFrameSchema,
   EvtFrameSchema,
+  TranscriptFrameSchema,
   AckFrameSchema,
 ]);
 export type NodeToLeaderFrame = z.infer<typeof NodeToLeaderFrameSchema>;

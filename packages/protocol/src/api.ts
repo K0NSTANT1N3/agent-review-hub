@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { LendModeSchema } from './config.js';
+import { AgentTrustSchema, DetectedAgentSchema } from './adapters.js';
+import { AgentEventSchema, TranscriptBatchSchema } from './agent-events.js';
 import {
   AgentStatusSchema,
   AuthorActionSchema,
@@ -10,6 +12,7 @@ import {
   IssueStatusSchema,
   LockKindSchema,
   LockRoleSchema,
+  ProfileSchema,
   SessionStateSchema,
   TaskModeSchema,
   TaskPrioritySchema,
@@ -43,6 +46,9 @@ export const AgentViewSchema = z.object({
   idleSessions: z.number().int(),
   lentToday: z.number().int(),
   budgetRemaining: z.number().int(),
+  /** Missing on older Leaders. Treat missing trust as unknown, never as enforced. */
+  trust: AgentTrustSchema.optional(),
+  detectedAgents: z.array(DetectedAgentSchema).optional(),
 });
 export type AgentView = z.infer<typeof AgentViewSchema>;
 
@@ -194,6 +200,22 @@ export const TaskDetailSchema = z.object({
 });
 export type TaskDetail = z.infer<typeof TaskDetailSchema>;
 
+/** A REST page can contain no events for a session. Events are ordered by seq. */
+export const TranscriptSessionSchema = z.object({
+  sid: z.string().min(1),
+  agentId: z.string().min(1),
+  profile: ProfileSchema,
+  events: z.array(AgentEventSchema),
+});
+export type TranscriptSession = z.infer<typeof TranscriptSessionSchema>;
+
+/** Leader adds authenticated agent identity and the stored session profile. */
+export const TranscriptAppendedSchema = TranscriptBatchSchema.extend({
+  agentId: z.string().min(1),
+  profile: ProfileSchema,
+});
+export type TranscriptAppended = z.infer<typeof TranscriptAppendedSchema>;
+
 export const DirectiveViewSchema = z.object({
   id: z.string(),
   requester: z.string(),
@@ -288,6 +310,15 @@ export const ListTasksQuerySchema = z.object({
 export const ListTasksResponseSchema = z.object({ tasks: z.array(TaskViewSchema) });
 export type ListTasksResponse = z.infer<typeof ListTasksResponseSchema>;
 
+/** Exclusive per-session cursor. Use sid when resuming one session independently. */
+export const TaskTranscriptQuerySchema = z.object({
+  afterSeq: z.string().regex(/^(0|[1-9][0-9]*)$/).transform(Number).pipe(z.number().int().nonnegative()).optional(),
+  sid: z.string().min(1).optional(),
+});
+export type TaskTranscriptQuery = z.infer<typeof TaskTranscriptQuerySchema>;
+export const TaskTranscriptResponseSchema = z.object({ sessions: z.array(TranscriptSessionSchema) });
+export type TaskTranscriptResponse = z.infer<typeof TaskTranscriptResponseSchema>;
+
 export const CreateTaskRequestSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().min(1),
@@ -320,18 +351,25 @@ export type AnswerTaskRequest = z.infer<typeof AnswerTaskRequestSchema>;
 /**
  * `full` is the agent's own token (desktop app, Node). `requester` tokens act as the same owner but may only
  * read, create tasks, answer a blocked author and ask agents: never approve, send back, cancel, pause,
- * reassign or mint tokens. They never authenticate a Node.
+ * reassign or mint tokens. `owner` API tokens may also perform owner task actions, subject to
+ * requester/admin checks. Neither API token scope may authenticate a Node or manage tokens.
  */
-export const TokenScopeSchema = z.enum(['full', 'requester']);
+export const ApiTokenScopeSchema = z.enum(['requester', 'owner']);
+export type ApiTokenScope = z.infer<typeof ApiTokenScopeSchema>;
+export const TokenScopeSchema = z.enum(['full', ...ApiTokenScopeSchema.options]);
 export type TokenScope = z.infer<typeof TokenScopeSchema>;
 
-export const CreateApiTokenRequestSchema = z.object({ label: z.string().trim().max(80).optional() });
+export const CreateApiTokenRequestSchema = z.object({
+  label: z.string().trim().max(80).optional(),
+  /** Omitted means requester. Only a full agent credential may select owner. */
+  scope: ApiTokenScopeSchema.optional(),
+});
 export type CreateApiTokenRequest = z.infer<typeof CreateApiTokenRequestSchema>;
 
 export const ApiTokenViewSchema = z.object({
   id: z.string(),
   agentId: z.string(),
-  scope: z.literal('requester'),
+  scope: ApiTokenScopeSchema,
   label: z.string(),
   createdAt: z.number().int(),
   lastUsedAt: z.number().int().nullable(),
@@ -402,16 +440,18 @@ export interface RouteDef {
   query?: z.ZodType;
   body?: z.ZodType;
   response: z.ZodType;
-  /** True when a requester-scope API token may call this route (default: full tokens only). */
+  /** True when a requester-scope API token may call this route (default: disallowed). */
   requesterToken?: boolean;
+  /** True when an owner-scope API token may call this route (default: disallowed). */
+  ownerToken?: boolean;
 }
 
 const TaskActionBodySchema = z.object({}).strict().optional();
 
 export const API_ROUTES = {
   health: { method: 'GET', path: '/api/health', auth: 'none', status: 200, response: HealthResponseSchema },
-  listAgents: { method: 'GET', path: '/api/agents', auth: 'any', status: 200, response: ListAgentsResponseSchema, requesterToken: true },
-  teamActivity: { method: 'GET', path: '/api/activity', auth: 'any', status: 200, response: TeamActivityResponseSchema },
+  listAgents: { method: 'GET', path: '/api/agents', auth: 'any', status: 200, response: ListAgentsResponseSchema, requesterToken: true, ownerToken: true },
+  teamActivity: { method: 'GET', path: '/api/activity', auth: 'any', status: 200, response: TeamActivityResponseSchema, ownerToken: true },
   listSessions: {
     method: 'GET',
     path: '/api/sessions',
@@ -420,15 +460,26 @@ export const API_ROUTES = {
     query: ListSessionsQuerySchema,
     response: ListSessionsResponseSchema,
     requesterToken: true,
+    ownerToken: true,
   },
-  listTasks: { method: 'GET', path: '/api/tasks', auth: 'any', status: 200, query: ListTasksQuerySchema, response: ListTasksResponseSchema, requesterToken: true },
-  createTask: { method: 'POST', path: '/api/tasks', auth: 'any', status: 201, body: CreateTaskRequestSchema, response: TaskViewSchema, requesterToken: true },
-  getTask: { method: 'GET', path: '/api/tasks/:id', auth: 'any', status: 200, response: TaskDetailSchema, requesterToken: true },
-  getTaskDiff: { method: 'GET', path: '/api/tasks/:id/diff', auth: 'any', status: 200, query: DiffQuerySchema, response: DiffResponseSchema, requesterToken: true },
-  patchTask: { method: 'PATCH', path: '/api/tasks/:id', auth: 'requesterOrAdmin', status: 200, body: PatchTaskRequestSchema, response: TaskViewSchema },
-  cancelTask: { method: 'POST', path: '/api/tasks/:id/cancel', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema },
-  approveTask: { method: 'POST', path: '/api/tasks/:id/approve', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema },
-  sendBackTask: { method: 'POST', path: '/api/tasks/:id/send-back', auth: 'requesterOrAdmin', status: 200, body: SendBackRequestSchema, response: TaskViewSchema },
+  listTasks: { method: 'GET', path: '/api/tasks', auth: 'any', status: 200, query: ListTasksQuerySchema, response: ListTasksResponseSchema, requesterToken: true, ownerToken: true },
+  createTask: { method: 'POST', path: '/api/tasks', auth: 'any', status: 201, body: CreateTaskRequestSchema, response: TaskViewSchema, requesterToken: true, ownerToken: true },
+  getTask: { method: 'GET', path: '/api/tasks/:id', auth: 'any', status: 200, response: TaskDetailSchema, requesterToken: true, ownerToken: true },
+  getTaskTranscript: {
+    method: 'GET',
+    path: '/api/tasks/:id/transcript',
+    auth: 'any',
+    status: 200,
+    query: TaskTranscriptQuerySchema,
+    response: TaskTranscriptResponseSchema,
+    requesterToken: true,
+    ownerToken: true,
+  },
+  getTaskDiff: { method: 'GET', path: '/api/tasks/:id/diff', auth: 'any', status: 200, query: DiffQuerySchema, response: DiffResponseSchema, requesterToken: true, ownerToken: true },
+  patchTask: { method: 'PATCH', path: '/api/tasks/:id', auth: 'requesterOrAdmin', status: 200, body: PatchTaskRequestSchema, response: TaskViewSchema, ownerToken: true },
+  cancelTask: { method: 'POST', path: '/api/tasks/:id/cancel', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema, ownerToken: true },
+  approveTask: { method: 'POST', path: '/api/tasks/:id/approve', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema, ownerToken: true },
+  sendBackTask: { method: 'POST', path: '/api/tasks/:id/send-back', auth: 'requesterOrAdmin', status: 200, body: SendBackRequestSchema, response: TaskViewSchema, ownerToken: true },
   reassignReviewer: {
     method: 'POST',
     path: '/api/tasks/:id/reassign-reviewer',
@@ -436,11 +487,12 @@ export const API_ROUTES = {
     status: 200,
     body: TaskActionBodySchema,
     response: TaskViewSchema,
+    ownerToken: true,
   },
-  pauseTask: { method: 'POST', path: '/api/tasks/:id/pause', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema },
-  resumeTask: { method: 'POST', path: '/api/tasks/:id/resume', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema },
-  createDirective: { method: 'POST', path: '/api/directives', auth: 'any', status: 201, body: CreateDirectiveRequestSchema, response: DirectiveViewSchema, requesterToken: true },
-  getDirective: { method: 'GET', path: '/api/directives/:id', auth: 'any', status: 200, response: DirectiveViewSchema, requesterToken: true },
+  pauseTask: { method: 'POST', path: '/api/tasks/:id/pause', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema, ownerToken: true },
+  resumeTask: { method: 'POST', path: '/api/tasks/:id/resume', auth: 'requesterOrAdmin', status: 200, body: TaskActionBodySchema, response: TaskViewSchema, ownerToken: true },
+  createDirective: { method: 'POST', path: '/api/directives', auth: 'any', status: 201, body: CreateDirectiveRequestSchema, response: DirectiveViewSchema, requesterToken: true, ownerToken: true },
+  getDirective: { method: 'GET', path: '/api/directives/:id', auth: 'any', status: 200, response: DirectiveViewSchema, requesterToken: true, ownerToken: true },
   answerTask: {
     method: 'POST',
     path: '/api/tasks/:id/answer',
@@ -449,6 +501,7 @@ export const API_ROUTES = {
     body: AnswerTaskRequestSchema,
     response: TaskViewSchema,
     requesterToken: true,
+    ownerToken: true,
   },
   createApiToken: { method: 'POST', path: '/api/tokens', auth: 'any', status: 201, body: CreateApiTokenRequestSchema, response: CreatedApiTokenSchema },
   listApiTokens: { method: 'GET', path: '/api/tokens', auth: 'any', status: 200, response: ListApiTokensResponseSchema },
@@ -484,6 +537,7 @@ export const UiEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('team.activity.updated'), data: TeamActivityResponseSchema }),
   z.object({ type: z.literal('session.updated'), data: SessionViewSchema }),
   z.object({ type: z.literal('message.created'), data: MessageViewSchema }),
+  z.object({ type: z.literal('transcript.appended'), data: TranscriptAppendedSchema }),
   z.object({ type: z.literal('directive.updated'), data: DirectiveViewSchema }),
   z.object({
     type: z.literal('task.needs_attention'),

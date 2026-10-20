@@ -16,6 +16,11 @@ export async function createAdapter(
   options: { authorBashAllow?: readonly string[] } = {},
 ): Promise<AgentAdapter> {
   switch (config.type) {
+    case 'codex':
+    case 'pi':
+    case 'omp':
+    case 'kilo':
+      throw new Error(`${config.type} adapter not implemented yet`);
     case 'mock':
       return createMockAdapter(config);
     case 'opencode': {
