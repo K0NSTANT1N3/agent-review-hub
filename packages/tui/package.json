@@ -1,0 +1,38 @@
+{
+  "name": "@quorum/tui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "quorum tui: a terminal UI for Quorum tasks and live agent transcripts",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "quorum-tui": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@quorum/protocol": "workspace:*",
+    "ink": "^8.0.0",
+    "react": "^19.3.1",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/ws": "^8.18.2",
+    "ink-testing-library": "^4.0.0"
+  }
+}

@@ -1,6 +1,11 @@
+import type { AgentEvent } from '@quorum/protocol';
+
 // Spec §15.1. Owned by Codex-2 after scaffold C0.
 
 export type Profile = 'author' | 'reviewer' | 'directive';
+
+/** An AgentEvent before the runner stamps it: the runner assigns `seq` and `at` per session. */
+export type AgentEventInput = AgentEvent extends infer E ? (E extends unknown ? Omit<E, 'seq' | 'at'> : never) : never;
 
 export interface TurnResult {
   /** Final assistant text of the turn. */
@@ -37,6 +42,8 @@ export interface AgentAdapter {
     prompt: string;
     signal: AbortSignal;
     timeoutMs: number;
+    /** Live transcript events, in order. Optional: adapters that cannot stream never call it. */
+    onEvent?: (event: AgentEventInput) => void;
   }): Promise<TurnResult & { nativeId: string }>;
   closeSession(nativeId: string): Promise<void>;
 }
