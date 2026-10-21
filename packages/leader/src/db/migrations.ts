@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export function migrate(db: Database.Database): void {
   // WAL must be configured outside a transaction; foreign keys are per connection.
@@ -27,8 +27,13 @@ export function migrate(db: Database.Database): void {
     }
     if (rows[0] !== undefined && rows[0].version < 3) {
       const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
-      db.exec(schema.slice(schema.indexOf('-- v3:')));
+      db.exec(schema.slice(schema.indexOf('-- v3:'), schema.indexOf('-- v4:')));
       db.prepare('UPDATE schema_version SET version = ?').run(3);
+    }
+    if (rows[0] !== undefined && rows[0].version < 4) {
+      const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+      db.exec(schema.slice(schema.indexOf('-- v4:')));
+      db.prepare('UPDATE schema_version SET version = ?').run(4);
     }
     if (rows.length === 0) {
       const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');

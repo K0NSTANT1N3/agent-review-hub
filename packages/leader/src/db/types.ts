@@ -18,6 +18,7 @@ export interface AgentRow {
   created_at: number;
   trust: string | null;
   detected_agents: string | null;
+  adapter_type: string | null;
 }
 
 export interface SessionRow {

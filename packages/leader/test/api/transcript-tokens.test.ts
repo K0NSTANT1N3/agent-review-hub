@@ -64,11 +64,12 @@ describe('task transcript API', () => {
 
   it('exposes reported agent trust and discovery while missing metadata stays unknown', async () => {
     const detectedAgents = [{ type: 'codex', version: '1.0', trust: 'sandboxed' }];
-    db.agents.update('alice', { trust: 'low', detected_agents: JSON.stringify(detectedAgents) });
+    db.agents.update('alice', { trust: 'low', detected_agents: JSON.stringify(detectedAgents), adapter_type: 'claude-code' });
     const response = await request('GET', '/api/agents', tokens.alice);
-    expect(response.json().agents.find((a: { id: string }) => a.id === 'alice')).toMatchObject({ trust: 'low', detectedAgents });
+    expect(response.json().agents.find((a: { id: string }) => a.id === 'alice')).toMatchObject({ trust: 'low', detectedAgents, adapterType: 'claude-code' });
     expect(response.json().agents.find((a: { id: string }) => a.id === 'bob')).not.toHaveProperty('trust');
     expect(response.json().agents.find((a: { id: string }) => a.id === 'bob')).not.toHaveProperty('detectedAgents');
+    expect(response.json().agents.find((a: { id: string }) => a.id === 'bob')).not.toHaveProperty('adapterType');
   });
 });
 

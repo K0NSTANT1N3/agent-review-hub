@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import { cleanText, editText, editorLine, emptyEditor, fit, widthOf, wrap } from '../src/text.js';
+import { cleanText, editText, editorLine, emptyEditor, fit, fitAtWord, widthOf, wrap } from '../src/text.js';
 import { registerTerminalCleanup } from '../src/terminal.js';
 
 describe('terminal text', () => {
@@ -8,6 +8,8 @@ describe('terminal text', () => {
     expect(cleanText('\u001b[31mred\u001b[0m\u0007\u001b]8;;https://evil.test\u0007link\u001b]8;;\u0007')).toBe('redlink');
     expect(widthOf('你e\u0301')).toBe(3);
     expect(fit('你e\u0301x', 3)).toBe('你e\u0301');
+    expect(fitAtWord('also: codex 0.163.0, pi 1.3.0', 21)).toBe('also: codex 0.163.0,…');
+    expect(fitAtWord('also: codex 0.163.0', 40)).toBe('also: codex 0.163.0');
     expect(wrap('你你ab\nc', 3)).toEqual(['你', '你a', 'b', 'c']);
   });
 

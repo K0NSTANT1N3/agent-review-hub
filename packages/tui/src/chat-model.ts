@@ -1,4 +1,4 @@
-import type { AgentEvent, IssueView, MessageView, TaskEventView, TranscriptSession } from '@quorum/protocol';
+import { QUORUM_JSON_FENCE, type AgentEvent, type IssueView, type MessageView, type TaskEventView, type TranscriptSession } from '@quorum/protocol';
 import { describeMessage, describeTaskEvent } from './messages.js';
 
 export interface HumanAction {
@@ -90,7 +90,83 @@ function sessionEntries(session: TranscriptSession, active: boolean): ChatEntry[
     previous = event;
   }
   if (active && status) entries.push(status);
-  return entries;
+  return entries.flatMap((entry) => {
+    if (entry.kind !== 'text') return [entry];
+    const text = stripQuorumJson(entry.text);
+    return text === '' ? [] : [{ ...entry, text }];
+  });
+}
+
+const OPEN_FENCE = new RegExp(`^ {0,3}\`\`\`${QUORUM_JSON_FENCE}[ \\t]*\\r?$`, 'gm');
+const CLOSE_FENCE = /^ {0,3}```[ \t]*\r?$/gm;
+
+/** Drop machine ```quorum-json blocks, including a fence still arriving across deltas. */
+function stripQuorumJson(text: string): string {
+  let remaining = text;
+  let kept = '';
+  while (remaining.length > 0) {
+    OPEN_FENCE.lastIndex = 0;
+    const open = OPEN_FENCE.exec(remaining);
+    if (open === null || open.index === undefined) {
+      kept += remaining;
+      break;
+    }
+    kept += remaining.slice(0, open.index);
+    const afterOpening = open.index + open[0].length;
+    const lineBreak = /^\r?\n/.exec(remaining.slice(afterOpening));
+    const bodyStart = lineBreak === null ? remaining.length : afterOpening + lineBreak[0].length;
+    CLOSE_FENCE.lastIndex = bodyStart;
+    const close = CLOSE_FENCE.exec(remaining);
+    if (close === null || close.index === undefined) break;
+    remaining = remaining.slice(close.index + close[0].length).replace(/^\r?\n/, '');
+  }
+  const lastNl = kept.lastIndexOf('\n');
+  const lastLine = lastNl === -1 ? kept : kept.slice(lastNl + 1);
+  const fence = lastLine.replace(/[ \t]+$/g, '').replace(/^\s{0,3}/, '');
+  const opener = `\`\`\`${QUORUM_JSON_FENCE}`;
+  // A bare ``` is a legal close of some other fence; only hide an unambiguous quorum-json prefix.
+  if (fence.length > 3 && opener.startsWith(fence)) kept = lastNl === -1 ? '' : kept.slice(0, lastNl);
+  return kept.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
+}
+
+const TRANSITION_REASONS: Record<string, readonly string[]> = {
+  'author.submitted': ['author_submitted', 'tests_failed'],
+  'author.start': ['author_assigned'],
+  'author.sync': ['merge_conflict'],
+  'author.synced': ['sync_conflicts_resolved', 'sync_clean'],
+  'review.start': ['reviewer_assigned'],
+  'review.completed': ['review_approved', 'review_changes'],
+};
+
+function prettyState(state: string): string {
+  const text = state.replaceAll('_', ' ').toLowerCase();
+  return text === '' ? text : `${text[0]!.toUpperCase()}${text.slice(1)}`;
+}
+
+function attachState(text: string, state: string): string {
+  const index = text.indexOf('\n');
+  const head = index === -1 ? text : text.slice(0, index);
+  return `${head} → ${prettyState(state)}${index === -1 ? '' : text.slice(index)}`;
+}
+
+function pairedStates(messages: MessageView[], events: TaskEventView[]): { hiddenEvents: Set<number>; states: Map<string, string> } {
+  const hiddenEvents = new Set<number>();
+  const states = new Map<string, string>();
+  const used = new Set<string>();
+  for (const event of events) {
+    let best: MessageView | undefined;
+    let bestDt = Infinity;
+    for (const message of messages) {
+      if (used.has(message.id) || !TRANSITION_REASONS[message.type]?.includes(event.reason)) continue;
+      const dt = Math.abs(message.createdAt - event.at);
+      if (dt <= 2000 && dt < bestDt) { best = message; bestDt = dt; }
+    }
+    if (best === undefined) continue;
+    used.add(best.id);
+    hiddenEvents.add(event.id);
+    states.set(best.id, event.toState);
+  }
+  return { hiddenEvents, states };
 }
 
 export function buildChat(input: {
@@ -101,12 +177,16 @@ export function buildChat(input: {
   issues?: IssueView[];
   activeSids?: ReadonlySet<string>;
 }): ChatEntry[] {
+  const { hiddenEvents, states } = pairedStates(input.messages, input.events);
   const entries = input.transcripts.flatMap((session) => sessionEntries(session, input.activeSids?.has(session.sid) ?? false));
   for (const message of input.messages) {
     const text = describeMessage(message);
-    if (text !== null) entries.push({ id: `message:${message.id}`, at: message.createdAt, speaker: message.direction === 'to_node' ? `Leader › ${message.agentId}` : message.agentId, kind: 'message', text });
+    if (text === null) continue;
+    const state = states.get(message.id);
+    entries.push({ id: `message:${message.id}`, at: message.createdAt, speaker: message.direction === 'to_node' ? `Leader › ${message.agentId}` : message.agentId, kind: 'message', text: state === undefined ? text : attachState(text, state) });
   }
   for (const event of input.events) {
+    if (hiddenEvents.has(event.id)) continue;
     const human = /^(human|token):/.test(event.actor);
     entries.push({ id: `event:${event.id}`, at: event.at, speaker: human ? event.actor.replace(/^(human|token):/, 'Human · ') : event.actor, kind: human ? 'human' : 'event', text: describeTaskEvent(event) });
   }

@@ -181,6 +181,7 @@ describe('adapter registry and optional reports', () => {
     for (const trust of ['enforced', 'sandboxed', 'low']) expect(DetectedAgentSchema.safeParse({ ...detected, trust }).success).toBe(true);
     expect(DetectedAgentSchema.safeParse({ ...detected, trust: 'trusted' }).success).toBe(false);
     expect(AgentViewSchema.shape.trust.isOptional()).toBe(true);
+    expect(AgentViewSchema.shape.adapterType.isOptional()).toBe(true);
   });
 
   it('keeps local binary paths out of discovery reports on every wire surface', () => {

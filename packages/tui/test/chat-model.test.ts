@@ -101,6 +101,52 @@ describe('transcript model', () => {
   });
 });
 
+describe('quorum-json hiding', () => {
+  const fence = (json: string) => `\`\`\`quorum-json\n${json}\n\`\`\``;
+
+  it('keeps prose around a quorum-json block and drops a message that is only the block', () => {
+    expect(chat([session([{ kind: 'text', mode: 'final', text: `Added the limit.\n${fence('{"status":"done","summary":"Added the limit."}')}`, seq: 1, at: 1 }])])[0]?.text).toBe('Added the limit.');
+    expect(chat([session([{ kind: 'text', mode: 'final', text: `${fence('{"verdict":"approve"}')}\nlooks good`, seq: 1, at: 1 }])])[0]?.text).toBe('looks good');
+    expect(chat([session([{ kind: 'text', mode: 'final', text: fence('{"status":"done"}'), seq: 1, at: 1 }])])).toEqual([]);
+    expect(chat([session([{ kind: 'text', mode: 'final', text: '```ts\nconst x = 1;\n```', seq: 1, at: 1 }])])[0]?.text).toBe('```ts\nconst x = 1;\n```');
+  });
+
+  it('hides a quorum-json block split across deltas and consecutive final chunks', () => {
+    const opening: AgentEvent[] = [
+      { kind: 'text', mode: 'delta', messageId: 'm', text: 'Added the limit.\n```quo', seq: 1, at: 1 },
+      { kind: 'text', mode: 'delta', messageId: 'm', text: 'rum-json\n{"status":"done"}\n', seq: 2, at: 2 },
+    ];
+    expect(chat([session(opening)])[0]?.text).toBe('Added the limit.');
+    expect(chat([session([...opening, { kind: 'text', mode: 'delta', messageId: 'm', text: '```', seq: 3, at: 3 }])])[0]?.text).toBe('Added the limit.');
+    const first: AgentEvent = { kind: 'text', mode: 'final', messageId: 'm', text: `prose\n\`\`\`quorum-json\n${'a'.repeat(100)}`, seq: 1, at: 1 };
+    const second: AgentEvent = { kind: 'text', mode: 'final', messageId: 'm', text: `${'b'.repeat(100)}\n\`\`\``, seq: 2, at: 2 };
+    expect(chat([session([first])])[0]?.text).toBe('prose');
+    expect(chat([session([first, second])])[0]?.text).toBe('prose');
+  });
+});
+
+describe('transition de-duplication', () => {
+  it('merges a matching event into the richer message within 2s and keeps unmatched events', () => {
+    const submitted = message({ id: 'submitted', direction: 'from_node', type: 'author.submitted', payload: { headCommit: '96b3fffabc', tests: { passed: true }, summary: 'Added the limit.' }, createdAt: 1000 });
+    const matched = taskEvent({ id: 2, reason: 'author_submitted', toState: 'AWAITING_REVIEWER', actor: 'agent:codex@tazo', at: 1500 });
+    const unmatched = taskEvent({ id: 3, reason: 'merge_started', toState: 'MERGING', actor: 'leader', at: 1600 });
+    const entries = buildChat({ messages: [submitted], events: [matched, unmatched], transcripts: [] });
+    expect(entries.map((entry) => ({ kind: entry.kind, text: entry.text }))).toEqual([
+      { kind: 'message', text: 'codex@tazo submitted 96b3fff — tests passed → Awaiting reviewer\nAdded the limit.' },
+      { kind: 'event', text: 'merge started · MERGING' },
+    ]);
+  });
+
+  it('does not merge outside 2s, and pairs review assignment with the start message', () => {
+    const late = message({ id: 'late', direction: 'from_node', type: 'author.submitted', payload: { headCommit: '96b3fffabc', tests: { passed: true } }, createdAt: 4000 });
+    const early = taskEvent({ id: 2, reason: 'author_submitted', toState: 'AWAITING_REVIEWER', at: 1000 });
+    expect(buildChat({ messages: [late], events: [early], transcripts: [] }).map((entry) => entry.kind)).toEqual(['event', 'message']);
+    const start = message({ id: 'review', type: 'review.start', payload: { round: 1 }, createdAt: 2000 });
+    const assigned = taskEvent({ id: 4, reason: 'reviewer_assigned', toState: 'IN_REVIEW', at: 2000 });
+    expect(buildChat({ messages: [start], events: [assigned], transcripts: [] })).toMatchObject([{ kind: 'message', text: 'Leader asked codex@tazo to review (round 1) → In review' }]);
+  });
+});
+
 it('keeps a scrolled viewport anchored when new lines arrive, and follows with null top', () => {
   expect(viewport([1, 2, 3, 4], 2, null)).toEqual([3, 4]);
   expect(viewport([1, 2, 3, 4, 5], 2, 1)).toEqual([2, 3]);

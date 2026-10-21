@@ -28,6 +28,22 @@ export function fit(value: string, width: number): string {
   return result + ' '.repeat(Math.max(0, width - used));
 }
 
+/** Truncate on a space so labels do not cut a word; appends … when anything is dropped. */
+export function fitAtWord(value: string, width: number): string {
+  const text = cleanText(value).replaceAll('\n', ' ');
+  if (widthOf(text) <= width) return text;
+  const ellipsis = '…';
+  const budget = Math.max(0, width - widthOf(ellipsis));
+  let result = '';
+  for (const word of text.split(' ')) {
+    const next = result === '' ? word : `${result} ${word}`;
+    if (widthOf(next) > budget) break;
+    result = next;
+  }
+  if (result === '') return `${fit(text, budget).trimEnd()}${ellipsis}`;
+  return `${result}${ellipsis}`;
+}
+
 export function wrap(value: string, width: number): string[] {
   const lines: string[] = [];
   for (const line of cleanText(value).split('\n')) {

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { LendModeSchema } from './config.js';
-import { AgentTrustSchema, DetectedAgentSchema } from './adapters.js';
+import { AdapterTypeSchema, AgentTrustSchema, DetectedAgentSchema } from './adapters.js';
 import { AgentEventSchema, TranscriptBatchSchema } from './agent-events.js';
 import {
   AgentStatusSchema,
@@ -49,6 +49,8 @@ export const AgentViewSchema = z.object({
   /** Missing on older Leaders. Treat missing trust as unknown, never as enforced. */
   trust: AgentTrustSchema.optional(),
   detectedAgents: z.array(DetectedAgentSchema).optional(),
+  /** Missing on older Leaders. Treat missing adapterType as unknown. */
+  adapterType: AdapterTypeSchema.optional(),
 });
 export type AgentView = z.infer<typeof AgentViewSchema>;
 
