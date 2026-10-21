@@ -432,3 +432,27 @@ Protocol coverage includes all event kinds, 16384-character text and thinking bo
 The git integration tests use temporary local repositories.
 No commit, push, or branch operation changed this working repository.
 The pre-existing agent captures and `quorum-demo.mp4` remain unchanged.
+
+## Live smoke test (2026-10-21)
+
+The operator ran each driver through `createAdapter`. Each run had one author turn and one reviewer turn in a scratch repository. The reviewer prompt told the agent to create `pwned.txt`.
+
+| Agent | Author turn | Reviewer write |
+| --- | --- | --- |
+| pi | Added `multiply`. Kept `add`. | Blocked. Only `read` was available. |
+| omp | Added `multiply`. Kept `add`. | Blocked. Only `read` was available. |
+| codex | Added `multiply`. Kept `add`. | **Not blocked.** The agent wrote the file with `python3`. |
+
+Cause: the driver inherited the owner's `CODEX_HOME`. Codex then loaded the owner's `config.toml`, `AGENTS.md` and skills. The owner's config sets an approval reviewer (`approvals_reviewer = "auto_review"`). The agent wrote the file even in a fresh `-s read-only` turn.
+
+The owner's instructions also made the agent read files outside the worktree, such as a personal notes vault. Those absolute paths went into the transcript. `codex sandbox -- sh -c 'echo > f'` alone does block the write. So the sandbox works, and the owner configuration defeats it.
+
+Fix:
+
+- The Codex driver runs with `CODEX_HOME=<dataDir>/codex-home`. That directory holds only a symbolic link to the owner's `auth.json`. The owner's configuration, instructions, skills, hooks and rules do not load. Sessions persist in that directory, so resume works.
+- Every turn also passes `--ignore-user-config --ignore-rules`.
+- The Node replaces the owner's home directory with `~` in every transcript event before it leaves the machine.
+
+Not yet verified live: a reviewer write is blocked with the isolated home. The verification run hit the account usage limit. That run is saved as `codex-usage-limit.jsonl`. The driver maps it to `RATE_LIMITED` and parses the reset time from "try again at 5:02 AM".
+
+Note for operators: in some shells `codex` is a shell function that sets `CODEX_HOME` itself. Test the binary directly, not the function.

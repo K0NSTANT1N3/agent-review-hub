@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { DEFAULT_AUTHOR_BASH_ALLOW, type AdapterConfig } from '@quorum/protocol';
 import type { AgentAdapter } from './types.js';
 import { createMockAdapter } from './mock.js';
@@ -11,7 +12,7 @@ interface OpencodeModule {
 }
 
 interface CodexModule {
-  createCodexAdapter(config: Extract<AdapterConfig, { type: 'codex' }>): AgentAdapter;
+  createCodexAdapter(config: Extract<AdapterConfig, { type: 'codex' }>, options: { homeDir?: string }): AgentAdapter;
 }
 
 interface PiModule {
@@ -21,13 +22,13 @@ interface PiModule {
 /** Load only the selected adapter so mock-only installations need no provider SDK. */
 export async function createAdapter(
   config: AdapterConfig,
-  options: { authorBashAllow?: readonly string[] } = {},
+  options: { authorBashAllow?: readonly string[]; dataDir?: string } = {},
 ): Promise<AgentAdapter> {
   switch (config.type) {
     case 'codex': {
       const modulePath: string = './codex.js';
       const adapterModule = await import(modulePath) as CodexModule;
-      return adapterModule.createCodexAdapter(config);
+      return adapterModule.createCodexAdapter(config, options.dataDir === undefined ? {} : { homeDir: join(options.dataDir, 'codex-home') });
     }
     case 'pi':
     case 'omp': {

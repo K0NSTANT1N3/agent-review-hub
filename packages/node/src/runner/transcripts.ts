@@ -1,6 +1,15 @@
+import { homedir } from 'node:os';
 import { AgentEventSchema, MAX_AGENT_EVENT_BATCH, type AgentEvent, type TranscriptBatch } from '@quorum/protocol';
 import type { AgentEventInput } from '../adapters/types.js';
 import type { NodeJournal } from '../journal.js';
+
+/** Agents print absolute paths. The owner's home directory, and so their username, stays on this machine. */
+export function redactHome(input: AgentEventInput, home: string = homedir()): AgentEventInput {
+  if (home.length < 2) return input;
+  const redact = (value: unknown): unknown => typeof value === 'string' ? value.split(home).join('~')
+    : Array.isArray(value) ? value.map(redact) : value;
+  return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, redact(value)])) as AgentEventInput;
+}
 
 /** One adapter turn; sequences belong to the Quorum session, not the native session. */
 export class TurnTranscript {
@@ -21,7 +30,7 @@ export class TurnTranscript {
   readonly onEvent = (input: AgentEventInput): void => {
     if (this.closed || this.taskId === undefined || !this.enabled()) return;
     try {
-      const parsed = AgentEventSchema.parse({ ...input, seq: 1, at: Date.now() });
+      const parsed = AgentEventSchema.parse({ ...redactHome(input), seq: 1, at: Date.now() });
       parsed.seq = this.journal.nextTranscriptSeq(this.sid);
       this.events.push(parsed);
       this.bytes += Buffer.byteLength(JSON.stringify(parsed));

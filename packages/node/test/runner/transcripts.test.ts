@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { TranscriptBatch } from '@quorum/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openJournal, type NodeJournal } from '../../src/journal.js';
-import { TurnTranscript } from '../../src/runner/transcripts.js';
+import { redactHome, TurnTranscript } from '../../src/runner/transcripts.js';
 
 describe('turn transcripts', () => {
   let root: string;
@@ -92,3 +92,23 @@ describe('turn transcripts', () => {
     expect(errors).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('redactHome', () => {
+  it('replaces the owner home directory in every string field and path', () => {
+    expect(redactHome({
+      kind: 'tool_call', id: 'c1', name: 'bash', toolKind: 'bash',
+      argsSummary: "rtk read /Users/ana/Documents/vault/index.md", paths: ['/Users/ana/.quorum/workspace/s1/a.ts', 'src/b.ts'],
+    }, '/Users/ana')).toEqual({
+      kind: 'tool_call', id: 'c1', name: 'bash', toolKind: 'bash',
+      argsSummary: 'rtk read ~/Documents/vault/index.md', paths: ['~/.quorum/workspace/s1/a.ts', 'src/b.ts'],
+    });
+    expect(redactHome({ kind: 'tool_result', id: 'c1', ok: true, exitCode: 0, output: '/Users/ana/x\n/Users/ana/y' }, '/Users/ana'))
+      .toEqual({ kind: 'tool_result', id: 'c1', ok: true, exitCode: 0, output: '~/x\n~/y' });
+  });
+
+  it('leaves events alone when the home directory is the filesystem root', () => {
+    const event = { kind: 'text', mode: 'final', text: '/etc/hosts' } as const;
+    expect(redactHome(event, '/')).toBe(event);
+  });
+});
+

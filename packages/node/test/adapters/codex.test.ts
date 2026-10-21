@@ -1,6 +1,9 @@
 import { AgentEventSchema } from '@quorum/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createCodexAdapter } from '../../src/adapters/codex.js';
+import { lstatSync, mkdtempSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createCodexAdapter, parseResetAt, prepareCodexHome } from '../../src/adapters/codex.js';
 import { createAdapter } from '../../src/adapters/index.js';
 import type { AgentEventInput, Profile } from '../../src/adapters/types.js';
 import { fixture, jsonLines, replaySpawn, ReplayProcess, turn } from './cli-fixtures.js';
@@ -54,10 +57,10 @@ describe('Codex adapter', () => {
     await turn(adapter, { nativeId: threadId, profile, prompt });
     const sandbox = profile === 'author' ? 'workspace-write' : 'read-only';
     expect(replay.calls[0]).toEqual(['/custom/codex', [
-      'exec', '--json', '-s', sandbox, '--skip-git-repo-check', '-C', '/work/repo', '-m', 'test-model', '--', prompt,
+      'exec', '--json', '-s', sandbox, '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '-C', '/work/repo', '-m', 'test-model', '--', prompt,
     ], { cwd: '/work/repo', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }]);
     expect(replay.calls[1]![1]).toEqual([
-      'exec', 'resume', threadId, '--json', '-c', `sandbox_mode="${sandbox}"`, '--skip-git-repo-check', '-m', 'test-model', '--', prompt,
+      'exec', 'resume', threadId, '--json', '-c', `sandbox_mode="${sandbox}"`, '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '-m', 'test-model', '--', prompt,
     ]);
   });
 
@@ -135,5 +138,61 @@ describe('Codex adapter', () => {
     const adapter = await createAdapter(config);
     expect(await adapter.createSession({ cwd: '/repo', profile: 'reviewer' })).toEqual({ nativeId: null });
     await expect(createAdapter({ type: 'kilo', contextWindow: 200_000 })).rejects.toThrow('kilo adapter not implemented yet');
+  });
+
+  describe('owner config isolation', () => {
+    const dirs: string[] = [];
+    const tempDir = () => { const dir = mkdtempSync(join(tmpdir(), 'quorum-codex-')); dirs.push(dir); return dir; };
+    afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+    it('runs turns with a Quorum Codex home that holds only a link to the owner login', async () => {
+      const owner = tempDir();
+      writeFileSync(join(owner, 'auth.json'), '{}');
+      writeFileSync(join(owner, 'config.toml'), 'approvals_reviewer = "auto_review"');
+      writeFileSync(join(owner, 'AGENTS.md'), 'read my vault');
+      const homeDir = join(tempDir(), 'codex-home');
+      vi.stubEnv('CODEX_HOME', owner);
+      const replay = replaySpawn([fixture('codex-t2')]);
+      await turn(createCodexAdapter(config, { ...replay, homeDir }), { profile: 'reviewer' });
+      expect(replay.calls[0]![2].env.CODEX_HOME).toBe(homeDir);
+      expect(readlinkSync(join(homeDir, 'auth.json'))).toBe(join(owner, 'auth.json'));
+      expect(lstatSync(join(homeDir, 'config.toml'), { throwIfNoEntry: false })).toBeUndefined();
+      expect(lstatSync(join(homeDir, 'AGENTS.md'), { throwIfNoEntry: false })).toBeUndefined();
+      expect(statSync(homeDir).mode & 0o077).toBe(0);
+      vi.unstubAllEnvs();
+    });
+
+    it('relinks a stale login and refuses the owner home itself', () => {
+      const owner = tempDir();
+      writeFileSync(join(owner, 'auth.json'), '{}');
+      const homeDir = tempDir();
+      writeFileSync(join(homeDir, 'auth.json'), 'stale copy');
+      prepareCodexHome(homeDir, owner);
+      expect(readlinkSync(join(homeDir, 'auth.json'))).toBe(join(owner, 'auth.json'));
+      expect(() => prepareCodexHome(owner, owner)).toThrow(/must differ/);
+    });
+
+    it('fails the turn clearly when the owner is not logged in', async () => {
+      const replay = replaySpawn([fixture('codex-t2')]);
+      vi.stubEnv('CODEX_HOME', tempDir());
+      await expect(turn(createCodexAdapter(config, { ...replay, homeDir: join(tempDir(), 'h') }))).rejects.toMatchObject({ code: 'ADAPTER_ERROR', message: expect.stringMatching(/codex login/) });
+      expect(replay.calls).toHaveLength(0);
+      vi.unstubAllEnvs();
+    });
+  });
+
+  it('maps the captured usage-limit failure to RATE_LIMITED with the reset time', async () => {
+    const replay = replaySpawn([fixture('codex-usage-limit')], '', 1);
+    await expect(turn(createCodexAdapter(config, replay))).rejects.toMatchObject({ code: 'RATE_LIMITED', resetAt: expect.any(Number) });
+  });
+
+  it('reads "try again at" times as the next matching local time', () => {
+    const now = new Date(2026, 9, 21, 1, 48).getTime();
+    expect(parseResetAt('try again at 5:02 AM.', now)).toBe(new Date(2026, 9, 21, 5, 2).getTime());
+    expect(parseResetAt('try again at 1:30 AM', now)).toBe(new Date(2026, 9, 22, 1, 30).getTime());
+    expect(parseResetAt('try again at 12:15 PM', now)).toBe(new Date(2026, 9, 21, 12, 15).getTime());
+    expect(parseResetAt('try again at 17:05', now)).toBe(new Date(2026, 9, 21, 17, 5).getTime());
+    expect(parseResetAt('try again at 13:00 PM', now)).toBeUndefined();
+    expect(parseResetAt('usage limit reached', now)).toBeUndefined();
   });
 });

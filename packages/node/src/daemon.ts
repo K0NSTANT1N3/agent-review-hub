@@ -64,6 +64,7 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
 
     const adapter = options.adapter ?? await createAdapter(config.adapter, {
       authorBashAllow: config.authorBashAllow,
+      dataDir: config.dataDir,
     });
     const detectedAgents = await detectAgents(config.adapter);
     const trust = adapterTrust(config.adapter.type);
