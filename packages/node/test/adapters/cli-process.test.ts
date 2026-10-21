@@ -23,7 +23,9 @@ describe('CLI process', () => {
     child.replay(badLines.join('\n') + '\n\0{"text":"' + '界'.repeat(30) + '"}\0\nnull\n{"last":true}');
     expect(await result).toEqual({ code: 0, signal: null, stderr: '', malformedLineCount: 25, malformedLines: badLines.slice(-20) });
     expect(onJson.mock.calls.map(([value]) => value)).toEqual([{ text: '界'.repeat(30) }, null, { last: true }]);
-    expect(spawnFn).toHaveBeenCalledWith('/bin/agent', ['--json', '$(literal); text'], { cwd: '/repo', env, stdio: ['ignore', 'pipe', 'pipe'] });
+    expect(spawnFn).toHaveBeenCalledWith('/bin/agent', ['--json', '$(literal); text'], {
+      cwd: '/repo', env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true,
+    });
   });
 
   it('retains only the last 8 KB of stderr at a UTF-8 boundary and returns exit signals', async () => {
@@ -109,5 +111,37 @@ describe('CLI process', () => {
       await rejected;
       expect(child.signals).toEqual(['SIGTERM']);
     }
+  });
+
+  it('stops the child when a JSONL line exceeds 2 MiB', async () => {
+    const child = new ReplayProcess();
+    const rejected = expect(run(child)).rejects.toMatchObject({
+      code: 'ADAPTER_ERROR', message: 'agent output line exceeded 2 MiB',
+    });
+    child.stdout.write(`${'x'.repeat(2 * 1024 * 1024 + 1)}`);
+    await rejected;
+    expect(child.signals).toEqual(['SIGTERM']);
+  });
+
+  it('kills the process group so grandchildren do not survive cancel', async () => {
+    vi.useFakeTimers();
+    const child = new ReplayProcess();
+    child.pid = 4242;
+    child.closeOn = null;
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const controller = new AbortController();
+    const rejected = expect(run(child, { signal: controller.signal })).rejects.toMatchObject({ code: 'CANCELLED' });
+    controller.abort();
+    if (process.platform === 'win32') {
+      expect(child.signals).toEqual([]);
+    } else {
+      expect(kill).toHaveBeenCalledWith(-4242, 'SIGTERM');
+      expect(child.signals).toEqual([]);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL');
+    }
+    child.emit('close', null, 'SIGKILL');
+    await rejected;
+    kill.mockRestore();
   });
 });

@@ -1,9 +1,22 @@
+import { homedir } from 'node:os';
 import { MAX_TOOL_OUTPUT_BYTES, type AgentToolKindSchema } from '@quorum/protocol';
 import type { z } from 'zod';
 
 // Helpers shared by every adapter that emits AgentEvents.
 
 export type AgentToolKind = z.infer<typeof AgentToolKindSchema>;
+
+/** Failure text published on turn.failed is visible to the whole team. */
+export const MAX_FAILURE_MESSAGE_CHARS = 2048;
+
+export function redactHomeText(value: string, home: string = homedir()): string {
+  if (home.length < 2) return value;
+  return value.split(home).join('~');
+}
+
+export function sanitizeFailureMessage(value: string, home: string = homedir()): string {
+  return redactHomeText(value, home).slice(0, MAX_FAILURE_MESSAGE_CHARS);
+}
 
 /** Largest text an AgentEvent `text` or `thinking` event may carry; longer text is split. */
 export const MAX_EVENT_TEXT_CHARS = 16384;

@@ -1,9 +1,10 @@
+import { homedir } from 'node:os';
 import { AgentEventSchema } from '@quorum/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAdapter } from '../../src/adapters/index.js';
 import { createPiAdapter } from '../../src/adapters/pi.js';
-import type { AgentEventInput, Profile } from '../../src/adapters/types.js';
-import { fixture, jsonLines, replaySpawn, ReplayProcess, turn } from './cli-fixtures.js';
+import { AdapterError, type AgentEventInput, type Profile } from '../../src/adapters/types.js';
+import { expectedSpawnOptions, fixture, jsonLines, replaySpawn, ReplayProcess, turn } from './cli-fixtures.js';
 
 afterEach(() => vi.useRealTimers());
 
@@ -81,7 +82,7 @@ describe.each(['pi', 'omp'] as const)('%s adapter', (type) => {
     await turn(adapter, { nativeId: result.nativeId, profile });
     for (const [binary, argv, options] of replay.calls) {
       expect(binary).toBe(`/custom/${type}`);
-      expect(options).toEqual({ cwd: '/work/repo', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      expect(options).toEqual(expectedSpawnOptions('/work/repo'));
       expect(argv.slice(0, 5)).toEqual(['--mode', 'json', '-p', '--no-extensions', '--no-skills']);
       expect(argv[argv.indexOf('--model') + 1]).toBe('test-model');
       expect(argv.at(-2)).toBe('--');
@@ -94,8 +95,14 @@ describe.each(['pi', 'omp'] as const)('%s adapter', (type) => {
       } else {
         expect(argv).toContain('--no-lsp');
         expect(argv).toContain('--no-pty');
-        expect(argv).toContain('--auto-approve');
         expect(argv).not.toContain('--no-mcp');
+        if (profile === 'author') {
+          expect(argv).toContain('--auto-approve');
+          expect(argv).not.toContain('--approval-mode');
+        } else {
+          expect(argv).not.toContain('--auto-approve');
+          expect(argv[argv.indexOf('--approval-mode') + 1]).toBe('always-ask');
+        }
       }
     }
     expect(replay.calls[0]![1].at(-1)).toBe('-literal $(prompt); text');
@@ -168,6 +175,19 @@ describe.each(['pi', 'omp'] as const)('%s adapter', (type) => {
     ), stderr: '' },
   ])('maps rate limits from assistant text, stderr and failures', async ({ stdout, stderr }) => {
     await expect(turn(createPiAdapter(config(type), replaySpawn([stdout], stderr, 1)))).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('redacts home paths in failure messages and caps them', async () => {
+    const home = homedir();
+    const stderr = `${home}/.omp/secret.log ${'x'.repeat(3000)}`;
+    const error = await turn(createPiAdapter(config(type), replaySpawn([transcript(assistant('partial'))], stderr, 2))).then(
+      () => { throw new Error('expected AdapterError'); },
+      (value: unknown) => value as AdapterError,
+    );
+    expect(error).toMatchObject({ code: 'ADAPTER_ERROR' });
+    expect(error.message).not.toContain(home);
+    expect(error.message).toContain('~/.omp/secret.log');
+    expect(error.message.length).toBeLessThanOrEqual(2048);
   });
 
   it('rejects nonzero exits, unfinished loops, missing sessions and assistant errors', async () => {

@@ -31,6 +31,13 @@ export function mergeTranscript(current: TranscriptSession[], incoming: Transcri
   return [...sessions.values()].sort((a, b) => a.sid.localeCompare(b.sid));
 }
 
+/** Full REST snapshot: drop events the Leader no longer has. Live appends still merge by seq. */
+export function replaceTranscript(snapshot: TranscriptSession[]): TranscriptSession[] {
+  return snapshot
+    .map((session) => ({ ...session, events: [...session.events].sort((a, b) => a.seq - b.seq) }))
+    .sort((a, b) => a.sid.localeCompare(b.sid));
+}
+
 function toolText(call: Extract<AgentEvent, { kind: 'tool_call' }> | undefined, result?: Extract<AgentEvent, { kind: 'tool_result' }>): string {
   const kind = call?.toolKind ?? 'other';
   const icon = kind === 'bash' ? '$' : kind === 'edit' || kind === 'write' ? '✎' : '▸';

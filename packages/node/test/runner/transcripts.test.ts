@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { TranscriptBatch } from '@quorum/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openJournal, type NodeJournal } from '../../src/journal.js';
-import { redactHome, TurnTranscript } from '../../src/runner/transcripts.js';
+import { MAX_FAILURE_MESSAGE_CHARS, redactHome, sanitizeFailureMessage, TurnTranscript } from '../../src/runner/transcripts.js';
 
 describe('turn transcripts', () => {
   let root: string;
@@ -109,6 +109,14 @@ describe('redactHome', () => {
   it('leaves events alone when the home directory is the filesystem root', () => {
     const event = { kind: 'text', mode: 'final', text: '/etc/hosts' } as const;
     expect(redactHome(event, '/')).toBe(event);
+  });
+
+  it('redacts home paths in failure messages and caps them at 2048 characters', () => {
+    expect(sanitizeFailureMessage('failed /Users/ana/.codex/auth.json', '/Users/ana')).toBe('failed ~/.codex/auth.json');
+    const sanitized = sanitizeFailureMessage(`/Users/ana/${'x'.repeat(3000)}`, '/Users/ana');
+    expect(sanitized.startsWith('~/')).toBe(true);
+    expect(sanitized.length).toBe(MAX_FAILURE_MESSAGE_CHARS);
+    expect(sanitized).not.toContain('/Users/ana');
   });
 });
 

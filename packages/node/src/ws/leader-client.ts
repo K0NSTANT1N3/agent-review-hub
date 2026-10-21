@@ -141,11 +141,23 @@ export class LeaderClient {
     });
     socket.on('message', (data) => this.handleMessage(socket, data.toString()));
     socket.on('error', (error) => this.reportError(error));
-    socket.on('close', () => {
+    socket.on('close', (code) => {
       if (this.socket !== socket) return;
+      const hadWelcome = this.welcomed;
       this.socket = null;
       this.welcomed = false;
       this.clearTimers();
+      // An older Leader's closed adapterType enum rejects hello with 1008 before welcome.
+      if (code === 1008 && !hadWelcome && !this.stopped && !this.terminal) {
+        this.terminal = true;
+        this.stopped = true;
+        this.started = false;
+        const adapterType = this.options.config.adapter.type;
+        this.reportError(new Error(
+          `Leader closed with 1008 before welcome; adapter type "${adapterType}" is not recognized. Upgrade the Leader to a version that supports this adapter.`,
+        ));
+        return;
+      }
       this.scheduleReconnect();
     });
   }

@@ -56,10 +56,16 @@ describe('task transcript API', () => {
     }
     expect((await request('GET', `/api/tasks/${t.id}/transcript`)).statusCode).toBe(401);
     expect((await request('GET', '/api/tasks/999/transcript', tokens.alice)).statusCode).toBe(404);
-    for (const query of ['afterSeq=-1', 'afterSeq=1.5', 'afterSeq=x', 'sid=']) {
-      expect((await request('GET', `/api/tasks/${t.id}/transcript?${query}`, tokens.alice)).statusCode).toBe(400);
+    for (const query of ['afterSeq=-1', 'afterSeq=1.5', 'afterSeq=x', 'sid=', 'afterSeq=3', 'afterSeq=0']) {
+      const response = await request('GET', `/api/tasks/${t.id}/transcript?${query}`, tokens.alice);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toBe('VALIDATION');
     }
-    expect((await request('GET', `/api/tasks/${t.id}/transcript?afterSeq=3`, tokens.alice)).json().sessions[0].events).toEqual([]);
+    db.sessions.insert({ id: 'other', agent_id: 'bob', profile: 'reviewer', state: 'idle', created_at: 1, last_used_at: 1 });
+    db.appendTranscript(t.id, 'other', 'bob', 'reviewer', [event], 'turn', 10000);
+    const all = await request('GET', `/api/tasks/${t.id}/transcript`, tokens.alice);
+    expect(all.json().sessions.map((session: { sid: string }) => session.sid)).toEqual(['other', 's']);
+    expect((await request('GET', `/api/tasks/${t.id}/transcript?sid=s&afterSeq=3`, tokens.alice)).json().sessions[0].events).toEqual([]);
   });
 
   it('exposes reported agent trust and discovery while missing metadata stays unknown', async () => {

@@ -1,18 +1,29 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { AdapterError } from './types.js';
 
+export const MAX_JSONL_LINE_BYTES = 2 * 1024 * 1024;
+
 export interface CliProcess extends Pick<ChildProcess, 'kill'> {
+  readonly pid?: number;
   stdout: Readable;
   stderr: Readable;
   once(event: 'error', listener: (error: Error) => void): this;
   once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
 }
 
+export interface CliSpawnOptions {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  stdio: ['ignore', 'pipe', 'pipe'];
+  detached: boolean;
+  windowsHide: boolean;
+}
+
 export type SpawnFn = (
   binary: string,
   argv: readonly string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv; stdio: ['ignore', 'pipe', 'pipe'] },
+  options: CliSpawnOptions,
 ) => CliProcess;
 
 export interface CliProcessResult {
@@ -21,6 +32,41 @@ export interface CliProcessResult {
   stderr: string;
   malformedLineCount: number;
   malformedLines: string[];
+}
+
+export function cliSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): CliSpawnOptions {
+  return {
+    cwd,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
+    windowsHide: true,
+  };
+}
+
+/** SIGTERM (or taskkill) the process group, then SIGKILL if it is still alive. */
+export function killCliProcess(child: CliProcess, force = false): void {
+  const windows = process.platform === 'win32';
+  if (windows) {
+    if (child.pid) {
+      const args = ['/PID', String(child.pid), '/T'];
+      if (force) args.push('/F');
+      execFile('taskkill.exe', args, { windowsHide: true }, () => undefined);
+      return;
+    }
+  } else if (child.pid) {
+    try {
+      process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM');
+      return;
+    } catch {
+      // The process group may have exited; fall through to the child pid.
+    }
+  }
+  try {
+    child.kill(force ? 'SIGKILL' : 'SIGTERM');
+  } catch {
+    // The process may have exited between the timeout and the signal.
+  }
 }
 
 /** One non-interactive CLI turn. Completion waits for close, including after cancellation. */
@@ -36,14 +82,11 @@ export async function runCliProcess(options: {
 }): Promise<CliProcessResult> {
   if (options.signal.aborted) throw new AdapterError('CANCELLED');
   if (options.timeoutMs <= 0) throw new AdapterError('TIMEOUT');
+  const spawnOpts = cliSpawnOptions(options.cwd, options.env ?? process.env);
   const spawnFn: SpawnFn = options.spawnFn ?? ((binary, argv, opts) => spawn(binary, argv, opts));
   let child: CliProcess;
   try {
-    child = spawnFn(options.binary, options.argv, {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    child = spawnFn(options.binary, options.argv, spawnOpts);
   } catch (error) {
     throw new AdapterError('ADAPTER_ERROR', String(error), { cause: error });
   }
@@ -62,8 +105,8 @@ export async function runCliProcess(options: {
       if (stopped || settled) return;
       stopped = true;
       failure = error;
-      killTimer = setTimeout(() => child.kill('SIGKILL'), 5_000);
-      child.kill('SIGTERM');
+      killTimer = setTimeout(() => killCliProcess(child, true), 5_000);
+      killCliProcess(child, false);
     }
 
     function line(value: string): void {
@@ -106,12 +149,22 @@ export async function runCliProcess(options: {
     const timeout = setTimeout(() => stop(new AdapterError('TIMEOUT')), options.timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
+      if (stopped || settled) return;
       pending += chunk;
       let end: number;
       while ((end = pending.indexOf('\n')) !== -1) {
         const value = pending.slice(0, end);
         pending = pending.slice(end + 1);
+        if (Buffer.byteLength(value) > MAX_JSONL_LINE_BYTES) {
+          stop(new AdapterError('ADAPTER_ERROR', 'agent output line exceeded 2 MiB'));
+          pending = '';
+          return;
+        }
         line(value);
+      }
+      if (Buffer.byteLength(pending) > MAX_JSONL_LINE_BYTES) {
+        stop(new AdapterError('ADAPTER_ERROR', 'agent output line exceeded 2 MiB'));
+        pending = '';
       }
     });
     child.stderr.on('data', (chunk: Buffer) => {

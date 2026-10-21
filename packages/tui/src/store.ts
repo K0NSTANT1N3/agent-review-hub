@@ -1,5 +1,5 @@
 import type { AgentView, DirectiveView, MessageView, SessionView, TaskDetail, TaskEventView, TaskView, TeamActivityView, TranscriptSession, UiEvent } from '@quorum/protocol';
-import { mergeTranscript, type HumanAction } from './chat-model.js';
+import { mergeTranscript, replaceTranscript, type HumanAction } from './chat-model.js';
 import type { ConnectionState } from './ws-stream.js';
 
 export interface TaskData {
@@ -81,7 +81,7 @@ export function reducer(state: State, action: StoreAction): State {
         human: data.human.filter((item) => !item.comment || !action.detail.issues.some((issue) => issue.source === 'human' && issue.comment === item.comment)),
       }));
     }
-    case 'transcript': return updateData(state, action.taskId, (data) => ({ ...data, transcriptSupported: action.supported, transcripts: action.supported ? mergeTranscript(data.transcripts, action.sessions) : [] }));
+    case 'transcript': return updateData(state, action.taskId, (data) => ({ ...data, transcriptSupported: action.supported, transcripts: action.supported ? replaceTranscript(action.sessions) : [] }));
     case 'human': return updateData(state, action.taskId, (data) => ({ ...data, human: upsert(data.human, [action.action]) }));
     case 'ui': {
       const event = action.event;

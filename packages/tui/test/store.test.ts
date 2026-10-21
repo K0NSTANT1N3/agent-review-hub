@@ -74,6 +74,20 @@ describe('store', () => {
     expect(buildChat({ ...state.data[12]!, issues: state.data[12]?.detail?.issues }).find((entry) => entry.kind === 'human')).toMatchObject({ text: '[I1] Use Redis', at: 9000 });
   });
 
+  it('replaces session events on a full REST load so Leader-pruned events disappear', () => {
+    let state = initialState;
+    const live = { ...transcripts()[0]!, taskId: 12, events: [
+      { seq: 1, at: 1, kind: 'text' as const, mode: 'final' as const, text: 'pruned' },
+      { seq: 2, at: 2, kind: 'text' as const, mode: 'final' as const, text: 'kept' },
+    ] };
+    state = reducer(state, { type: 'ui', event: { type: 'transcript.appended', data: live } });
+    expect(state.data[12]?.transcripts[0]?.events.map((event) => event.seq)).toEqual([1, 2]);
+    state = reducer(state, { type: 'transcript', taskId: 12, sessions: [{ sid: 'author', agentId: 'codex@tazo', profile: 'author', events: live.events.slice(1) }], supported: true });
+    expect(state.data[12]?.transcripts[0]?.events.map((event) => event.seq)).toEqual([2]);
+    state = reducer(state, { type: 'ui', event: { type: 'transcript.appended', data: { ...live, events: [{ seq: 3, at: 3, kind: 'text', mode: 'final', text: 'newer' }] } } });
+    expect(state.data[12]?.transcripts[0]?.events.map((event) => event.seq)).toEqual([2, 3]);
+  });
+
   it('clears transcript rows when falling back to messages only', () => {
     const state = reducer(fixtureState(), { type: 'transcript', taskId: 12, sessions: [], supported: false });
     expect(state.data[12]?.transcripts).toEqual([]);

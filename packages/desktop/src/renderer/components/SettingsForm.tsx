@@ -1,4 +1,5 @@
 import type { AdapterConfig, LendMode } from '@quorum/protocol';
+import { CLI_ADAPTER_TRUST_NOTE, isCliAdapter, settingsAdapter } from '../../shared/adapter-choice';
 import type { DesktopSettings } from '../../shared/ipc';
 
 const LEND_HELP: Record<LendMode, string> = {
@@ -18,14 +19,12 @@ export function SettingsForm({ value, onChange }: { value: DesktopSettings; onCh
         Coding agent
         <select
           value={adapter.type}
-          onChange={(e) => {
-            const type = e.target.value as AdapterConfig['type'];
-            if (type === 'claude-code') setAdapter({ type, contextWindow: 200000 });
-            if (type === 'opencode') setAdapter({ type, baseUrl: 'http://localhost:4096', providerID: 'anthropic', modelID: 'claude-sonnet-5-5', contextWindow: 200000 });
-            if (type === 'mock') setAdapter({ type, scriptPath: '', contextWindow: 200000 });
-          }}
+          onChange={(e) => setAdapter(settingsAdapter(e.target.value as AdapterConfig['type']))}
         >
           <option value="claude-code">Claude Code (recommended)</option>
+          <option value="codex">Codex</option>
+          <option value="pi">pi</option>
+          <option value="omp">omp</option>
           <option value="opencode">opencode server</option>
           <option value="mock">Mock (testing only)</option>
         </select>
@@ -43,6 +42,34 @@ export function SettingsForm({ value, onChange }: { value: DesktopSettings; onCh
             }}
           />
         </label>
+      )}
+      {isCliAdapter(adapter) && (
+        <>
+          <label>
+            Binary path <span className="hint">(optional — empty uses {adapter.type} on PATH)</span>
+            <input
+              value={adapter.binaryPath ?? ''}
+              placeholder={adapter.type}
+              onChange={(e) => {
+                const binaryPath = e.target.value.trim();
+                const next = { type: adapter.type, contextWindow: adapter.contextWindow, ...(adapter.model !== undefined ? { model: adapter.model } : {}) };
+                setAdapter(binaryPath === '' ? next : { ...next, binaryPath });
+              }}
+            />
+          </label>
+          <label>
+            Model <span className="hint">(optional)</span>
+            <input
+              value={adapter.model ?? ''}
+              onChange={(e) => {
+                const model = e.target.value.trim();
+                const next = { type: adapter.type, contextWindow: adapter.contextWindow, ...(adapter.binaryPath !== undefined ? { binaryPath: adapter.binaryPath } : {}) };
+                setAdapter(model === '' ? next : { ...next, model });
+              }}
+            />
+          </label>
+          <div className="note span-2">{CLI_ADAPTER_TRUST_NOTE[adapter.type]}</div>
+        </>
       )}
       {adapter.type === 'opencode' && (
         <>

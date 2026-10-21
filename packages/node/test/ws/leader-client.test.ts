@@ -109,6 +109,37 @@ describe('LeaderClient', () => {
     expect(fixture.journal.unackedEvents()).toEqual([]);
   });
 
+  it('treats a 1008 close before welcome as terminal and names the adapter', async () => {
+    const fixture = await createFixture();
+    fixture.config.adapter = { type: 'codex', contextWindow: 200000 };
+    const errors: Error[] = [];
+    const client = createClient(fixture, { onError: (error) => errors.push(error) });
+    client.start();
+    const connection = await fixture.leader.waitForConnection();
+    await connection.next('hello');
+    connection.socket.close(1008, 'invalid frame');
+    await waitFor(() => errors.length > 0);
+    expect(errors[0]?.message).toMatch(/adapter type "codex"/);
+    expect(errors[0]?.message).toMatch(/Upgrade the Leader/);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(fixture.leader.connections).toHaveLength(1);
+    expect(client.isConnected).toBe(false);
+  });
+
+  it('reconnects on other close codes before welcome', async () => {
+    const fixture = await createFixture();
+    const client = createClient(fixture, { random: () => 0.5 });
+    client.start();
+    const first = await fixture.leader.waitForConnection();
+    await first.next('hello');
+    first.socket.close(1001, 'going away');
+    const second = await fixture.leader.waitForConnection(2, 5000);
+    await second.next('hello');
+    second.send(welcomeFrame());
+    await second.next('heartbeat');
+    expect(client.isConnected).toBe(true);
+  });
+
   it('handles a Leader reject without reconnecting', async () => {
     const fixture = await createFixture();
     let reject!: (reason: string) => void;

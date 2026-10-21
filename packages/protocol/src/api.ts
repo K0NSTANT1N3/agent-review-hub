@@ -312,10 +312,13 @@ export const ListTasksQuerySchema = z.object({
 export const ListTasksResponseSchema = z.object({ tasks: z.array(TaskViewSchema) });
 export type ListTasksResponse = z.infer<typeof ListTasksResponseSchema>;
 
-/** Exclusive per-session cursor. Use sid when resuming one session independently. */
+/** Exclusive per-session cursor. afterSeq requires sid so other sessions are not filtered. */
 export const TaskTranscriptQuerySchema = z.object({
   afterSeq: z.string().regex(/^(0|[1-9][0-9]*)$/).transform(Number).pipe(z.number().int().nonnegative()).optional(),
   sid: z.string().min(1).optional(),
+}).refine((query) => query.afterSeq === undefined || query.sid !== undefined, {
+  message: 'afterSeq requires sid',
+  path: ['afterSeq'],
 });
 export type TaskTranscriptQuery = z.infer<typeof TaskTranscriptQuerySchema>;
 export const TaskTranscriptResponseSchema = z.object({ sessions: z.array(TranscriptSessionSchema) });

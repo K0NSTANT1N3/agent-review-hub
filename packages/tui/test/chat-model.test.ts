@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentEvent, TranscriptSession } from '@quorum/protocol';
-import { buildChat, mergeTranscript, transcriptUsage } from '../src/chat-model.js';
+import { buildChat, mergeTranscript, replaceTranscript, transcriptUsage } from '../src/chat-model.js';
 import { chatLines, viewport } from '../src/components/chat.js';
 import { message, taskEvent } from './fixtures.js';
 
@@ -77,6 +77,14 @@ describe('transcript model', () => {
     const input = { messages: [message({ createdAt: 20 })], events: [taskEvent({ at: 35, actor: 'token:tazo', reason: 'human' })], human: [{ id: 'you', at: 40, text: 'Answer' }], transcripts: mergeTranscript([], [session([{ kind: 'text', mode: 'final', text: 'late', seq: 1, at: 30 }], 'b'), session([{ kind: 'text', mode: 'final', text: 'early', seq: 1, at: 10 }], 'a')]) };
     expect(buildChat(input).map((entry) => entry.kind)).toEqual(['text', 'message', 'text', 'human', 'human']);
     expect(buildChat(input).map((entry) => entry.at)).toEqual([10, 20, 30, 35, 40]);
+  });
+
+  it('replaces a session event list from a REST snapshot so pruned events disappear', () => {
+    const live = [session([{ kind: 'text', mode: 'final', text: 'old', seq: 1, at: 1 }, { kind: 'text', mode: 'final', text: 'keep', seq: 2, at: 2 }])];
+    const snapshot = replaceTranscript([session([{ kind: 'text', mode: 'final', text: 'keep', seq: 2, at: 2 }])]);
+    expect(snapshot[0]?.events.map((event) => event.seq)).toEqual([2]);
+    expect(mergeTranscript(live, snapshot)[0]?.events.map((event) => event.seq)).toEqual([1, 2]);
+    expect(mergeTranscript(snapshot, [session([{ kind: 'text', mode: 'final', text: 'new', seq: 3, at: 3 }])])[0]?.events.map((event) => event.seq)).toEqual([2, 3]);
   });
 
   it('sorts replayed events by seq and keeps session-local message/tool IDs independent', () => {
