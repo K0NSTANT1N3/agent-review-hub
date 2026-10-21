@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import type { AdapterConfig } from '@quorum/protocol';
+import { AgentEventSchema, type AdapterConfig } from '@quorum/protocol';
 import { AdapterError, type AgentAdapter, type Profile, type TurnResult } from './types.js';
+import { splitText } from './event-utils.js';
 
 const FailureSchema = z.enum(['RATE_LIMITED', 'ADAPTER_ERROR', 'INVALID_OUTPUT']);
 const TokenCountsSchema = z.object({
@@ -18,6 +19,10 @@ const MockTurnSchema = z.object({
   failTurnWith: FailureSchema.nullable().optional(),
   delayMs: z.number().int().nonnegative().optional(),
   tokensPerTurn: TokenCountsSchema.optional(),
+  events: z.array(z.preprocess(
+    (value) => value !== null && typeof value === 'object' ? { ...value, seq: 1, at: 0 } : value,
+    AgentEventSchema,
+  ).transform(({ seq: _seq, at: _at, ...event }) => event)).optional(),
 });
 
 const MockRuleSchema = z.object({
@@ -102,12 +107,15 @@ export async function createMockAdapter(config: MockAdapterConfig): Promise<Agen
 
       const identity = parsePromptIdentity(opts.prompt);
       if (identity.kind === 'internal') {
+        opts.onEvent?.({ kind: 'status', text: 'Mock turn started' });
         const counts = resolveInternalTurnCounts(script, opts.prompt);
         await waitForTurn(script.behaviors?.delayMs ?? 0, opts.timeoutMs, opts.signal);
         const reply = identity.marker === 'QUORUM-SUMMARIZE'
           ? { summary: 'mock summary' }
           : { summary: 'mock session seeded' };
-        return finishTurn(session, reply, counts);
+        const result = finishTurn(session, reply, counts);
+        for (const text of splitText(result.text)) opts.onEvent?.({ kind: 'text', mode: 'final', text });
+        return result;
       }
 
       const rule = findRule(script[opts.profile] ?? [], identity);
@@ -115,21 +123,36 @@ export async function createMockAdapter(config: MockAdapterConfig): Promise<Agen
         throw new AdapterError('ADAPTER_ERROR', `No mock ${opts.profile} rule matches ${describeIdentity(identity)}`);
       }
       const turn = nextTurn(rule, identity, session.sid, turnIndexes);
+      if (turn.events === undefined) opts.onEvent?.({ kind: 'status', text: 'Mock turn started' });
       const counts = resolveTurnCounts(script, turn, opts.prompt);
       const delayMs = turn.delayMs ?? script.behaviors?.delayMs ?? 0;
       await waitForTurn(delayMs, opts.timeoutMs, opts.signal);
       const failTurnWith = turn.failTurnWith === undefined
         ? script.behaviors?.failTurnWith
         : turn.failTurnWith;
+      if (turn.events !== undefined) {
+        for (const event of turn.events) opts.onEvent?.(event);
+      }
 
       if (failTurnWith === 'RATE_LIMITED') throw new AdapterError('RATE_LIMITED');
       if (failTurnWith === 'ADAPTER_ERROR') throw new AdapterError('ADAPTER_ERROR');
 
-      if (turn.writeFiles !== undefined) await writeFilesInsideWorktree(session.cwd, turn.writeFiles);
+      if (turn.writeFiles !== undefined) {
+        for (const [index, [path, contents]] of Object.entries(turn.writeFiles).entries()) {
+          const id = `mock-write-${index + 1}`;
+          if (turn.events === undefined) opts.onEvent?.({ kind: 'tool_call', id, name: 'Write', toolKind: 'write', argsSummary: path.slice(0, 256), paths: [path.slice(0, 1024)] });
+          await writeFilesInsideWorktree(session.cwd, { [path]: contents });
+          if (turn.events === undefined) opts.onEvent?.({ kind: 'tool_result', id, ok: true, output: `Wrote ${path}`.slice(0, 1024) });
+        }
+      }
       const output = failTurnWith === 'INVALID_OUTPUT'
         ? turn.rawReply ?? 'mock invalid output'
         : turn.rawReply ?? encodeReply(turn.reply === undefined ? defaultReply(opts.profile) : turn.reply);
-      return finishTurn(session, output, counts, true);
+      const result = finishTurn(session, output, counts, true);
+      if (turn.events === undefined) {
+        for (const text of splitText(result.text)) opts.onEvent?.({ kind: 'text', mode: 'final', text });
+      }
+      return result;
     },
 
     closeSession: async (nativeId) => {

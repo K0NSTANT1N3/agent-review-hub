@@ -4,9 +4,11 @@ import type { IncomingMessage } from 'node:http';
 import Fastify, { type FastifyInstance } from 'fastify';
 import WebSocket, { WebSocketServer } from 'ws';
 import {
-  parseNodeToLeaderFrame, PROTOCOL_VERSION, type CmdFrame, type Event, type LeaderConfig,
-  type NodeToLeaderFrame, type OwnerSettings, type SessionReport,
+  parseNodeToLeaderFrame, ProfileSchema, PROTOCOL_VERSION, type AdapterType, type CmdFrame, type Event,
+  type NodeToLeaderFrame, type NodeStatus, type OwnerSettings, type SessionProfile, type SessionReport,
+  type TranscriptAppended, type TranscriptFrame,
 } from '@quorum/protocol';
+import { LeaderRuntimeConfigSchema, type LeaderConfigWithRetention } from '../config.js';
 import type { LeaderDb, SessionRow } from '../db/repo.js';
 import type { LockManager } from '../core/locks.js';
 import { silentLogger, type Logger } from '../logging.js';
@@ -20,15 +22,24 @@ export interface HubOptions {
   onEvent?: (agentId: string, event: Event) => void;
   onSessionLost?: (session: SessionRow, reason: string) => void;
   onStatusChanged?: () => void;
+  onTranscript?: (batch: TranscriptAppended) => void;
   logger?: Logger;
 }
 
 type SocketHandler = (socket: WebSocket, request: IncomingMessage) => void;
 interface Connection { socket: WebSocket; ready: boolean }
+interface PendingTranscript {
+  agentId: string;
+  socket: WebSocket;
+  frame: TranscriptFrame;
+  profile?: SessionProfile;
+  turnId: string;
+}
 
 export class NodeHub {
   readonly server: FastifyInstance;
-  private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+  // A valid 100-event transcript can exceed 1 MiB, including UTF-8 text and path summaries.
+  private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
   private readonly connections = new Map<string, Connection>();
   private readonly settings = new Map<string, OwnerSettings>();
   private readonly routes = new Map<string, SocketHandler>();
@@ -38,10 +49,15 @@ export class NodeHub {
   private closing = false;
   private readonly log: Logger;
   private readonly eventFailures = new Map<string, number>();
+  private readonly transcripts: PendingTranscript[] = [];
+  private readonly transcriptRetries = new Map<string, { msgId: string; seq: number }>();
+  private transcriptImmediate: ReturnType<typeof setImmediate> | undefined;
+  private readonly transcriptMaxBytes: number;
 
-  constructor(private readonly db: LeaderDb, readonly config: LeaderConfig, private readonly options: HubOptions) {
+  constructor(private readonly db: LeaderDb, readonly config: LeaderConfigWithRetention, private readonly options: HubOptions) {
     this.now = options.now ?? Date.now;
     this.log = options.logger ?? silentLogger;
+    this.transcriptMaxBytes = LeaderRuntimeConfigSchema.shape.transcriptMaxBytesPerTask.parse(config.transcriptMaxBytesPerTask);
     const { certFile, keyFile } = config.tls;
     if ((certFile === null) !== (keyFile === null)) throw new Error('TLS requires both certificate and key');
     this.server = Fastify({
@@ -97,6 +113,9 @@ export class NodeHub {
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
+    if (this.transcriptImmediate !== undefined) clearImmediate(this.transcriptImmediate);
+    this.transcripts.length = 0;
+    this.transcriptRetries.clear();
     if (this.resendTimer !== undefined) clearInterval(this.resendTimer);
     for (const timer of this.helloTimers) clearTimeout(timer);
     this.helloTimers.clear();
@@ -135,6 +154,7 @@ export class NodeHub {
           clearHelloTimer();
           this.db.withTx(() => {
             this.storeSettings(frame.agentId, frame.settings);
+            this.storeMetadata(frame.agentId, frame);
             this.reconcile(frame.agentId, frame.sessions);
           });
           socket.send(JSON.stringify({
@@ -142,6 +162,7 @@ export class NodeHub {
             heartbeatIntervalSec: this.config.timeouts.heartbeatIntervalSec,
             resendUnackedSec: this.config.timeouts.resendUnackedSec,
             turnTimeoutSec: this.config.timeouts.turnTimeoutSec, mainBranch: this.config.repo.mainBranch,
+            capabilities: ['transcript-v1'],
           }));
           connection.ready = true;
           this.resendUnacked(agentId);
@@ -181,11 +202,15 @@ export class NodeHub {
     } else if (frame.kind === 'heartbeat') {
       this.db.withTx(() => {
         this.storeSettings(agentId, frame.status.settings);
+        this.storeMetadata(agentId, frame.status);
         this.db.agents.update(agentId, { human_idle_sec: frame.status.humanIdleSec, rate_limited_until: frame.status.rateLimitedUntil });
         this.reconcile(agentId, frame.status.sessions);
         this.db.afterCommit(() => this.options.onStatusChanged?.());
       });
+    } else if (frame.kind === 'transcript') {
+      this.queueTranscript(agentId, socket, frame);
     } else if (frame.kind === 'evt') {
+      if (this.db.transcriptReceipts.get(frame.msgId) !== undefined) { socket.close(1008, 'invalid message identity'); return; }
       const existing = this.db.messages.get(frame.msgId);
       if (existing !== undefined) {
         if (existing.direction !== 'from_node' || existing.agent_id !== agentId) { socket.close(1008, 'invalid message identity'); return; }
@@ -223,6 +248,85 @@ export class NodeHub {
       socket.send(JSON.stringify({ kind: 'ack', msgId: frame.msgId }));
       this.options.onStatusChanged?.();
     }
+  }
+
+  private queueTranscript(agentId: string, socket: WebSocket, frame: TranscriptFrame): void {
+    const session = this.db.sessions.get(frame.sid);
+    const lastTurn = this.db.latestTurnCommand(frame.sid);
+    const lastTask = lastTurn === undefined ? (session === undefined ? undefined : (JSON.parse(session.task_history) as number[]).at(-1)) : lastTurn.task_id;
+    const matchesTask = session?.lock_kind === 'task' ? session.lock_ref === String(frame.taskId)
+      : session?.lock_kind === null && lastTask === frame.taskId;
+    const profile = ProfileSchema.safeParse(session?.profile);
+    const valid = session?.agent_id === agentId && matchesTask && profile.success && this.db.tasks.get(frame.taskId) !== undefined;
+    if (valid && this.awaitingTranscriptReplay(frame)) return;
+    // Bound pending work without letting later seqs overtake an unpersisted batch.
+    if (this.transcripts.length >= 32) {
+      if (valid) this.retryTranscript(frame);
+      return;
+    }
+    // Capture assignment before a following evt can release/reassign this session.
+    this.transcripts.push({ agentId, socket, frame, turnId: lastTurn?.id ?? '', ...(valid && profile.success ? { profile: profile.data } : {}) });
+    this.scheduleTranscript();
+  }
+
+  private scheduleTranscript(): void {
+    if (this.transcriptImmediate !== undefined || this.closing) return;
+    this.transcriptImmediate = setImmediate(() => {
+      this.transcriptImmediate = undefined;
+      const pending = this.transcripts.shift();
+      if (pending !== undefined) this.ingestTranscript(pending);
+      if (this.transcripts.length > 0) this.scheduleTranscript();
+    });
+  }
+
+  private ingestTranscript({ agentId, socket, frame, profile, turnId }: PendingTranscript): void {
+    try {
+      if (this.db.agents.get(agentId)?.revoked !== 0) return;
+      if (profile !== undefined && this.awaitingTranscriptReplay(frame)) return;
+      const receipt = this.db.transcriptReceipts.get(frame.msgId);
+      if (this.db.messages.get(frame.msgId) !== undefined || (receipt !== undefined && receipt.agent_id !== agentId)) {
+        socket.close(1008, 'invalid message identity');
+        return;
+      }
+      let batch: TranscriptAppended | undefined;
+      if (receipt === undefined) this.db.withTx(() => {
+        this.db.transcriptReceipts.insert({ id: frame.msgId, agent_id: agentId });
+        if (profile === undefined) {
+          this.log.warn({ agentId, msgId: frame.msgId, sid: frame.sid, taskId: frame.taskId }, 'transcript dropped: session assignment mismatch');
+          return;
+        }
+        const events = this.db.appendTranscript(frame.taskId, frame.sid, agentId, profile, frame.events, turnId, this.transcriptMaxBytes);
+        if (events.length > 0) batch = { taskId: frame.taskId, sid: frame.sid, agentId, profile, events };
+      });
+      if (this.transcriptRetries.get(frame.sid)?.msgId === frame.msgId) this.transcriptRetries.delete(frame.sid);
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: 'ack', msgId: frame.msgId }));
+      if (batch !== undefined) {
+        try { this.options.onTranscript?.(batch); }
+        catch (error) { this.log.error({ err: error, agentId, msgId: frame.msgId }, 'transcript notification failed'); }
+      }
+    } catch (error) {
+      // Transcript failures never enter EventHandlers or prevent a subsequent evt from advancing the task.
+      if (profile !== undefined) this.retryTranscript(frame);
+      this.log.error({ err: error, agentId, msgId: frame.msgId, sid: frame.sid, taskId: frame.taskId }, 'transcript ingest failed; awaiting replay');
+    }
+  }
+
+  private awaitingTranscriptReplay(frame: TranscriptFrame): boolean {
+    const retry = this.transcriptRetries.get(frame.sid);
+    return retry !== undefined && frame.msgId !== retry.msgId && frame.events.at(-1)!.seq >= retry.seq;
+  }
+
+  private retryTranscript(frame: TranscriptFrame): void {
+    const retry = this.transcriptRetries.get(frame.sid);
+    if (retry === undefined || frame.events[0]!.seq < retry.seq) this.transcriptRetries.set(frame.sid, { msgId: frame.msgId, seq: frame.events[0]!.seq });
+  }
+
+  private storeMetadata(agentId: string, status: Pick<NodeStatus, 'trust' | 'detectedAgents'> & { adapterType?: AdapterType }): void {
+    this.db.agents.update(agentId, {
+      trust: status.trust ?? null,
+      detected_agents: status.detectedAgents === undefined ? null : JSON.stringify(status.detectedAgents),
+      ...(status.adapterType === undefined ? {} : { adapter_type: status.adapterType }),
+    });
   }
 
   private recordInbound(agentId: string, frame: Extract<NodeToLeaderFrame, { kind: 'evt' }>): void {

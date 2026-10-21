@@ -19,14 +19,14 @@ beforeEach(() => { db = openDatabase(':memory:'); });
 afterEach(() => { db.close(); });
 
 describe('schema and migrations', () => {
-  it('matches the authoritative SQL verbatim', () => {
+  it('preserves the authoritative base schema before appended migrations', () => {
     const spec = readFileSync(new URL('../../../../docs/implementation-spec.md', import.meta.url), 'utf8');
     const sql = spec.split('## 7. Data model (Leader SQLite)')[1]?.split('```sql\n')[1]?.split('```')[0];
-    expect(readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8')).toBe(sql);
+    expect(readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8').split('-- v4:')[0]!.trimEnd()).toBe(sql?.trimEnd());
   });
 
   it('enables foreign keys and refuses dangling references', () => {
-    expect(db.schemaVersion).toBe(3);
+    expect(db.schemaVersion).toBe(5);
     expect(db.foreignKeysEnabled).toBe(true);
     expect(() => db.sessions.insert({ id: 's', agent_id: 'missing', state: 'idle', created_at: 1, last_used_at: 1 })).toThrow(/FOREIGN KEY/);
   });
@@ -41,7 +41,7 @@ describe('schema and migrations', () => {
       first.close();
       const second = openDatabase(filename);
       try {
-        expect(second.schemaVersion).toBe(3);
+        expect(second.schemaVersion).toBe(5);
         expect(second.foreignKeysEnabled).toBe(true);
         expect(second.agents.require('persisted').owner_name).toBe('Owner');
         expect(second.integrity).toBe('ok');
@@ -67,7 +67,7 @@ describe('schema migration v1 to v2', () => {
       v1.close();
       const migrated = openDatabase(filename);
       try {
-        expect(migrated.schemaVersion).toBe(3);
+        expect(migrated.schemaVersion).toBe(5);
         expect(migrated.sessions.require('s1').profile).toBe('reviewer');
         expect(migrated.apiTokens.all()).toEqual([]);
       } finally { migrated.close(); }
@@ -75,21 +75,72 @@ describe('schema migration v1 to v2', () => {
   });
 });
 
-describe('schema migration v2 to v3', () => {
+describe('schema migration v2/v3 to v5', () => {
+  it.each([2, 3])('upgrades v%i with transcript storage while preserving task approval settings', (version) => {
+    const directory = mkdtempSync(join(tmpdir(), 'quorum-db-v2-'));
+    const filename = join(directory, 'leader.db');
+    try {
+      const old = new Database(filename);
+      const schema = readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8');
+      const base = schema.split('-- v4:')[0]!;
+      old.exec(version === 2 ? base.replace(/^\s*require_human_approval .*\n/m, '') : base);
+      old.exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (${version});`);
+      old.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at) VALUES ('a', 'Alice', 'h', 1)").run();
+      old.prepare("INSERT INTO sessions (id, agent_id, profile, state, created_at, last_used_at) VALUES ('s', 'a', 'author', 'idle', 1, 1)").run();
+      old.prepare("INSERT INTO tasks (title, description, requester_agent_id, state, created_at, updated_at, state_entered_at) VALUES ('t', 'd', 'a', 'QUEUED', 1, 1, 1)").run();
+      if (version === 3) old.exec('UPDATE tasks SET require_human_approval = 1');
+      old.close();
+      const migrated = openDatabase(filename);
+      try {
+        expect(migrated.schemaVersion).toBe(5);
+        expect(migrated.agents.require('a')).toMatchObject({ owner_name: 'Alice', trust: null, detected_agents: null, adapter_type: null });
+        expect(migrated.sessions.require('s')).toMatchObject({ profile: 'author', transcript_seq: 0 });
+        expect(migrated.tasks.require(1).require_human_approval).toBe(version === 3 ? 1 : 0);
+        expect(migrated.transcriptEvents.all()).toEqual([]);
+        expect(migrated.transcriptReceipts.all()).toEqual([]);
+        expect(migrated.integrity).toBe('ok');
+      } finally { migrated.close(); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});
+
+describe('schema migration v4 to v5', () => {
+  it('adds adapter_type without clearing stored trust or discovery', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'quorum-db-v3-'));
+    const filename = join(directory, 'leader.db');
+    try {
+      const old = new Database(filename);
+      const schema = readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8');
+      old.exec(schema.split('-- v5:')[0]!.replace(/^PRAGMA .*;\s*$/gm, ''));
+      old.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (4);');
+      old.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at, trust, detected_agents) VALUES ('a', 'Alice', 'h', 1, 'low', ?)")
+        .run(JSON.stringify([{ type: 'codex', version: '1.0', trust: 'sandboxed' }]));
+      old.close();
+      const migrated = openDatabase(filename);
+      try {
+        expect(migrated.schemaVersion).toBe(5);
+        expect(migrated.agents.require('a')).toMatchObject({ trust: 'low', adapter_type: null });
+        expect(migrated.integrity).toBe('ok');
+      } finally { migrated.close(); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});
+
+describe('schema migration v2 approval default', () => {
   it('adds tasks.require_human_approval, off for existing tasks', () => {
     const directory = mkdtempSync(join(tmpdir(), 'quorum-db-'));
     const filename = join(directory, 'leader.db');
     try {
       const v2 = new Database(filename);
       const schema = readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8');
-      v2.exec(schema.replace(/^\s*require_human_approval .*\n/m, '').replace(/^PRAGMA .*;\s*$/gm, ''));
+      v2.exec(schema.split('-- v4:')[0]!.replace(/^\s*require_human_approval .*\n/m, '').replace(/^PRAGMA .*;\s*$/gm, ''));
       v2.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (2);');
       v2.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at) VALUES ('ana', 'Ana', 'h', 1)").run();
       v2.prepare("INSERT INTO tasks (title, description, requester_agent_id, state, created_at, updated_at, state_entered_at) VALUES ('t', 'd', 'ana', 'QUEUED', 1, 1, 1)").run();
       v2.close();
       const migrated = openDatabase(filename);
       try {
-        expect(migrated.schemaVersion).toBe(3);
+        expect(migrated.schemaVersion).toBe(5);
         expect(migrated.tasks.require(1).require_human_approval).toBe(0);
       } finally { migrated.close(); }
     } finally { rmSync(directory, { recursive: true, force: true }); }

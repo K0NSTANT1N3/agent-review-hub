@@ -331,6 +331,16 @@ describe('Services', () => {
     expect(existsSync(join(data2, 'leader'))).toBe(false);
   });
 
+  it('checks codex, pi and omp by an optional binary path', async () => {
+    const { host } = await hosted();
+    for (const type of ['codex', 'pi', 'omp'] as const) {
+      await host.updateSettings({ ...DEFAULT_SETTINGS, adapter: { type, binaryPath: process.execPath, contextWindow: 200000 } });
+      const result = await host.checkAgent();
+      expect(result.ok).toBe(true);
+      expect(result.detail).toContain(type);
+    }
+  });
+
   it('stops the agent and reports an auth error when the Leader rejects the daemon', async () => {
     const { host } = await hosted();
     expect(host.state()).toMatchObject({ authError: null, node: { running: true } });

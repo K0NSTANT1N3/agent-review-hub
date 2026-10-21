@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { parseNodeConfig } from '@quorum/protocol';
 import { encodeJoinCode } from '@quorum/protocol/join-code';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { needsInsecure, parseJoinArgs, runJoin, startCommandFor } from '../src/join.js';
+import { JOIN_USAGE, needsInsecure, parseJoinArgs, runJoin, startCommandFor } from '../src/join.js';
 
 const code = (leaderUrl = 'wss://quorum.example.com/ws/node'): string =>
   encodeJoinCode({ leaderUrl, agentId: 'bo-agent', ownerName: 'Bo', token: 'qrm_secret', repoRemoteUrl: 'git@github.com:acme/app.git' });
@@ -96,6 +96,14 @@ describe('quorum-node join', () => {
     expect(() => runJoin([code()], () => {}, dir, home)).toThrow(/already exists; pass --force/);
     expect((await lstat(path)).isSymbolicLink()).toBe(true);
     await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('writes codex, pi and omp adapter configs', () => {
+    expect(JOIN_USAGE).toMatch(/codex, pi, omp/);
+    for (const type of ['codex', 'pi', 'omp'] as const) {
+      const result = runJoin([code(), '--adapter', type, '--model', 'test-model', '--force'], () => {}, dir, home);
+      expect(result.config.adapter).toMatchObject({ type, model: 'test-model' });
+    }
   });
 
   it('rejects bad input with a clear message', () => {

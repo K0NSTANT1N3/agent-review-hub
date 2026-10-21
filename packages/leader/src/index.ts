@@ -2,7 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import pino from 'pino';
-import type { LeaderConfig } from '@quorum/protocol';
+import type { ApiTokenScope } from '@quorum/protocol';
+import { LeaderRuntimeConfigSchema, type LeaderConfigWithRetention } from './config.js';
 import { registerRoutes } from './api/routes.js';
 import { mintApiToken, revokeAgentApiTokens } from './core/api-tokens.js';
 import { EventHandlers } from './core/handlers.js';
@@ -17,6 +18,8 @@ import { NodeHub } from './ws/node-hub.js';
 import { UiHub } from './ws/ui-hub.js';
 
 export type { Logger } from './logging.js';
+export { LeaderRuntimeConfigSchema } from './config.js';
+export type { LeaderConfigWithRetention, LeaderRuntimeConfig } from './config.js';
 
 export interface LeaderHandle {
   /** Actual bound port (config may pass 0). */
@@ -44,7 +47,8 @@ function recover(db: LeaderDb, now: number): void {
   });
 }
 
-export async function startLeader(config: LeaderConfig, options: StartLeaderOptions = {}): Promise<LeaderHandle> {
+export async function startLeader(input: LeaderConfigWithRetention, options: StartLeaderOptions = {}): Promise<LeaderHandle> {
+  const config = LeaderRuntimeConfigSchema.parse(input);
   const log: Logger = options.logger ?? pino({ level: process.env.QUORUM_LOG_LEVEL ?? 'warn', base: { component: 'leader' } });
   const db = openDb(config.dbPath);
   recover(db, Date.now());
@@ -97,6 +101,7 @@ export async function startLeader(config: LeaderConfig, options: StartLeaderOpti
     onEvent: (agentId, event) => handlers.handle(agentId, event),
     onSessionLost: (session, reason) => handlers.sessionLost(session, reason),
     onStatusChanged: () => scheduler.trigger(),
+    onTranscript: (batch) => late.ui?.transcript(batch),
   });
   late.hub = hub;
   const ui = new UiHub(db, config, (task) => scheduler.waitReason(task), Date.now, () => scheduler.queueSnapshot());
@@ -175,13 +180,13 @@ export async function revokeAgent(dbPath: string, id: string): Promise<void> {
   }
 }
 
-/** Mints a requester-scope API token for an existing agent (for the `quorum` CLI). Returns the plaintext once. */
-export async function addApiToken(dbPath: string, args: { agentId: string; label?: string }): Promise<{ id: string; token: string }> {
+/** Mints an API token for an existing agent (for the `quorum` CLI). Returns the plaintext once. */
+export async function addApiToken(dbPath: string, args: { agentId: string; label?: string; scope?: ApiTokenScope }): Promise<{ id: string; token: string }> {
   const db = openDb(dbPath);
   try {
     const agent = db.agents.get(args.agentId);
     if (agent === undefined || agent.revoked !== 0) throw new Error(`agent ${args.agentId} not found or revoked`);
-    const { row, token } = mintApiToken(db, agent.id, args.label ?? '', Date.now());
+    const { row, token } = mintApiToken(db, agent.id, args.label ?? '', Date.now(), args.scope);
     return { id: row.id, token };
   } finally {
     db.close();

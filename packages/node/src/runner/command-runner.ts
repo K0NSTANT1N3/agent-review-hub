@@ -9,6 +9,7 @@ import {
   type ReviewRereviewCommand,
   type ReviewStartCommand,
   type TestResult,
+  type TranscriptBatch,
   type Usage,
 } from '@quorum/protocol';
 import {
@@ -69,6 +70,8 @@ import {
 } from '../prompts/index.js';
 import { parseOutput } from '../output/parse.js';
 import { runSetupIfNeeded, runTests } from './tests.js';
+import { sanitizeFailureMessage, TurnTranscript } from './transcripts.js';
+import { adapterTrust } from '../detect.js';
 import type { ZodType } from 'zod';
 import { join } from 'node:path';
 
@@ -77,6 +80,8 @@ export interface CommandRunnerOptions {
   journal: NodeJournal;
   adapter: AgentAdapter;
   enqueueEvent: (event: Event) => string;
+  enqueueTranscript?: (batch: TranscriptBatch) => void;
+  transcriptsEnabled?: () => boolean;
   mainBranch: () => string;
   turnTimeoutSec: () => number;
   getContextWindow?: () => number;
@@ -130,6 +135,7 @@ export class CommandRunner {
   private readonly cancelledWork = new Set<string>();
   private readonly cancelWorkByMessage = new Map<string, string | null>();
   private readonly cancelResultBySid = new Map<string, string>();
+  private readonly turnCommands = new Map<string, Command>();
   private stopping = false;
 
   constructor(private readonly options: CommandRunnerOptions) {}
@@ -198,6 +204,7 @@ export class CommandRunner {
     const controller = new AbortController();
     if (key !== null) this.activeTurns.set(command.sid, { controller, workKey: key });
     const usage = new UsageAccumulator();
+    this.turnCommands.set(command.sid, command);
     const session = this.options.journal.getSession(command.sid);
     if (session !== null) this.options.journal.updateSession(command.sid, { state: 'busy' });
 
@@ -213,6 +220,7 @@ export class CommandRunner {
       if (controller.signal.aborted) this.cancelResultBySid.set(command.sid, eventId);
       return eventId;
     } finally {
+      this.turnCommands.delete(command.sid);
       if (key !== null && this.activeTurns.get(command.sid)?.controller === controller) {
         this.activeTurns.delete(command.sid);
       }
@@ -722,14 +730,31 @@ export class CommandRunner {
     this.throwIfAborted(signal);
     const session = this.requireSession(sid);
     const profile = profileOverride ?? this.sessionProfile(session);
-    const result = await this.options.adapter.runTurn({
-      nativeId: options.nativeId === undefined ? session.nativeId : options.nativeId,
-      cwd: session.worktree,
-      profile,
-      prompt,
-      signal,
-      timeoutMs: this.options.turnTimeoutSec() * 1000,
-    });
+    const command = this.turnCommands.get(sid);
+    const taskId = command !== undefined && 'taskId' in command ? command.taskId : undefined;
+    const transcript = new TurnTranscript(
+      this.options.journal, sid, taskId,
+      () => this.options.transcriptsEnabled?.() === true,
+      (batch) => this.options.enqueueTranscript?.(batch),
+      (error) => this.reportError(error),
+    );
+    const guarded = command?.type.startsWith('author.') === true && adapterTrust(this.options.config.adapter.type) !== 'enforced';
+    const before = guarded || profile !== 'author' ? await this.gitState(sid) : null;
+    let result: TurnResult & { nativeId: string };
+    try {
+      result = await this.options.adapter.runTurn({
+        nativeId: options.nativeId === undefined ? session.nativeId : options.nativeId,
+        cwd: session.worktree,
+        profile,
+        prompt,
+        signal,
+        timeoutMs: this.options.turnTimeoutSec() * 1000,
+        onEvent: transcript.onEvent,
+      });
+    } finally {
+      transcript.close();
+      await this.checkTurnGit(sid, profile, before, guarded);
+    }
     usage.add(result);
     if (options.persist !== false) {
       this.options.journal.updateSession(sid, {
@@ -738,6 +763,33 @@ export class CommandRunner {
       });
     }
     return result;
+  }
+
+  private async checkTurnGit(sid: string, profile: Profile, before: { head: string; branch: string } | null, guarded: boolean): Promise<void> {
+    if (before !== null) {
+      const after = await this.gitState(sid);
+      if (before.head !== after.head || before.branch !== after.branch) {
+        await this.restoreGitState(sid, before);
+        if (guarded) throw new RunnerFailure('GIT_ERROR', `Agent changed git HEAD or branch during author turn (HEAD ${before.head} -> ${after.head}, branch ${before.branch || '(detached)'} -> ${after.branch || '(detached)'}). Worktree restored; only Quorum may commit or switch branches.`);
+      }
+    }
+    if (profile !== 'author') await resetIfReviewerModified(this.worktreeConfig(), sid);
+  }
+
+  private async gitState(sid: string): Promise<{ head: string; branch: string }> {
+    const head = await this.headCommit(sid);
+    const branch = await git(this.worktree(sid), ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    if (branch.code !== 1) assertGitSuccess(branch, 'read current branch');
+    return { head, branch: branch.stdout.trim() };
+  }
+
+  private async restoreGitState(sid: string, state: { head: string; branch: string }): Promise<void> {
+    const cwd = this.worktree(sid);
+    assertGitSuccess(await git(cwd, ['checkout', '--detach', '--force', state.head]), 'restore turn commit');
+    if (state.branch !== '') {
+      assertGitSuccess(await git(cwd, ['checkout', '-B', state.branch, state.head]), 'restore author branch');
+    }
+    assertGitSuccess(await git(cwd, ['clean', '-fd']), 'clean agent git violation');
   }
 
   private async readReviewDiff(
@@ -823,7 +875,7 @@ export class CommandRunner {
       sid: command.sid,
       ...ids,
       code: mapped.code,
-      message: mapped.message,
+      message: sanitizeFailureMessage(mapped.message),
       ...(mapped.resetAt === undefined ? {} : { resetAt: mapped.resetAt }),
       ...(usage === undefined ? {} : { usage }),
     };

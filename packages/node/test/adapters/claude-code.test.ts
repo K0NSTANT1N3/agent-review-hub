@@ -5,7 +5,7 @@ import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { DEFAULT_AUTHOR_BASH_ALLOW } from '@quorum/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeAdapter, checkBashCommand, isInside, makeCanUseTool, type QueryFn } from '../../src/adapters/claude-code.js';
-import { AdapterError } from '../../src/adapters/types.js';
+import { AdapterError, type AgentEventInput } from '../../src/adapters/types.js';
 
 const ALLOW = ['npm test', 'npm run', 'ls', 'git status', 'git diff'];
 
@@ -44,6 +44,57 @@ const turn = (adapter: ClaudeCodeAdapter, over: Partial<Parameters<ClaudeCodeAda
   });
 
 describe('ClaudeCodeAdapter.runTurn', () => {
+  it('emits SDK text, thinking, tool calls/results and assistant usage with bounded payloads', async () => {
+    const events: AgentEventInput[] = [];
+    const text = 'x'.repeat(16383) + '😀' + 'tail';
+    const thinking = 'y'.repeat(17000);
+    const message = assistant('s', { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 }, {
+      message: {
+        id: 'message-1',
+        usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 },
+        content: [
+          { type: 'text', text },
+          { type: 'thinking', thinking, signature: 'private signature' },
+          { type: 'tool_use', id: 'tool-1', name: 'Write', input: { file_path: 'a.ts', path: 'b.ts', notebook_path: 'c.ipynb', content: 'z'.repeat(1000) } },
+          { type: 'tool_use', id: 'tool-2', name: 'Bash', input: { command: 'npm test' } },
+        ],
+      },
+    });
+    const user = {
+      type: 'user', session_id: 's', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'tool-1', content: [{ type: 'text', text: 'saved' }, { type: 'text', text: 'ok' }] },
+        { type: 'tool_result', tool_use_id: 'tool-2', is_error: true, content: '😀'.repeat(2000) },
+      ] },
+    } as unknown as SDKMessage;
+    const adapter = new ClaudeCodeAdapter({ authorBashAllow: ALLOW, queryFn: scripted([message, user, success('s', 'done')]) });
+    const result = await turn(adapter, { onEvent: (event) => events.push(event) });
+    const texts = events.filter((event) => event.kind === 'text');
+    expect(texts).toHaveLength(2);
+    expect(texts.map((event) => event.text).join('')).toBe(text);
+    expect(texts.every((event) => event.mode === 'final' && event.messageId === 'message-1' && event.text.length <= 16384)).toBe(true);
+    expect(events.filter((event) => event.kind === 'thinking').map((event) => event.text).join('')).toBe(thinking);
+    const call = events.find((event) => event.kind === 'tool_call');
+    expect(call).toMatchObject({ kind: 'tool_call', id: 'tool-1', name: 'Write', toolKind: 'write', paths: ['a.ts', 'b.ts', 'c.ipynb'] });
+    if (call?.kind !== 'tool_call') throw new Error('expected call');
+    expect(call.argsSummary).toHaveLength(256);
+    expect(events).toContainEqual({ kind: 'tool_result', id: 'tool-1', ok: true, output: 'saved\nok' });
+    expect(events).toContainEqual({ kind: 'tool_result', id: 'tool-2', ok: false, output: '😀'.repeat(1024) });
+    expect(events).toContainEqual({ kind: 'usage', inputTokens: 10, outputTokens: 5, contextTokens: 60 });
+    expect(result.contextTokens).toBe(60);
+    expect(JSON.stringify(events)).not.toContain('private signature');
+  });
+
+  it('keeps subagent usage from replacing top-level context size', async () => {
+    const events: AgentEventInput[] = [];
+    const adapter = new ClaudeCodeAdapter({ authorBashAllow: ALLOW, queryFn: scripted([
+      assistant('s', { input_tokens: 10 }),
+      assistant('s', { input_tokens: 900, output_tokens: 2 }, { parent_tool_use_id: 'parent' }),
+      success('s', 'done'),
+    ]) });
+    expect((await turn(adapter, { onEvent: (event) => events.push(event) })).contextTokens).toBe(10);
+    expect(events.at(-1)).toEqual({ kind: 'usage', inputTokens: 900, outputTokens: 2 });
+  });
+
   it('first turn: no resume, captures session id, usage and context size', async () => {
     const seen: { options?: Options }[] = [];
     const adapter = new ClaudeCodeAdapter({

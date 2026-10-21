@@ -185,3 +185,40 @@ CREATE TABLE api_tokens (                        -- extra credentials for script
   revoked_at    INTEGER
 );
 CREATE INDEX api_tokens_agent ON api_tokens(agent_id);
+
+-- v4: transcript storage and Node-reported adapter metadata.
+ALTER TABLE agents ADD COLUMN trust TEXT;
+ALTER TABLE agents ADD COLUMN detected_agents TEXT;
+ALTER TABLE sessions ADD COLUMN transcript_seq INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE transcript_sessions (
+  task_id   INTEGER NOT NULL REFERENCES tasks(id),
+  sid       TEXT NOT NULL REFERENCES sessions(id),
+  agent_id  TEXT NOT NULL REFERENCES agents(id),
+  profile   TEXT NOT NULL,
+  PRIMARY KEY (task_id, sid)
+);
+
+CREATE TABLE transcript_events (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id   INTEGER NOT NULL REFERENCES tasks(id),
+  sid       TEXT NOT NULL REFERENCES sessions(id),
+  agent_id  TEXT NOT NULL REFERENCES agents(id),
+  profile   TEXT NOT NULL,
+  seq       INTEGER NOT NULL,
+  at        INTEGER NOT NULL,
+  kind      TEXT NOT NULL,
+  payload   TEXT NOT NULL,
+  turn_id   TEXT NOT NULL,
+  UNIQUE (sid, seq)
+);
+CREATE INDEX transcript_task_session_seq ON transcript_events(task_id, sid, seq);
+
+-- Receipts contain no event payload, so replay dedupe survives retention.
+CREATE TABLE transcript_receipts (
+  id        TEXT PRIMARY KEY,
+  agent_id  TEXT NOT NULL REFERENCES agents(id)
+);
+
+-- v5: active adapter type from Node hello (distinct from detected CLIs).
+ALTER TABLE agents ADD COLUMN adapter_type TEXT;

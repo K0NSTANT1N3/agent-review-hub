@@ -149,4 +149,60 @@ describe('node journal', () => {
     expect(journal.getSession('sid-3')).toBeNull();
     journal.close();
   });
+
+  it('persists transcript msgIds and sequence counters through ACK, deletion, and restart', async () => {
+    const journal = await openJournal(dataDir);
+    const seq = journal.nextTranscriptSeq('sid-1');
+    const msgId = journal.enqueueTranscript({ sid: 'sid-1', taskId: 1, events: [{ kind: 'status', text: 'hello', seq, at: 1 }] });
+    const first = journal.nextTranscript()!;
+    expect(first.msgId).toBe(msgId);
+    journal.markTranscriptSent(msgId!);
+    journal.close();
+    const restarted = await openJournal(dataDir);
+    expect(restarted.nextTranscript()).toEqual(first);
+    restarted.markAcked(msgId!);
+    expect(restarted.nextTranscript()).toBeNull();
+    expect(restarted.nextTranscriptSeq('sid-1')).toBe(2);
+    const nextId = restarted.enqueueTranscript({ sid: 'sid-1', taskId: 2, events: [{ kind: 'status', text: 'next', seq: 2, at: 2 }] });
+    expect(restarted.nextTranscript(first.rowid)?.msgId).toBe(nextId);
+    restarted.discardTranscripts();
+    expect(restarted.nextTranscriptSeq('sid-1')).toBe(3);
+    expect(restarted.nextTranscriptSeq('sid-2')).toBe(1);
+    restarted.close();
+  });
+
+  it('bounds unacked bytes by stripping oldest unsent outputs, then thinking, then other events', async () => {
+    const journal = await openJournal(dataDir);
+    const events = [
+      { kind: 'tool_result' as const, id: 'tool', ok: true, output: 'x'.repeat(400), seq: 1, at: 1 },
+      { kind: 'thinking' as const, text: 'y'.repeat(400), seq: 2, at: 1 },
+      { kind: 'text' as const, mode: 'final' as const, text: 'answer', seq: 3, at: 1 },
+    ];
+    journal.enqueueTranscript({ sid: 'sid-1', taskId: 1, events }, 800);
+    expect(journal.nextTranscript()?.batch.events[0]).toMatchObject({ output: '' });
+    expect(journal.nextTranscript()?.batch.events[1]).toMatchObject({ kind: 'thinking' });
+    expect(journal.transcriptStats('sid-1').drops).toBe(1);
+    journal.enqueueTranscript({ sid: 'sid-1', taskId: 1, events: [{ kind: 'status', text: 'next', seq: 4, at: 1 }] }, 400);
+    expect(journal.nextTranscript()?.batch.events.map((event) => event.kind)).toEqual(['tool_result', 'text']);
+    expect(journal.transcriptStats('sid-1')).toMatchObject({ drops: 2 });
+    expect(journal.transcriptStats('sid-1').bytes).toBeLessThanOrEqual(400);
+    journal.enqueueTranscript({ sid: 'sid-1', taskId: 1, events: [{ kind: 'status', text: 'too big', seq: 5, at: 1 }] }, 1);
+    expect(journal.nextTranscript()).toBeNull();
+    expect(journal.transcriptStats('sid-1').bytes).toBe(0);
+    expect(journal.nextTranscriptSeq('sid-1')).toBe(6);
+    journal.close();
+  });
+
+  it('never mutates sent payloads under pressure and keeps sessions independent', async () => {
+    const journal = await openJournal(dataDir);
+    const msgId = journal.enqueueTranscript({ sid: 'sid-1', taskId: 1, events: [{ kind: 'thinking', text: 'keep', seq: 1, at: 1 }] }, 200);
+    journal.markTranscriptSent(msgId!);
+    const sent = journal.nextTranscript()!;
+    expect(journal.enqueueTranscript({ sid: 'sid-1', taskId: 1, events: [{ kind: 'status', text: 'drop', seq: 2, at: 1 }] }, 130)).toBeNull();
+    expect(journal.nextTranscript()).toEqual(sent);
+    journal.enqueueTranscript({ sid: 'sid-2', taskId: 1, events: [{ kind: 'status', text: 'independent', seq: 1, at: 1 }] }, 200);
+    expect(journal.nextTranscript(sent.rowid)?.batch.sid).toBe('sid-2');
+    expect(journal.transcriptStats('sid-1').drops).toBe(1);
+    journal.close();
+  });
 });

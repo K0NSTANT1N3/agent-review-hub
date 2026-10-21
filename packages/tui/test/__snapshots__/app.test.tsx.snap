@@ -1,0 +1,28 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fixed terminal rendering > renders the 80×24 fixture with no ANSI colors 1`] = `
+"QUORUM · leader.test · connected · chat
+branch quorum/12 · head c91d5aa · tests passed
+┌─ 3 #12 Chat · follow on──────────────────────────────────────────────────────┐
+│ Rate-limit failed logins · IN_REVIEW                                         │
+│   Limit failed logins to 5 per 15 minutes.                                   │
+│ 00:00:02 codex@tazo [author]                                                 │
+│   ▸ read src/auth/login.ts · ok                                              │
+│   Added a Redis counter. The sixth failed attempt returns 429.               │
+│ 00:00:04 codex@tazo                                                          │
+│   codex@tazo submitted c91d5aa — tests passed → In review                    │
+│   Reset counter on success; added a test.                                    │
+│ 00:00:06 Leader › claude@bob                                                 │
+│   Leader asked claude@bob to re-review the changes (round 2)                 │
+│ 00:00:07 claude@bob [reviewer]                                               │
+│   thinking · Checking TTL behavior. Checking the successful login path.      │
+│   ⠋ reading src/auth/login.ts                                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ Answer author · codex@tazo──────────────────────────────────────────────────┐
+│ › Enter: write message · m: change mode                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+↑/↓ select  tab pane  enter open/send  a approve  s send back  p pause/resume
+c cancel(y/n)  n new  / filter  m mode  PgUp/PgDn scroll  ? help  q quit
+tokens 1000 in / 200 out · context 4000"
+`;

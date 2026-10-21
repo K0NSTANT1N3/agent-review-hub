@@ -12,6 +12,7 @@ import {
   ListTasksQuerySchema,
   PatchTaskRequestSchema,
   SendBackRequestSchema,
+  TaskTranscriptQuerySchema,
   isTerminalTaskState,
   type ApiErrorCode,
   type ApiRouteName,
@@ -89,8 +90,8 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
   const taskResponse = (t: TaskRow) => taskView(db, t, scheduler.waitReason(t));
   const taskDetailResponse = (t: TaskRow) => taskDetail(db, t, scheduler.waitReason(t));
 
-  // Actions taken through a requester API token are recorded as `token:<owner>`: possibly a script or agent, not the person.
-  const actor = (ctx: Ctx) => `${ctx.scope === 'requester' ? 'token' : 'human'}:${ctx.agent?.owner_name ?? 'unknown'}`;
+  // API tokens may be held by scripts or agents, so audit them separately from the person.
+  const actor = (ctx: Ctx) => `${ctx.scope === 'requester' || ctx.scope === 'owner' ? 'token' : 'human'}:${ctx.agent?.owner_name ?? 'unknown'}`;
 
   const requireRequesterOrAdmin = (ctx: Ctx, t: TaskRow) => {
     const owner = ctx.agent?.owner_name;
@@ -156,6 +157,12 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
 
   const handlersByRoute: { [R in ApiRouteName]: (ctx: Ctx) => unknown | Promise<unknown> } = {
     health: () => ({ ok: true }),
+
+    getTaskTranscript: (ctx) => {
+      const t = task(ctx.id);
+      const query = TaskTranscriptQuerySchema.parse(ctx.query ?? {});
+      return { sessions: db.taskTranscript(t.id, query.afterSeq, query.sid) };
+    },
 
     listAgents: () => ({
       agents: db.agents.all().filter((a) => a.revoked === 0).map((a) => agentView(db, a, now(), config.dayBoundaryTz)),
@@ -229,6 +236,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
           ...(body.mode !== undefined ? { mode: body.mode } : {}),
           updated_at: now(),
         });
+        db.taskEvents.insert({ task_id: t.id, from_state: t.state, to_state: updated.state, reason: 'task_updated', actor: actor(ctx), data: JSON.stringify(body), at: now() });
         scheduler.trigger();
         return taskResponse(updated);
       });
@@ -287,7 +295,7 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
 
     createApiToken: (ctx) => {
       const body = CreateApiTokenRequestSchema.parse(ctx.body);
-      const { row, token } = mintApiToken(db, ctx.agent!.id, body.label ?? '', now());
+      const { row, token } = mintApiToken(db, ctx.agent!.id, body.label ?? '', now(), body.scope);
       log.info({ agentId: row.agent_id, tokenId: row.id }, 'api token created');
       return { ...apiTokenView(row), token };
     },
@@ -329,12 +337,16 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
       }),
 
     resumeTask: (ctx) => {
-      const t = task(ctx.id);
-      requireRequesterOrAdmin(ctx, t);
-      if (t.state !== 'PAUSED' || t.pause_reason !== 'human') throw new ApiHttpError('ILLEGAL_TRANSITION', 'task was not paused by a human');
-      scheduler.resumeFromHumanPause(t.id);
+      const result = db.withTx(() => {
+        const t = task(ctx.id);
+        requireRequesterOrAdmin(ctx, t);
+        if (t.state !== 'PAUSED' || t.pause_reason !== 'human') throw new ApiHttpError('ILLEGAL_TRANSITION', 'task was not paused by a human');
+        db.taskEvents.insert({ task_id: t.id, from_state: t.state, to_state: t.state, reason: 'resume_requested', actor: actor(ctx), at: now() });
+        scheduler.resumeFromHumanPause(t.id);
+        return taskResponse(db.tasks.require(t.id));
+      });
       scheduler.trigger();
-      return taskResponse(db.tasks.require(t.id));
+      return result;
     },
 
     createDirective: (ctx) => {
@@ -378,9 +390,10 @@ export function registerRoutes(server: FastifyInstance, deps: ApiDeps): void {
         try {
           const principal = def.auth === 'none' ? null : resolvePrincipal(db, bearer(req));
           if (def.auth !== 'none' && principal === null) throw new ApiHttpError('UNAUTHORIZED', 'missing or invalid token');
-          if (principal?.scope === 'requester') {
-            if (!('requesterToken' in def && def.requesterToken)) {
-              throw new ApiHttpError('FORBIDDEN', `a requester token cannot call ${name}; use the Quorum app for this`);
+          if (principal !== null && principal.scope !== 'full') {
+            const allowed = principal.scope === 'owner' ? 'ownerToken' in def && def.ownerToken : 'requesterToken' in def && def.requesterToken;
+            if (!allowed) {
+              throw new ApiHttpError('FORBIDDEN', `a ${principal.scope} token cannot call ${name}; use the Quorum app for this`);
             }
             db.apiTokens.update(principal.tokenId!, { last_used_at: now() });
           }

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { DEFAULT_AUTHOR_BASH_ALLOW, type AdapterConfig } from '@quorum/protocol';
 import type { AgentAdapter } from './types.js';
 import { createMockAdapter } from './mock.js';
@@ -10,12 +11,33 @@ interface OpencodeModule {
   createOpencodeAdapter(config: Extract<AdapterConfig, { type: 'opencode' }>): AgentAdapter | Promise<AgentAdapter>;
 }
 
+interface CodexModule {
+  createCodexAdapter(config: Extract<AdapterConfig, { type: 'codex' }>, options: { homeDir?: string }): AgentAdapter;
+}
+
+interface PiModule {
+  createPiAdapter(config: Extract<AdapterConfig, { type: 'pi' | 'omp' }>): AgentAdapter;
+}
+
 /** Load only the selected adapter so mock-only installations need no provider SDK. */
 export async function createAdapter(
   config: AdapterConfig,
-  options: { authorBashAllow?: readonly string[] } = {},
+  options: { authorBashAllow?: readonly string[]; dataDir?: string } = {},
 ): Promise<AgentAdapter> {
   switch (config.type) {
+    case 'codex': {
+      const modulePath: string = './codex.js';
+      const adapterModule = await import(modulePath) as CodexModule;
+      return adapterModule.createCodexAdapter(config, options.dataDir === undefined ? {} : { homeDir: join(options.dataDir, 'codex-home') });
+    }
+    case 'pi':
+    case 'omp': {
+      const modulePath: string = './pi.js';
+      const adapterModule = await import(modulePath) as PiModule;
+      return adapterModule.createPiAdapter(config);
+    }
+    case 'kilo':
+      throw new Error(`${config.type} adapter not implemented yet`);
     case 'mock':
       return createMockAdapter(config);
     case 'opencode': {

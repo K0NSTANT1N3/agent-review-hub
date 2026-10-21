@@ -1,6 +1,6 @@
 # Project status — single source of truth
 
-> Every agent and contributor: read this first. Last update: **2026-10-18** — v0.1.4 released.
+> Every agent and contributor: read this first. Last update: **2026-10-21** — TUI and agent transcripts on `feat/tui-agent-transcripts`.
 
 ## State
 
@@ -50,6 +50,17 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 | Session profiles | Fixed: the Leader reused any idle session for any role, so after an agent reviewed, its own next task or any directive went to the reviewer session and failed. Sessions now keep their profile (schema v2). e2e #18b, #18c. |
 | macOS worktree paths | Fixed: session worktree reuse failed when the data path contained a symlink (macOS `/var` → `/private/var`). |
 | `quorum` CLI + API tokens | `packages/cli`; requester-scope tokens (create in Settings → Agent CLI access, or `quorum-leader add-token`). e2e #22–#24. |
+
+## Unreleased (feat/tui-agent-transcripts)
+
+| Change | Notes |
+|---|---|
+| TUI | `quorum-tui` (`packages/tui`) is a full-screen Ink client. It shows agents, tasks and transcripts. It uses the `quorum` CLI config. Approve, send back, pause and cancel need an owner token. |
+| Transcripts | Node `transcript` frames (`transcript-v1`). REST `GET /api/tasks/:id/transcript`. UI event `transcript.appended`. The Node replaces the owner home path with `~` before the events go to the Leader. |
+| New adapters | Codex, pi and omp CLI adapters. The Node starts a new command for each profile. The Node can resume a session. Trust: Codex `sandboxed`. pi and omp `low`. |
+| Owner tokens | Scope `owner` on API tokens. `quorum-leader add-token --scope owner`. Owner tokens can act on the tasks of their owner. An admin owner token can act on all tasks. |
+| Codex isolation | The driver sets `CODEX_HOME=<dataDir>/codex-home` with a link to `auth.json`. The agent does not read owner `config.toml`, `AGENTS.md` or skills. Turns also have `--ignore-user-config --ignore-rules`. |
+| Known gaps | The operator did not complete a live check of Codex isolation (the account usage limit stopped the check). Kilo has no adapter. omp cannot stop configured MCP servers. |
 
 ## Who did what
 

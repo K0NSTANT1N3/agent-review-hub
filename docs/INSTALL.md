@@ -134,6 +134,49 @@ The allow-list stops casual misuse, but it is not an isolation boundary. Run Quo
 where this risk is acceptable. For stronger isolation, run Quorum in a container or a virtual machine. Quorum applies
 the allow-list to Claude Code. An opencode server uses its own permission settings.
 
+### Choose an agent
+
+The Node `adapter` object is the agent type. The desktop app Settings list has Claude Code and opencode.
+To use Codex, pi or omp, set `adapter` in `quorum.node.json`.
+`quorum-node join --adapter` accepts only `claude-code`, `opencode` or `mock`.
+Kilo is a reserved adapter type. The Node does not start a Kilo adapter.
+
+Adapter config examples (`binaryPath` and `model` are optional):
+
+```json
+{ "type": "codex", "binaryPath": "/usr/local/bin/codex", "model": "<model>" }
+{ "type": "pi", "binaryPath": "/usr/local/bin/pi", "model": "<model>" }
+{ "type": "omp", "binaryPath": "/usr/local/bin/omp" }
+```
+
+If `binaryPath` is not set, the Node starts `codex`, `pi` or `omp` from `PATH`.
+The default `contextWindow` is `200000`.
+
+The Node sends a trust value. You cannot set trust in the config.
+
+| Trust | Meaning |
+|---|---|
+| `enforced` | Quorum does a check of tool permissions before each tool call. Claude Code and mock have this trust. |
+| `sandboxed` | An external sandbox is a limit on the agent. Codex has this trust. Quorum does not apply its tool callback. |
+| `low` | Quorum cannot apply a full tool or sandbox limit. pi, omp, opencode and Kilo have this trust. |
+
+If trust is missing, the UI must not show `enforced`.
+
+Quorum does not do a check of the tools for pi and omp. For reviewer and directive turns, the adapter sends a `--tools` list (`read,grep,find,ls` for pi, `read,grep,glob` for omp). That list is not a Quorum tool check.
+
+Codex isolation:
+
+- The Node sets `CODEX_HOME` to `<dataDir>/codex-home`.
+- That directory holds a link to the owner `auth.json` (or a copy if a link is not possible).
+- The agent does not read the owner `config.toml`, `AGENTS.md`, skills, hooks or rules.
+- Each turn also has `--ignore-user-config --ignore-rules`.
+- Before you use Codex with Quorum, run `codex login`.
+
+The Node finds agent binaries on `PATH` and at a `binaryPath` in the config.
+It does `--version` on each binary. It does not start a model turn.
+Hello and heartbeat can include `detectedAgents` records `{ type, version, trust }`.
+Binary paths stay on the Node.
+
 ## 6. Everyday use
 
 1. **New task** → describe the goal and how to verify it → **Create task**. Choose *My agent* (default) or *Any
@@ -195,6 +238,97 @@ Agents use `--json` and the exit code:
 
 To stop a token, click **Revoke** in **Settings → Agent CLI access**. When the host invites you again, Quorum also revokes your CLI tokens.
 On a headless Leader, the host can make a token with `quorum-leader add-token --config quorum.leader.json --id <agent id>`.
+
+### Use the terminal UI
+
+`quorum-tui` is a terminal program for one Leader.
+The program shows the agents, the tasks and the transcript of the selected task.
+
+To start `quorum-tui` from the repository:
+
+1. Build the TUI package:
+
+   ```bash
+   corepack pnpm --filter @quorum/tui build
+   ```
+
+2. Start the program in a TTY terminal:
+
+   ```bash
+   node packages/tui/dist/cli.js --url https://leader.example.com --token '<token>'
+   ```
+
+You can make an alias:
+
+```bash
+alias quorum-tui="node /path/to/agent-review-hub/packages/tui/dist/cli.js"
+```
+
+The program accepts these flags:
+
+* `--url` — Leader URL (`http://` or `https://`)
+* `--token` — API token
+* `--help` (`-h`) — help text
+* `--version` — `quorum-tui 0.1.0`
+
+The program reads the connection data in this order:
+
+1. The `--url` and `--token` flags.
+2. The `QUORUM_URL` and `QUORUM_TOKEN` environment variables.
+3. The `quorum` CLI config file.
+
+The config file path is `QUORUM_CONFIG`, then `$XDG_CONFIG_HOME/quorum/cli.json`, then `~/.config/quorum/cli.json`.
+The file format is `{ "url": "https://leader.example.com", "token": "…" }`.
+The TUI uses the same file as `quorum login`.
+
+CAUTION: If the group or other users can read the config file, the TUI tells you.
+Set the file mode to `0600`:
+
+```bash
+chmod 600 ~/.config/quorum/cli.json
+```
+
+A requester token can read data, create tasks, answer a blocked author and ask an agent.
+An owner token can also approve, send back, pause and cancel the tasks of its owner.
+An admin owner token can do these actions on all tasks.
+
+To make an owner token:
+
+```bash
+quorum-leader add-token --config quorum.leader.json --id <agent id> --scope owner
+```
+
+**Settings → Agent CLI access** makes a requester token.
+
+`quorum-tui` must have a TTY on stdin and on stdout.
+
+Keyboard:
+
+| Key | Action |
+|---|---|
+| Tab / Shift+Tab | Change pane: Agents, Tasks, Chat, Input |
+| ↑ / ↓ | Select a task, or an agent in the Agents pane |
+| Enter | Open the chat, ask the selected agent, or send the input |
+| `i` | Move to the message input |
+| Esc | Leave input, close help, or dismiss an error |
+| `m` | Change mode: answer author, send back, ask an agent |
+| `a` | Approve the task |
+| `s` | Start a send-back comment |
+| `p` | Pause or resume the task |
+| `c` | Cancel the task (then `y` or `n`) |
+| `n` | Create a task (title, then description, own mode, priority 1 / normal) |
+| `/` | Filter tasks |
+| PgUp / PgDn | Scroll the chat. PgUp stops follow. PgDn can return to follow. |
+| `?` | Show or hide help |
+| `q` | Quit (not in input) |
+| Ctrl+C | Quit |
+
+If the terminal width is less than 110 columns, the TUI shows one pane at full width.
+If the height is less than 28 rows, the layout is the same.
+An 80×24 terminal is in this mode. Push the Tab key to select the next pane.
+
+Set `NO_COLOR` to stop colors.
+The header shows the Leader hostname as the team name.
 
 ## 7. Building from source
 

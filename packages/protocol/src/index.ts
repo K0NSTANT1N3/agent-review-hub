@@ -1,4 +1,6 @@
 export * from './common.js';
+export * from './adapters.js';
+export * from './agent-events.js';
 export * from './config.js';
 export * from './commands.js';
 export * from './events.js';

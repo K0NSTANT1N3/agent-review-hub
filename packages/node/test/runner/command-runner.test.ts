@@ -1,5 +1,5 @@
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   parseNodeConfig,
@@ -36,7 +36,137 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()));
 });
 
-describe('CommandRunner', () => {
+describe('CommandRunner', { timeout: 20_000 }, () => {
+  it('streams mock events through the Leader client across author turns', async () => {
+    const fixture = await createFixture({ author: [{ match: { any: true }, turns: [
+      { writeFiles: { 'stream.txt': 'saved' }, reply: { status: 'done', summary: 'streamed' } },
+    ] }] }, { transcripts: true });
+    await openSession(fixture, 'open', 'sid-stream', 'author');
+    const task = taskBrief(91, 'Streaming');
+    const command: Command = { type: 'author.start', sid: 'sid-stream', taskId: task.id, task, branch: 'quorum/task-91', continueExisting: false, issues: [], estimated: 1 };
+    await sendCommand(fixture.connection, 'stream', command);
+    const first = await fixture.connection.next('transcript');
+    expect(first).toMatchObject({ sid: 'sid-stream', taskId: 91 });
+    expect(first.events.map((event) => event.kind)).toEqual(['status', 'tool_call', 'tool_result', 'text']);
+    expect(first.events.map((event) => event.seq)).toEqual([1, 2, 3, 4]);
+    expect(first.events.every((event) => event.at > 0)).toBe(true);
+    await nextEvent(fixture.connection, (event) => event.type === 'author.submitted');
+    await sendCommand(fixture.connection, 'stream-again', { ...command, continueExisting: true });
+    const second = await fixture.connection.next('transcript', (frame) => frame.msgId !== first.msgId);
+    expect(second.events.map((event) => event.seq)).toEqual([5, 6, 7, 8]);
+    await nextEvent(fixture.connection, (event) => event.type === 'author.submitted' && event.inReplyTo === 'stream-again');
+  });
+
+  it.each(['codex', 'pi'] as const)('restores and rejects %s author commits even if adapter throws', async (adapterType) => {
+    let beforeHead = '';
+    let beforeBranch = '';
+    const fixture = await createFixture({ author: [{ match: { any: true }, turns: [{ reply: { status: 'done', summary: 'unused' } }] }] }, {
+      adapterType,
+      wrapAdapter(adapter) {
+        return { ...adapter, async runTurn(opts) {
+          beforeHead = (await git(opts.cwd, ['rev-parse', 'HEAD'])).stdout.trim();
+          beforeBranch = (await git(opts.cwd, ['branch', '--show-current'])).stdout.trim();
+          await writeFile(join(opts.cwd, 'unauthorized.txt'), 'agent commit');
+          expect((await git(opts.cwd, ['add', '-A'])).code).toBe(0);
+          expect((await git(opts.cwd, ['-c', 'user.name=Agent', '-c', 'user.email=agent@example.invalid', 'commit', '-m', 'unauthorized'])).code).toBe(0);
+          if (adapterType === 'pi') throw new AdapterError('ADAPTER_ERROR', 'agent failed after commit');
+          return adapter.runTurn(opts);
+        } };
+      },
+    });
+    await openSession(fixture, 'open', 'sid-guard', 'author');
+    const task = taskBrief(92, 'Guard commit');
+    await sendCommand(fixture.connection, 'guard', { type: 'author.start', sid: 'sid-guard', taskId: task.id, task, branch: 'quorum/task-92', continueExisting: false, issues: [], estimated: 1 });
+    const failed = await nextEvent(fixture.connection, (event) => event.type === 'turn.failed');
+    expect(failed).toMatchObject({ code: 'GIT_ERROR', message: expect.stringContaining('Agent changed git HEAD or branch') });
+    const cwd = fixture.journal.getSession('sid-guard')!.worktree;
+    expect((await git(cwd, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(beforeHead);
+    expect((await git(cwd, ['branch', '--show-current'])).stdout.trim()).toBe(beforeBranch);
+    expect((await git(cwd, ['status', '--porcelain'])).stdout).toBe('');
+    await expect(access(join(cwd, 'unauthorized.txt'))).rejects.toThrow();
+    expect((await git(cwd, ['rev-parse', 'origin/quorum/task-92'])).stdout.trim()).toBe(beforeHead);
+  });
+
+  it('detects a branch switch at unchanged HEAD and leaves the switched-to branch intact', async () => {
+    let beforeHead = '';
+    const fixture = await createFixture({}, {
+      adapterType: 'pi',
+      wrapAdapter(adapter) {
+        return { ...adapter, async runTurn(opts) {
+          beforeHead = (await git(opts.cwd, ['rev-parse', 'HEAD'])).stdout.trim();
+          expect((await git(opts.cwd, ['checkout', '-b', 'agent-other-branch'])).code).toBe(0);
+          await writeFile(join(opts.cwd, 'untracked.txt'), 'discard');
+          return { nativeId: 'native', text: 'unused', usage: { inputTokens: 0, outputTokens: 0 }, contextTokens: 0 };
+        } };
+      },
+    });
+    await openSession(fixture, 'open', 'sid-switch', 'author');
+    const task = taskBrief(93, 'Guard branch');
+    await sendCommand(fixture.connection, 'switch', { type: 'author.start', sid: 'sid-switch', taskId: task.id, task, branch: 'quorum/task-93', continueExisting: false, issues: [], estimated: 1 });
+    expect(await nextEvent(fixture.connection, (event) => event.type === 'turn.failed')).toMatchObject({ code: 'GIT_ERROR' });
+    const cwd = fixture.journal.getSession('sid-switch')!.worktree;
+    expect((await git(cwd, ['branch', '--show-current'])).stdout.trim()).toBe('quorum/task-93');
+    expect((await git(cwd, ['rev-parse', 'agent-other-branch'])).stdout.trim()).toBe(beforeHead);
+    await expect(access(join(cwd, 'untracked.txt'))).rejects.toThrow();
+  });
+
+  it('redacts home paths and caps adapter failure messages before they leave the Node', async () => {
+    const home = homedir();
+    const fixture = await createFixture({}, {
+      wrapAdapter(adapter) {
+        return { ...adapter, async runTurn() {
+          throw new AdapterError('ADAPTER_ERROR', `failed reading ${home}/.codex/auth.json ${'x'.repeat(3000)}`);
+        } };
+      },
+    });
+    await openSession(fixture, 'open', 'sid-redact', 'author');
+    const task = taskBrief(95, 'Redact failure');
+    await sendCommand(fixture.connection, 'redact', {
+      type: 'author.start', sid: 'sid-redact', taskId: task.id, task, branch: 'quorum/task-95', continueExisting: false, issues: [], estimated: 1,
+    });
+    const failed = await nextEvent(fixture.connection, (event) => event.type === 'turn.failed');
+    expect(failed.type).toBe('turn.failed');
+    if (failed.type !== 'turn.failed') return;
+    expect(failed.code).toBe('ADAPTER_ERROR');
+    expect(failed.message).not.toContain(home);
+    expect(failed.message).toContain('~/.codex/auth.json');
+    expect(failed.message.length).toBeLessThanOrEqual(2048);
+  });
+
+  it('allows sandboxed author file edits and leaves committing to Quorum', async () => {
+    const fixture = await createFixture({ author: [{ match: { any: true }, turns: [{
+      writeFiles: { 'allowed.txt': 'normal edit' }, reply: { status: 'done', summary: 'normal edits' },
+    }] }] }, { adapterType: 'codex' });
+    await openSession(fixture, 'open', 'sid-allowed', 'author');
+    const task = taskBrief(94, 'Normal edit');
+    await sendCommand(fixture.connection, 'normal', { type: 'author.start', sid: 'sid-allowed', taskId: task.id, task, branch: 'quorum/task-94', continueExisting: false, issues: [], estimated: 1 });
+    expect(await nextEvent(fixture.connection, (event) => event.type === 'author.submitted')).toMatchObject({ summary: 'normal edits', filesChanged: ['allowed.txt'] });
+  });
+
+  it('restores directive commits and untracked edits before completing read-only work', async () => {
+    let beforeHead = '';
+    const fixture = await createFixture({}, {
+      adapterType: 'pi',
+      wrapAdapter(adapter) {
+        return { ...adapter, async runTurn(opts) {
+          beforeHead = (await git(opts.cwd, ['rev-parse', 'HEAD'])).stdout.trim();
+          await writeFile(join(opts.cwd, 'readonly.txt'), 'unexpected write');
+          expect((await git(opts.cwd, ['add', '-A'])).code).toBe(0);
+          expect((await git(opts.cwd, ['-c', 'user.name=Agent', '-c', 'user.email=agent@example.invalid', 'commit', '-m', 'unexpected'])).code).toBe(0);
+          await writeFile(join(opts.cwd, 'untracked.txt'), 'unexpected file');
+          return { nativeId: 'native', text: '```quorum-json\n{"answer":"answer"}\n```', usage: { inputTokens: 0, outputTokens: 0 }, contextTokens: 0 };
+        } };
+      },
+    });
+    await openSession(fixture, 'open', 'sid-readonly', 'directive');
+    await sendCommand(fixture.connection, 'directive', { type: 'directive.run', sid: 'sid-readonly', directiveId: 'd', requester: 'Alice', text: 'Read only', estimated: 1 });
+    expect(await nextEvent(fixture.connection, (event) => event.type === 'directive.completed')).toMatchObject({ text: 'answer' });
+    const cwd = fixture.journal.getSession('sid-readonly')!.worktree;
+    expect((await git(cwd, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(beforeHead);
+    expect((await git(cwd, ['status', '--porcelain'])).stdout).toBe('');
+    await expect(access(join(cwd, 'readonly.txt'))).rejects.toThrow();
+    await expect(access(join(cwd, 'untracked.txt'))).rejects.toThrow();
+  });
   it('moves an idle task branch off its lost session worktree before resuming in a replacement session', async () => {
     const fixture = await createFixture({
       author: [{ match: { any: true }, turns: [
@@ -359,6 +489,8 @@ async function createFixture(
     contextPressurePct?: number;
     turnTimeoutSec?: number;
     wrapAdapter?: (adapter: AgentAdapter) => AgentAdapter;
+    adapterType?: 'codex' | 'pi';
+    transcripts?: boolean;
   } = {},
 ): Promise<RunnerFixture> {
   const repo = await createTempRepo();
@@ -381,6 +513,7 @@ async function createFixture(
   });
   const journal = await openJournal(join(tempDir, 'journal'));
   const baseAdapter = await createAdapter(config.adapter);
+  if (configPatch.adapterType !== undefined) config.adapter = { type: configPatch.adapterType, contextWindow: 200000 };
   const adapter = configPatch.wrapAdapter?.(baseAdapter) ?? baseAdapter;
   const clientRef: { current: LeaderClient | undefined } = { current: undefined };
   const runner = new CommandRunner({
@@ -391,6 +524,8 @@ async function createFixture(
       if (clientRef.current === undefined) throw new Error('Leader client is not initialized');
       return clientRef.current.enqueueEvent(event);
     },
+    enqueueTranscript: (batch) => { clientRef.current?.enqueueTranscript(batch); },
+    transcriptsEnabled: () => clientRef.current?.supportsTranscripts === true,
     mainBranch: () => 'main',
     turnTimeoutSec: () => configPatch.turnTimeoutSec ?? 5,
   });
@@ -403,7 +538,7 @@ async function createFixture(
   client.start();
   const connection = await leader.waitForConnection();
   await connection.next('hello');
-  connection.send(welcomeFrame({ turnTimeoutSec: configPatch.turnTimeoutSec ?? 5 }));
+  connection.send(welcomeFrame({ turnTimeoutSec: configPatch.turnTimeoutSec ?? 5, ...(configPatch.transcripts ? { capabilities: ['transcript-v1'] } : {}) }));
   await connection.next('heartbeat');
   const fixture: RunnerFixture = {
     repo, leader, connection, config, journal, runner, client,
