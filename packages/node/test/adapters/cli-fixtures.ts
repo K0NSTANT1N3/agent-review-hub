@@ -1,12 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
-import type { CliProcess, SpawnFn } from '../../src/adapters/cli-process.js';
+import { cliSpawnOptions, type CliProcess, type SpawnFn } from '../../src/adapters/cli-process.js';
 import type { AgentAdapter } from '../../src/adapters/types.js';
 
 export class ReplayProcess extends EventEmitter implements CliProcess {
   stdout = new PassThrough();
   stderr = new PassThrough();
+  pid?: number;
   signals: (NodeJS.Signals | number | undefined)[] = [];
   closeOn: NodeJS.Signals | null = 'SIGTERM';
 
@@ -46,6 +47,10 @@ export function replaySpawn(outputs: string[], stderr = '', code = 0): {
     return child;
   };
   return { spawnFn, calls };
+}
+
+export function expectedSpawnOptions(cwd: string, env: NodeJS.ProcessEnv = process.env) {
+  return cliSpawnOptions(cwd, env);
 }
 
 export function turn(adapter: AgentAdapter, over: Partial<Parameters<AgentAdapter['runTurn']>[0]> = {}) {

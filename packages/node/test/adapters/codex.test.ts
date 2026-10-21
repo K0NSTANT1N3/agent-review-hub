@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createCodexAdapter, parseResetAt, prepareCodexHome } from '../../src/adapters/codex.js';
 import { createAdapter } from '../../src/adapters/index.js';
 import type { AgentEventInput, Profile } from '../../src/adapters/types.js';
-import { fixture, jsonLines, replaySpawn, ReplayProcess, turn } from './cli-fixtures.js';
+import { expectedSpawnOptions, fixture, jsonLines, replaySpawn, ReplayProcess, turn } from './cli-fixtures.js';
 
 afterEach(() => vi.useRealTimers());
 
@@ -58,7 +58,7 @@ describe('Codex adapter', () => {
     const sandbox = profile === 'author' ? 'workspace-write' : 'read-only';
     expect(replay.calls[0]).toEqual(['/custom/codex', [
       'exec', '--json', '-s', sandbox, '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '-C', '/work/repo', '-m', 'test-model', '--', prompt,
-    ], { cwd: '/work/repo', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }]);
+    ], expectedSpawnOptions('/work/repo')]);
     expect(replay.calls[1]![1]).toEqual([
       'exec', 'resume', threadId, '--json', '-c', `sandbox_mode="${sandbox}"`, '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '-m', 'test-model', '--', prompt,
     ]);
@@ -108,7 +108,7 @@ describe('Codex adapter', () => {
   });
 
   it('rejects incomplete turns and reports the stderr tail plus malformed lines', async () => {
-    const replay = replaySpawn(['not JSON\n' + jsonLines(message('partial'))], 'x'.repeat(9_000) + 'diagnostic tail', 2);
+    const replay = replaySpawn(['not JSON\n' + jsonLines(message('partial'))], 'diagnostic tail', 2);
     await expect(turn(createCodexAdapter(config, replay))).rejects.toMatchObject({
       code: 'ADAPTER_ERROR', message: expect.stringContaining('diagnostic tail'),
     });
@@ -170,6 +170,37 @@ describe('Codex adapter', () => {
       prepareCodexHome(homeDir, owner);
       expect(readlinkSync(join(homeDir, 'auth.json'))).toBe(join(owner, 'auth.json'));
       expect(() => prepareCodexHome(owner, owner)).toThrow(/must differ/);
+    });
+
+    it('redacts auth.json secrets from every emitted event and error details', async () => {
+      const owner = tempDir();
+      const token = 'sk-live-secret-token-32';
+      const refresh = 'refresh-token-value-ok';
+      writeFileSync(join(owner, 'auth.json'), JSON.stringify({
+        tokens: { access: token, nested: { refresh } },
+        short: 'tiny-value',
+      }));
+      const homeDir = join(tempDir(), 'codex-home');
+      vi.stubEnv('CODEX_HOME', owner);
+      const replay = replaySpawn([transcript(
+        { type: 'item.started', item: { id: 'item_1', type: 'command_execution', command: `cat ${token}` } },
+        { type: 'item.completed', item: { id: 'item_1', type: 'command_execution', aggregated_output: `${token}\n${refresh}`, status: 'completed', exit_code: 0 } },
+        { type: 'item.started', item: { id: 'item_2', type: 'file_change', changes: [{ path: `/tmp/${token}.json`, kind: 'add' }] } },
+        { type: 'item.completed', item: { id: 'item_2', type: 'file_change', changes: [{ path: `/tmp/${token}.json`, kind: 'add' }], status: 'completed' } },
+        message(`token is ${token}`),
+      )]);
+      const events: AgentEventInput[] = [];
+      await turn(createCodexAdapter(config, { ...replay, homeDir }), { onEvent: (event) => events.push(event) });
+      const blob = JSON.stringify(events);
+      expect(blob).not.toContain(token);
+      expect(blob).not.toContain(refresh);
+      expect(blob).toContain('[redacted]');
+      const failed = replaySpawn(['not JSON\n'], `login ${token} failed`, 1);
+      await expect(turn(createCodexAdapter(config, { ...failed, homeDir }))).rejects.toMatchObject({
+        code: 'ADAPTER_ERROR',
+        message: expect.not.stringContaining(token),
+      });
+      vi.unstubAllEnvs();
     });
 
     it('fails the turn clearly when the owner is not logged in', async () => {

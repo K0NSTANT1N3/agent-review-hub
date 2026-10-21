@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AdapterConfig } from '@quorum/protocol';
 import { runCliProcess, type SpawnFn } from './cli-process.js';
-import { splitText, truncateUtf8 } from './event-utils.js';
-import { AdapterError, type AgentAdapter } from './types.js';
+import { sanitizeFailureMessage, splitText, truncateUtf8 } from './event-utils.js';
+import { AdapterError, type AgentAdapter, type AgentEventInput } from './types.js';
 
 type CodexConfig = Extract<AdapterConfig, { type: 'codex' }>;
 
@@ -55,7 +55,10 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
     runTurn: async ({ nativeId, cwd, profile, prompt, signal, timeoutMs, onEvent }) => {
       const turnId = randomUUID();
       const sandbox = profile === 'author' ? 'workspace-write' : 'read-only';
-      if (options.homeDir !== undefined) prepareCodexHome(options.homeDir);
+      const sourceHome = process.env.CODEX_HOME || join(homedir(), '.codex');
+      if (options.homeDir !== undefined) prepareCodexHome(options.homeDir, sourceHome);
+      const secrets = authSecrets(join(sourceHome, 'auth.json'));
+      const emit = (event: AgentEventInput): void => { onEvent?.(redactEvent(event, secrets)); };
       const isolation = ['--ignore-user-config', '--ignore-rules'];
       // exec resume has no -s or -C flags. Its config override reasserts the sandbox on every turn.
       const argv = nativeId === null
@@ -86,7 +89,7 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
             const counters = record(event.usage);
             usage = { inputTokens: tokens(counters.input_tokens) ?? 0, outputTokens: tokens(counters.output_tokens) ?? 0 };
             if (tokens(counters.input_tokens) !== undefined || tokens(counters.output_tokens) !== undefined) {
-              onEvent?.({ kind: 'usage', inputTokens: tokens(counters.input_tokens), outputTokens: tokens(counters.output_tokens) });
+              emit({ kind: 'usage', inputTokens: tokens(counters.input_tokens), outputTokens: tokens(counters.output_tokens) });
             }
           }
           if (typeof item.id !== 'string') return;
@@ -96,7 +99,7 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
             text = item.text;
             agentText += item.text;
             observedChars += item.text.length;
-            for (const chunk of splitText(text)) onEvent?.({ kind: 'text', mode: 'final', text: chunk, messageId: itemId });
+            for (const chunk of splitText(text)) emit({ kind: 'text', mode: 'final', text: chunk, messageId: itemId });
           }
           if (item.type !== 'command_execution' && item.type !== 'file_change') return;
           const changes = Array.isArray(item.changes) ? item.changes.map(record) : [];
@@ -106,7 +109,7 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
             const summary = item.type === 'command_execution'
               ? (typeof item.command === 'string' ? item.command : '')
               : changes.map((change) => `${change.kind}: ${change.path}`).join(', ');
-            onEvent?.({
+            emit({
               kind: 'tool_call', id: itemId, name: item.type, toolKind: item.type === 'file_change' ? 'edit' : 'bash',
               argsSummary: summary.slice(0, 256), ...(paths.length === 0 ? {} : { paths }),
             });
@@ -115,20 +118,20 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
             const output = item.type === 'command_execution' && typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
             observedChars += output.length;
             const exitCode = typeof item.exit_code === 'number' && Number.isInteger(item.exit_code) ? item.exit_code : undefined;
-            onEvent?.({
+            emit({
               kind: 'tool_result', id: itemId, ok: item.status === 'completed' && (exitCode === undefined || exitCode === 0),
               ...(exitCode === undefined ? {} : { exitCode }), output: truncateUtf8(output),
             });
           }
         },
       });
-      const detail = [turnError, result.stderr, agentText].filter(Boolean).join('\n');
+      const detail = redactSecrets([turnError, result.stderr, agentText].filter(Boolean).join('\n'), secrets);
       if (/rate limit|usage limit|429/i.test(detail)) {
         const resetAt = parseResetAt(detail);
-        throw new AdapterError('RATE_LIMITED', detail, resetAt === undefined ? {} : { resetAt });
+        throw new AdapterError('RATE_LIMITED', sanitizeFailureMessage(detail), resetAt === undefined ? {} : { resetAt });
       }
       if (!completed || !receivedMessage || id === null || id.length === 0 || turnError !== '') {
-        throw new AdapterError('ADAPTER_ERROR', `Codex turn did not complete (exit ${result.code}, signal ${result.signal}). ${detail}\n${result.malformedLines.join('\n')}`);
+        throw new AdapterError('ADAPTER_ERROR', sanitizeFailureMessage(`Codex turn did not complete (exit ${result.code}, signal ${result.signal}). ${detail}\n${redactSecrets(result.malformedLines.join('\n'), secrets)}`));
       }
       // Codex exposes cumulative turn input, not context size. Estimate visible retained history
       // at four characters/token; hidden prompts, reasoning and native compaction are unmeasured.
@@ -142,6 +145,45 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+/** String values of length ≥ 16 from the owner's auth.json. Never log these. */
+function authSecrets(authPath: string): string[] {
+  try {
+    const secrets: string[] = [];
+    collectStringSecrets(JSON.parse(readFileSync(authPath, 'utf8')), secrets);
+    secrets.sort((a, b) => b.length - a.length);
+    return secrets;
+  } catch {
+    return [];
+  }
+}
+
+function collectStringSecrets(value: unknown, into: string[]): void {
+  if (typeof value === 'string') {
+    if (value.length >= 16) into.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStringSecrets(item, into);
+    return;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value)) collectStringSecrets(item, into);
+  }
+}
+
+function redactSecrets(value: string, secrets: readonly string[]): string {
+  let text = value;
+  for (const secret of secrets) text = text.split(secret).join('[redacted]');
+  return text;
+}
+
+function redactEvent(event: AgentEventInput, secrets: readonly string[]): AgentEventInput {
+  if (secrets.length === 0) return event;
+  const redact = (value: unknown): unknown => typeof value === 'string' ? redactSecrets(value, secrets)
+    : Array.isArray(value) ? value.map(redact) : value;
+  return Object.fromEntries(Object.entries(event).map(([key, value]) => [key, redact(value)])) as AgentEventInput;
 }
 
 function tokens(value: unknown): number | undefined {

@@ -70,7 +70,7 @@ import {
 } from '../prompts/index.js';
 import { parseOutput } from '../output/parse.js';
 import { runSetupIfNeeded, runTests } from './tests.js';
-import { TurnTranscript } from './transcripts.js';
+import { sanitizeFailureMessage, TurnTranscript } from './transcripts.js';
 import { adapterTrust } from '../detect.js';
 import type { ZodType } from 'zod';
 import { join } from 'node:path';
@@ -875,7 +875,7 @@ export class CommandRunner {
       sid: command.sid,
       ...ids,
       code: mapped.code,
-      message: mapped.message,
+      message: sanitizeFailureMessage(mapped.message),
       ...(mapped.resetAt === undefined ? {} : { resetAt: mapped.resetAt }),
       ...(usage === undefined ? {} : { usage }),
     };

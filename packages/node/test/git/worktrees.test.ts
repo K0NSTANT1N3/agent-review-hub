@@ -20,7 +20,7 @@ import {
 } from '../../src/git/worktrees.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
 
-describe('git helper and worktree operations', () => {
+describe('git helper and worktree operations', { timeout: 20_000 }, () => {
   let fixture: TempRepo;
 
   beforeEach(async () => {

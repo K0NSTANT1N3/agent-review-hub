@@ -228,10 +228,12 @@ describe('transcript transport and REST', () => {
 
   it('parses an exclusive per-session query cursor without permissive number coercion', () => {
     expect(TaskTranscriptQuerySchema.parse({})).toEqual({});
-    expect(TaskTranscriptQuerySchema.parse({ afterSeq: '0' })).toEqual({ afterSeq: 0 });
+    expect(TaskTranscriptQuerySchema.parse({ sid: 's1' })).toEqual({ sid: 's1' });
     expect(TaskTranscriptQuerySchema.parse({ afterSeq: '12', sid: 's1' })).toEqual({ afterSeq: 12, sid: 's1' });
+    expect(TaskTranscriptQuerySchema.safeParse({ afterSeq: '0' }).success).toBe(false);
+    expect(TaskTranscriptQuerySchema.safeParse({ afterSeq: '12' }).success).toBe(false);
     for (const afterSeq of ['', '-1', '1.5', '1e3', ' 1', '01', 'NaN', 'Infinity', '9007199254740992', ['1'], 1]) {
-      expect(TaskTranscriptQuerySchema.safeParse({ afterSeq }).success).toBe(false);
+      expect(TaskTranscriptQuerySchema.safeParse({ afterSeq, sid: 's1' }).success).toBe(false);
     }
   });
 });

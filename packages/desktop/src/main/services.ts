@@ -250,6 +250,15 @@ export class Services {
         return { ok: false, detail: `Cannot reach opencode at ${adapter.baseUrl}: ${describe(error)}` };
       }
     }
+    if (adapter.type === 'codex' || adapter.type === 'pi' || adapter.type === 'omp') {
+      const bin = adapter.binaryPath ?? adapter.type;
+      try {
+        const { stdout } = await execFileAsync(bin, ['--version'], { timeout: 20_000 });
+        return { ok: true, detail: `${adapter.type} ${stdout.trim()} is ready.` };
+      } catch (error) {
+        return { ok: false, detail: `${adapter.type} could not start: ${describe(error)}` };
+      }
+    }
     const bin = this.deps.claudeExecutable?.();
     if (bin === undefined) return { ok: false, detail: 'The bundled Claude Code CLI was not found. Reinstall Quorum or set QUORUM_CLAUDE_PATH.' };
     try {

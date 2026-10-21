@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AdapterConfig } from '@quorum/protocol';
 import { runCliProcess, type SpawnFn } from './cli-process.js';
-import { splitText, toolKindFor, truncateUtf8 } from './event-utils.js';
+import { sanitizeFailureMessage, splitText, toolKindFor, truncateUtf8 } from './event-utils.js';
 import { AdapterError, type AgentAdapter } from './types.js';
 
 type PiConfig = Extract<AdapterConfig, { type: 'pi' | 'omp' }>;
@@ -18,7 +18,13 @@ export function createPiAdapter(config: PiConfig, options: { spawnFn?: SpawnFn }
       } else {
         // omp exposes no --no-mcp flag. Extension discovery is disabled, but configured MCP
         // servers cannot be disabled through a documented CLI switch in this release.
-        argv.push('--no-rules', '--no-lsp', '--no-pty', '--no-title', '--auto-approve');
+        argv.push('--no-rules', '--no-lsp', '--no-pty', '--no-title');
+        // --auto-approve is author-only. Reviewer/directive use always-ask, the most
+        // restrictive --approval-mode (always-ask|write|yolo). Print mode cannot present
+        // an approval prompt, and configured MCP servers stay connected, so MCP writes
+        // on a lent read-only turn remain unenforced.
+        if (profile === 'author') argv.push('--auto-approve');
+        else argv.push('--approval-mode', 'always-ask');
         if (id !== null) argv.push('--resume', id);
       }
       if (profile !== 'author') argv.push('--tools', config.type === 'pi' ? 'read,grep,find,ls' : 'read,grep,glob');
@@ -124,9 +130,9 @@ export function createPiAdapter(config: PiConfig, options: { spawnFn?: SpawnFn }
       });
       if (aborted) throw new AdapterError('CANCELLED');
       const detail = [turnError, result.stderr, agentText].filter(Boolean).join('\n');
-      if (/rate limit|usage limit|429/i.test(detail)) throw new AdapterError('RATE_LIMITED', detail);
+      if (/rate limit|usage limit|429/i.test(detail)) throw new AdapterError('RATE_LIMITED', sanitizeFailureMessage(detail));
       if (result.code !== 0 || !ended || !finalMessage || id === null || id.length === 0 || turnError !== '') {
-        throw new AdapterError('ADAPTER_ERROR', `${config.type} turn did not complete (exit ${result.code}, signal ${result.signal}). ${detail}\n${result.malformedLines.join('\n')}`);
+        throw new AdapterError('ADAPTER_ERROR', sanitizeFailureMessage(`${config.type} turn did not complete (exit ${result.code}, signal ${result.signal}). ${detail}\n${result.malformedLines.join('\n')}`));
       }
       return { nativeId: id, text, usage, contextTokens };
     },

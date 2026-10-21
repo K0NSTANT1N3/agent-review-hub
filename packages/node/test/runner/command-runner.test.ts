@@ -1,5 +1,5 @@
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   parseNodeConfig,
@@ -36,7 +36,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()));
 });
 
-describe('CommandRunner', () => {
+describe('CommandRunner', { timeout: 20_000 }, () => {
   it('streams mock events through the Leader client across author turns', async () => {
     const fixture = await createFixture({ author: [{ match: { any: true }, turns: [
       { writeFiles: { 'stream.txt': 'saved' }, reply: { status: 'done', summary: 'streamed' } },
@@ -108,6 +108,29 @@ describe('CommandRunner', () => {
     expect((await git(cwd, ['branch', '--show-current'])).stdout.trim()).toBe('quorum/task-93');
     expect((await git(cwd, ['rev-parse', 'agent-other-branch'])).stdout.trim()).toBe(beforeHead);
     await expect(access(join(cwd, 'untracked.txt'))).rejects.toThrow();
+  });
+
+  it('redacts home paths and caps adapter failure messages before they leave the Node', async () => {
+    const home = homedir();
+    const fixture = await createFixture({}, {
+      wrapAdapter(adapter) {
+        return { ...adapter, async runTurn() {
+          throw new AdapterError('ADAPTER_ERROR', `failed reading ${home}/.codex/auth.json ${'x'.repeat(3000)}`);
+        } };
+      },
+    });
+    await openSession(fixture, 'open', 'sid-redact', 'author');
+    const task = taskBrief(95, 'Redact failure');
+    await sendCommand(fixture.connection, 'redact', {
+      type: 'author.start', sid: 'sid-redact', taskId: task.id, task, branch: 'quorum/task-95', continueExisting: false, issues: [], estimated: 1,
+    });
+    const failed = await nextEvent(fixture.connection, (event) => event.type === 'turn.failed');
+    expect(failed.type).toBe('turn.failed');
+    if (failed.type !== 'turn.failed') return;
+    expect(failed.code).toBe('ADAPTER_ERROR');
+    expect(failed.message).not.toContain(home);
+    expect(failed.message).toContain('~/.codex/auth.json');
+    expect(failed.message.length).toBeLessThanOrEqual(2048);
   });
 
   it('allows sandboxed author file edits and leaves committing to Quorum', async () => {

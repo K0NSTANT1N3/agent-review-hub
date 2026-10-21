@@ -1,12 +1,15 @@
 import { homedir } from 'node:os';
 import { AgentEventSchema, MAX_AGENT_EVENT_BATCH, type AgentEvent, type TranscriptBatch } from '@quorum/protocol';
+import { redactHomeText } from '../adapters/event-utils.js';
 import type { AgentEventInput } from '../adapters/types.js';
 import type { NodeJournal } from '../journal.js';
+
+export { redactHomeText, sanitizeFailureMessage, MAX_FAILURE_MESSAGE_CHARS } from '../adapters/event-utils.js';
 
 /** Agents print absolute paths. The owner's home directory, and so their username, stays on this machine. */
 export function redactHome(input: AgentEventInput, home: string = homedir()): AgentEventInput {
   if (home.length < 2) return input;
-  const redact = (value: unknown): unknown => typeof value === 'string' ? value.split(home).join('~')
+  const redact = (value: unknown): unknown => typeof value === 'string' ? redactHomeText(value, home)
     : Array.isArray(value) ? value.map(redact) : value;
   return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, redact(value)])) as AgentEventInput;
 }
