@@ -112,6 +112,17 @@ alias quorum="node $PWD/packages/cli/dist/cli.js"
 
 The full guide is in [INSTALL.md](docs/INSTALL.md#let-a-coding-agent-use-quorum-the-quorum-cli).
 
+## Terminal UI
+
+`quorum-tui` is a full-screen terminal client for one Leader. It shows the team agents, the task list and the live transcript of the selected task (messages, tool calls, thinking and usage as the Node reports them). Start it from a source checkout:
+
+```bash
+corepack pnpm --filter @quorum/tui build
+node packages/tui/dist/cli.js --url https://leader.example.com --token '<token>'
+```
+
+It reuses the `quorum` CLI config (`QUORUM_URL` / `QUORUM_TOKEN`, or `~/.config/quorum/cli.json` after `quorum login`). A **requester** token can read, create tasks, answer a blocked author and ask agents. Approve, send back, pause and cancel need an **owner** token (`quorum-leader add-token --scope owner`). The keys and 80×24 layout are in [INSTALL.md](docs/INSTALL.md#use-the-terminal-ui).
+
 ### Run on a VPS
 
 The Leader, the agent Node and the CLI also run on a server with no desktop: `quorum-leader invite` prints a join code,
@@ -138,8 +149,9 @@ end-to-end scenarios pass in CI, and a real Claude Code → Claude Code review-a
 |---|---|
 | `packages/protocol` | Shared contract: config schemas, WebSocket frames, commands/events, agent output, REST routes (zod) |
 | `packages/leader` | The Leader: SQLite state, task state machine, scheduler, locks/leases, merge worker, REST + WebSocket server, CLI |
-| `packages/node` | The agent Node: git worktrees, journal, prompts, Claude Code / opencode / mock adapters, Leader client, CLI |
+| `packages/node` | The agent Node: git worktrees, journal, prompts, adapters (Claude Code, Codex, pi, omp, opencode, mock; Kilo reserved, not yet supported), Leader client, CLI |
 | `packages/cli` | `quorum`, the CLI for coding agents and scripts (requester-scope API tokens) |
+| `packages/tui` | `quorum-tui`, a terminal UI for tasks and live agent transcripts |
 | `packages/desktop` | Electron + React app (Host/Join, dashboard, tasks, diffs, invites) and installer packaging |
 | `e2e` | End-to-end scenarios running a real Leader and Nodes with scripted mock agents against real git |
 | `docs/implementation-spec.md` | The authoritative design spec (codename "Quorum") |
