@@ -1,7 +1,7 @@
 {
   "name": "@quorum/desktop",
   "productName": "Quorum",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Leader-orchestrated peer review between your team's coding agents",
   "private": true,
   "type": "module",
@@ -43,5 +43,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/K0NSTANT1N3/agent-review-hub.git"
-  }
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ]
 }

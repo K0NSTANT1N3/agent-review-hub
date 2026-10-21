@@ -69,7 +69,7 @@ flowchart LR
 
 The `quorum` CLI lets a coding agent (or a script) use Quorum from a terminal.
 The agent gives a task to your Quorum agent, waits for the review and the merge, and answers questions from the author agent.
-Each command has `--json` output and exit codes that do not change. An agent can make decisions from the result.
+Script commands have `--json` output and exit codes that do not change. An agent can make decisions from the result.
 
 ```bash
 quorum login --url http://127.0.0.1:7420 --token qrq_…   # the token comes from Settings → Agent CLI access
@@ -104,22 +104,24 @@ Exit 0: report mergedCommit. Exit 3: ask me the `question`, then `quorum task an
 and `quorum task wait <id> --json`. Exit 4: show me lastTestOutput. Exit 5: run `quorum task wait <id>` again.
 ```
 
-The installers do not include the CLI yet. To use it now, build the repository (see [Developing](#developing)), then:
-
-```bash
-alias quorum="node $PWD/packages/cli/dist/cli.js"
-```
+Install the desktop app. Open **Settings > Install command-line tool** and confirm the change.
+Open a new terminal. Run `quorum --version` to check the installation.
+The installers include the CLI, the terminal UI and Node.js. You do not need a source checkout.
 
 The full guide is in [INSTALL.md](docs/INSTALL.md#let-a-coding-agent-use-quorum-the-quorum-cli).
 
 ## Terminal UI
 
-`quorum-tui` is a full-screen terminal client for one Leader. It shows the team agents, the task list and the live transcript of the selected task (messages, tool calls, thinking and usage as the Node reports them). Start it from a source checkout:
+`quorum tui` is a full-screen terminal client for one Leader. It shows agents, tasks and live transcripts.
+After you install the command-line tool, run:
 
 ```bash
-corepack pnpm --filter @quorum/tui build
-node packages/tui/dist/cli.js --url https://leader.example.com --token '<token>'
+quorum login --url https://leader.example.com --token '<token>'
+quorum tui
+quorum tui --help
 ```
+
+You can also run `quorum-tui`. Both commands use the same connection data.
 
 It reuses the `quorum` CLI config (`QUORUM_URL` / `QUORUM_TOKEN`, or `~/.config/quorum/cli.json` after `quorum login`). A **requester** token can read, create tasks, answer a blocked author and ask agents. Approve, send back, pause and cancel need an **owner** token (`quorum-leader add-token --scope owner`). The keys and 80×24 layout are in [INSTALL.md](docs/INSTALL.md#use-the-terminal-ui).
 
@@ -151,7 +153,7 @@ end-to-end scenarios pass in CI, and a real Claude Code → Claude Code review-a
 | `packages/leader` | The Leader: SQLite state, task state machine, scheduler, locks/leases, merge worker, REST + WebSocket server, CLI |
 | `packages/node` | The agent Node: git worktrees, journal, prompts, adapters (Claude Code, Codex, pi, omp, opencode, mock; Kilo reserved, not yet supported), Leader client, CLI |
 | `packages/cli` | `quorum`, the CLI for coding agents and scripts (requester-scope API tokens) |
-| `packages/tui` | `quorum-tui`, a terminal UI for tasks and live agent transcripts |
+| `packages/tui` | `quorum tui` / `quorum-tui`, a terminal UI for tasks and live agent transcripts |
 | `packages/desktop` | Electron + React app (Host/Join, dashboard, tasks, diffs, invites) and installer packaging |
 | `e2e` | End-to-end scenarios running a real Leader and Nodes with scripted mock agents against real git |
 | `docs/implementation-spec.md` | The authoritative design spec (codename "Quorum") |
@@ -168,7 +170,11 @@ corepack pnpm --filter @quorum/desktop dist     # build installers for this OS
 ```
 
 Releases: push a `vX.Y.Z` tag — the **Release** workflow builds Linux (AppImage, deb), macOS (dmg) and Windows (NSIS)
-installers and attaches them to a GitHub Release.
+installers and attaches them to a GitHub Release. Each installer contains the CLI and its Node.js runtime.
+The workflow runs `quorum --version` and `quorum tui --help` from the packaged resources on each OS.
+
+To check the prepared npm packages without publishing, run `corepack pnpm check:npm-pack` after the workspace build.
+The `@quorum` npm scope belongs to another organization. These packages are not published.
 
 Contributions: read [CONTRIBUTING.md](CONTRIBUTING.md) and [tasks/STATUS.md](tasks/STATUS.md). Where documents
 disagree, [docs/implementation-spec.md](docs/implementation-spec.md) is authoritative.

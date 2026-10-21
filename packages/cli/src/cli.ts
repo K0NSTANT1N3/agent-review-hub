@@ -13,5 +13,6 @@ const code = await run(process.argv.slice(2), {
   err: (text) => process.stderr.write(`${text}\n`),
   readStdin,
   stdinIsTTY: process.stdin.isTTY === true,
+  stdoutIsTTY: process.stdout.isTTY === true,
 });
 process.exitCode = code;

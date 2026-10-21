@@ -262,6 +262,7 @@ export function Settings({ state }: { state: AppState }) {
         </div>
         {check !== null && <div className={check.ok ? 'note note-ok' : 'note note-danger'}>{check.detail}</div>}
       </Card>
+      <CommandLineTools />
       <CliAccess state={state} />
       <Card title="This computer">
         <p>
@@ -372,4 +373,23 @@ function CliAccess({ state }: { state: AppState }) {
       )}
     </Card>
   );
+}
+
+function CommandLineTools() {
+  const [result, setResult] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const install = async () => {
+    setBusy(true);
+    setError(null);
+    try { setResult(await bridge().installCli()); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  return <Card title="Command-line tools">
+    <p className="muted">Install quorum for scripts and quorum tui for the terminal UI. No separate Node.js installation is needed.</p>
+    <button disabled={busy} onClick={() => void install()}>{busy ? 'Installing…' : 'Install command-line tool'}</button>
+    <ErrorNote error={error} />
+    {result !== null && <p role="status">{result}</p>}
+  </Card>;
 }

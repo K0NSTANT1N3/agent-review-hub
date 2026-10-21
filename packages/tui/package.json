@@ -1,7 +1,6 @@
 {
   "name": "@quorum/tui",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.5",
   "description": "quorum tui: a terminal UI for Quorum tasks and live agent transcripts",
   "license": "MIT",
   "type": "module",
@@ -13,6 +12,16 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./start": {
+      "development": "./src/start.ts",
+      "types": "./dist/start.d.ts",
+      "default": "./dist/start.js"
+    },
+    "./config": {
+      "development": "./src/config.ts",
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
     }
   },
   "bin": {
@@ -22,7 +31,8 @@
     "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/cli.js',0o755)\"",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@quorum/protocol": "workspace:*",
@@ -34,5 +44,32 @@
     "@types/react": "^19.3.0",
     "@types/ws": "^8.18.2",
     "ink-testing-library": "^4.0.0"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./start": {
+        "types": "./dist/start.d.ts",
+        "default": "./dist/start.js"
+      },
+      "./config": {
+        "types": "./dist/config.d.ts",
+        "default": "./dist/config.js"
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/K0NSTANT1N3/agent-review-hub.git",
+    "directory": "packages/tui"
   }
 }
