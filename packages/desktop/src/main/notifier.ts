@@ -32,7 +32,10 @@ export function createNotifier(deps: NotifierDeps): (event: UiEvent, state: AppS
       lastState.set(t.id, t.state);
       if (prev === undefined || prev === t.state || t.requesterOwner !== state.ownerName) return;
       if (t.state === 'MERGED') deps.show('Merged ✓', `#${t.id} ${t.title}`);
-      if (t.state === 'ESCALATED') notifyEscalation(t.id, 'Needs your decision', `#${t.id} ${t.title}: ${t.escalationReason ?? ''}`);
+      if (t.state === 'ESCALATED') {
+        const approval = t.escalationReason === 'human_approval_required';
+        notifyEscalation(t.id, approval ? 'Needs your approval' : 'Needs your decision', approval ? `#${t.id} ${t.title}: approved by the reviewer agent` : `#${t.id} ${t.title}: ${t.escalationReason ?? ''}`);
+      }
     } else if (event.type === 'task.needs_attention') {
       const { taskId, reason, message } = event.data;
       const owner = state.ownerName;

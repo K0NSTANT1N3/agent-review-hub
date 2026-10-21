@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function migrate(db: Database.Database): void {
   // WAL must be configured outside a transaction; foreign keys are per connection.
@@ -13,7 +13,8 @@ export function migrate(db: Database.Database): void {
     if (rows.length > 1 || (rows[0] !== undefined && rows[0].version > SCHEMA_VERSION)) {
       throw new Error(`Unsupported database schema version: ${rows.map((row) => row.version).join(',')}`);
     }
-    if (rows[0]?.version === 1) {
+    const from = rows[0]?.version;
+    if (from === 1) {
       // v2 adds api_tokens (the last table in schema.sql) and sessions.profile, which is recovered from the
       // session.open command that created each session.
       const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
@@ -23,6 +24,10 @@ export function migrate(db: Database.Database): void {
         SELECT json_extract(m.payload, '$.cmd.profile') FROM messages m
         WHERE m.direction = 'to_node' AND m.type = 'session.open' AND m.session_id = sessions.id
         ORDER BY m.rowid DESC LIMIT 1)`);
+    }
+    if (from !== undefined && from < 3) {
+      // v3 adds tasks.require_human_approval.
+      db.exec('ALTER TABLE tasks ADD COLUMN require_human_approval INTEGER NOT NULL DEFAULT 0');
       db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
     }
     if (rows.length === 0) {

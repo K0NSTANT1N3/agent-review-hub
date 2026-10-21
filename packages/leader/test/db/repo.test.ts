@@ -26,7 +26,7 @@ describe('schema and migrations', () => {
   });
 
   it('enables foreign keys and refuses dangling references', () => {
-    expect(db.schemaVersion).toBe(2);
+    expect(db.schemaVersion).toBe(3);
     expect(db.foreignKeysEnabled).toBe(true);
     expect(() => db.sessions.insert({ id: 's', agent_id: 'missing', state: 'idle', created_at: 1, last_used_at: 1 })).toThrow(/FOREIGN KEY/);
   });
@@ -41,7 +41,7 @@ describe('schema and migrations', () => {
       first.close();
       const second = openDatabase(filename);
       try {
-        expect(second.schemaVersion).toBe(2);
+        expect(second.schemaVersion).toBe(3);
         expect(second.foreignKeysEnabled).toBe(true);
         expect(second.agents.require('persisted').owner_name).toBe('Owner');
         expect(second.integrity).toBe('ok');
@@ -57,7 +57,7 @@ describe('schema migration v1 to v2', () => {
     try {
       const v1 = new Database(filename);
       const v2 = readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8');
-      const v1Schema = v2.slice(0, v2.indexOf('CREATE TABLE api_tokens')).replace(/^\s*profile .*\n/m, '').replace(/^PRAGMA .*;\s*$/gm, '');
+      const v1Schema = v2.slice(0, v2.indexOf('CREATE TABLE api_tokens')).replace(/^\s*profile .*\n/m, '').replace(/^\s*require_human_approval .*\n/m, '').replace(/^PRAGMA .*;\s*$/gm, '');
       v1.exec(v1Schema);
       v1.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (1);');
       v1.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at) VALUES ('bob', 'Bob', 'h', 1)").run();
@@ -67,9 +67,30 @@ describe('schema migration v1 to v2', () => {
       v1.close();
       const migrated = openDatabase(filename);
       try {
-        expect(migrated.schemaVersion).toBe(2);
+        expect(migrated.schemaVersion).toBe(3);
         expect(migrated.sessions.require('s1').profile).toBe('reviewer');
         expect(migrated.apiTokens.all()).toEqual([]);
+      } finally { migrated.close(); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});
+
+describe('schema migration v2 to v3', () => {
+  it('adds tasks.require_human_approval, off for existing tasks', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'quorum-db-'));
+    const filename = join(directory, 'leader.db');
+    try {
+      const v2 = new Database(filename);
+      const schema = readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8');
+      v2.exec(schema.replace(/^\s*require_human_approval .*\n/m, '').replace(/^PRAGMA .*;\s*$/gm, ''));
+      v2.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (2);');
+      v2.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at) VALUES ('ana', 'Ana', 'h', 1)").run();
+      v2.prepare("INSERT INTO tasks (title, description, requester_agent_id, state, created_at, updated_at, state_entered_at) VALUES ('t', 'd', 'ana', 'QUEUED', 1, 1, 1)").run();
+      v2.close();
+      const migrated = openDatabase(filename);
+      try {
+        expect(migrated.schemaVersion).toBe(3);
+        expect(migrated.tasks.require(1).require_human_approval).toBe(0);
       } finally { migrated.close(); }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });

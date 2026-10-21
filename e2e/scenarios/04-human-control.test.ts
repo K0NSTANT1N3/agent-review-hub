@@ -30,6 +30,23 @@ describe.skipIf(!E2E_READY)('human control, directives, compaction', () => {
     expect(finished.sessionId).not.toBe(lockedSid);
   });
 
+  it('#21b a task that requires human approval stops after the reviewer approves; Approve & merge merges it', async () => {
+    h = await Harness.create();
+    const { alice } = await aliceAndBob(h, {
+      alice: { author: anyTask([authorDone({ 'src/greet.js': GREET.withDefault })]) },
+      bob: { reviewer: anyTask([approve()]) },
+    });
+    const task = await alice.api.createTask({ title: 'Rotate keys', description: 'x', priority: 3, requireHumanApproval: true });
+    expect(task.requireHumanApproval).toBe(true);
+    const waiting = await waitForState(alice.api, task.id, 'ESCALATED');
+    expect(waiting.task.escalationReason).toBe('human_approval_required');
+    expect(waiting.task.mergedCommit).toBeNull();
+
+    await alice.api.approve(task.id);
+    const merged = await waitForState(alice.api, task.id, 'MERGED');
+    expect(merged.task.mergedCommit).not.toBeNull();
+  });
+
   it('#18b a directive never reuses an idle reviewer session (sessions keep their profile)', async () => {
     h = await Harness.create();
     const { alice } = await aliceAndBob(h, {

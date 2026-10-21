@@ -49,6 +49,7 @@ CREATE TABLE tasks (
   tags                   TEXT NOT NULL DEFAULT '[]',
   priority               INTEGER NOT NULL DEFAULT 1,     -- 0 low, 1 normal, 2 high, 3 urgent
   mode                   TEXT NOT NULL DEFAULT 'own',    -- 'own' | 'pool'
+  require_human_approval INTEGER NOT NULL DEFAULT 0,     -- 1: a human approves the merge after the reviewer agent
   requester_agent_id     TEXT NOT NULL REFERENCES agents(id),
   author_agent_id        TEXT REFERENCES agents(id),
   author_session_id      TEXT REFERENCES sessions(id),
