@@ -203,6 +203,25 @@ describe('Codex adapter', () => {
       vi.unstubAllEnvs();
     });
 
+    it('leaves no prefix of a secret that straddles the tool output cut', async () => {
+      const owner = tempDir();
+      const token = 'sk-live-0123456789abcdefghij';
+      writeFileSync(join(owner, 'auth.json'), JSON.stringify({ token }));
+      vi.stubEnv('CODEX_HOME', owner);
+      // The cut at 4096 bytes would keep the first 10 characters of the raw token.
+      const output = `${'x'.repeat(4086)}${token}`;
+      const replay = replaySpawn([transcript(
+        { type: 'item.started', item: { id: 'item_1', type: 'command_execution', command: 'cat auth.json' } },
+        { type: 'item.completed', item: { id: 'item_1', type: 'command_execution', aggregated_output: output, status: 'completed', exit_code: 0 } },
+        message('done'),
+      )]);
+      const events: AgentEventInput[] = [];
+      await turn(createCodexAdapter(config, { ...replay, homeDir: join(tempDir(), 'codex-home') }), { onEvent: (event) => events.push(event) });
+      expect(events.some((event) => event.kind === 'tool_result')).toBe(true);
+      expect(JSON.stringify(events)).not.toContain('sk-live-0');
+      vi.unstubAllEnvs();
+    });
+
     it('fails the turn clearly when the owner is not logged in', async () => {
       const replay = replaySpawn([fixture('codex-t2')]);
       vi.stubEnv('CODEX_HOME', tempDir());

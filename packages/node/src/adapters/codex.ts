@@ -99,7 +99,7 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
             text = item.text;
             agentText += item.text;
             observedChars += item.text.length;
-            for (const chunk of splitText(text)) emit({ kind: 'text', mode: 'final', text: chunk, messageId: itemId });
+            for (const chunk of splitText(redactSecrets(text, secrets))) emit({ kind: 'text', mode: 'final', text: chunk, messageId: itemId });
           }
           if (item.type !== 'command_execution' && item.type !== 'file_change') return;
           const changes = Array.isArray(item.changes) ? item.changes.map(record) : [];
@@ -111,7 +111,7 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
               : changes.map((change) => `${change.kind}: ${change.path}`).join(', ');
             emit({
               kind: 'tool_call', id: itemId, name: item.type, toolKind: item.type === 'file_change' ? 'edit' : 'bash',
-              argsSummary: summary.slice(0, 256), ...(paths.length === 0 ? {} : { paths }),
+              argsSummary: redactSecrets(summary, secrets).slice(0, 256), ...(paths.length === 0 ? {} : { paths }),
             });
           }
           if (event.type === 'item.completed') {
@@ -120,7 +120,7 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
             const exitCode = typeof item.exit_code === 'number' && Number.isInteger(item.exit_code) ? item.exit_code : undefined;
             emit({
               kind: 'tool_result', id: itemId, ok: item.status === 'completed' && (exitCode === undefined || exitCode === 0),
-              ...(exitCode === undefined ? {} : { exitCode }), output: truncateUtf8(output),
+              ...(exitCode === undefined ? {} : { exitCode }), output: truncateUtf8(redactSecrets(output, secrets)),
             });
           }
         },
@@ -179,6 +179,7 @@ function redactSecrets(value: string, secrets: readonly string[]): string {
   return text;
 }
 
+/** Final pass. Text is also redacted before it is split or cut, so no part of a secret survives a cut. */
 function redactEvent(event: AgentEventInput, secrets: readonly string[]): AgentEventInput {
   if (secrets.length === 0) return event;
   const redact = (value: unknown): unknown => typeof value === 'string' ? redactSecrets(value, secrets)
