@@ -5,13 +5,13 @@ exports[`fixed terminal rendering > renders the 80×24 fixture with no ANSI colo
 branch quorum/12 · head c91d5aa · tests passed
 ┌─ 3 #12 Chat · follow on──────────────────────────────────────────────────────┐
 │ Rate-limit failed logins · IN_REVIEW                                         │
+│   Limit failed logins to 5 per 15 minutes.                                   │
+│ 00:00:02 codex@tazo [author]                                                 │
 │   ▸ read src/auth/login.ts · ok                                              │
 │   Added a Redis counter. The sixth failed attempt returns 429.               │
 │ 00:00:04 codex@tazo                                                          │
-│   codex@tazo submitted c91d5aa — tests passed                                │
+│   codex@tazo submitted c91d5aa — tests passed → In review                    │
 │   Reset counter on success; added a test.                                    │
-│ 00:00:05 leader                                                              │
-│   author submitted · IN_REVIEW                                               │
 │ 00:00:06 Leader › claude@bob                                                 │
 │   Leader asked claude@bob to re-review the changes (round 2)                 │
 │ 00:00:07 claude@bob [reviewer]                                               │

@@ -4,7 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import Fastify, { type FastifyInstance } from 'fastify';
 import WebSocket, { WebSocketServer } from 'ws';
 import {
-  parseNodeToLeaderFrame, ProfileSchema, PROTOCOL_VERSION, type CmdFrame, type Event,
+  parseNodeToLeaderFrame, ProfileSchema, PROTOCOL_VERSION, type AdapterType, type CmdFrame, type Event,
   type NodeToLeaderFrame, type NodeStatus, type OwnerSettings, type SessionProfile, type SessionReport,
   type TranscriptAppended, type TranscriptFrame,
 } from '@quorum/protocol';
@@ -321,8 +321,12 @@ export class NodeHub {
     if (retry === undefined || frame.events[0]!.seq < retry.seq) this.transcriptRetries.set(frame.sid, { msgId: frame.msgId, seq: frame.events[0]!.seq });
   }
 
-  private storeMetadata(agentId: string, status: Pick<NodeStatus, 'trust' | 'detectedAgents'>): void {
-    this.db.agents.update(agentId, { trust: status.trust ?? null, detected_agents: status.detectedAgents === undefined ? null : JSON.stringify(status.detectedAgents) });
+  private storeMetadata(agentId: string, status: Pick<NodeStatus, 'trust' | 'detectedAgents'> & { adapterType?: AdapterType }): void {
+    this.db.agents.update(agentId, {
+      trust: status.trust ?? null,
+      detected_agents: status.detectedAgents === undefined ? null : JSON.stringify(status.detectedAgents),
+      ...(status.adapterType === undefined ? {} : { adapter_type: status.adapterType }),
+    });
   }
 
   private recordInbound(agentId: string, frame: Extract<NodeToLeaderFrame, { kind: 'evt' }>): void {

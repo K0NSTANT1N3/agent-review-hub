@@ -3,7 +3,7 @@ import type { AgentView, TaskView } from '@quorum/protocol';
 import { buildChat, transcriptUsage } from '../chat-model.js';
 import type { MessageMode } from '../actions.js';
 import { emptyTaskData, filteredTasks, type State } from '../store.js';
-import { editorLine, fit, wrap, type Editor } from '../text.js';
+import { editorLine, fit, fitAtWord, wrap, type Editor } from '../text.js';
 import { chatLines, viewport } from './chat.js';
 import { Panel, type DisplayLine } from './panel.js';
 
@@ -80,14 +80,19 @@ export const HELP = [
   'Ask creates a read-only directive on the selected agent.',
 ];
 
-function agentLines(agents: AgentView[], selected: number, height: number): DisplayLine[] {
+function alsoDetected(agent: AgentView, width: number): string {
+  const extras = (agent.detectedAgents ?? []).filter((item) => item.type !== agent.adapterType);
+  if (extras.length === 0) return '';
+  return fitAtWord(`also: ${extras.map((item) => `${item.type} ${item.version}`).join(', ')}`, Math.max(0, width));
+}
+
+function agentLines(agents: AgentView[], selected: number, height: number, width: number): DisplayLine[] {
   const start = Math.max(0, selected - Math.max(0, Math.floor(height / 3) - 1));
   return agents.slice(start).flatMap((agent, index) => {
-    const detected = agent.detectedAgents ?? [];
     const chosen = index + start === selected;
     return [
-      { text: `${chosen ? '›' : ' '} ${agent.status === 'online' ? agent.lockedSessions ? '✻' : '●' : '○'} ${agent.id} [${detected.map((item) => item.type).join(',') || 'unknown'}]`, selected: chosen },
-      { text: `  ${detected.map((item) => `${item.type} ${item.version}`).join(' · ') || 'version unknown'}`, dim: true },
+      { text: `${chosen ? '›' : ' '} ${agent.status === 'online' ? agent.lockedSessions ? '✻' : '●' : '○'} ${agent.id} [${agent.adapterType ?? 'unknown'}]`, selected: chosen },
+      { text: `  ${alsoDetected(agent, width - 2)}`, dim: true },
       { text: `  [${agent.trust ?? 'unknown'}] · ${agent.ownerName} · ${agent.paused ? 'paused' : agent.status}`, dim: true },
     ];
   });
@@ -122,7 +127,7 @@ export function Screen({ state, view, columns, rows, team, warning, tick = 0, no
     { text: `  ${item.title}`, selected: item.id === task?.id },
   ]);
   const taskPanel = (panelHeight: number) => <Panel title={`2 Tasks [${tasks.length}]${view.filter ? ` /${view.filter}` : ''}`} width={sideWidth} height={panelHeight} focused={view.pane === 'tasks'} lines={taskLines} noColor={noColor} />;
-  const agentsPanel = (panelHeight: number) => <Panel title={`1 Agents [${state.agents.length}]`} width={sideWidth} height={panelHeight} focused={view.pane === 'agents'} lines={agentLines(state.agents, view.agentIndex, panelHeight - 2)} noColor={noColor} />;
+  const agentsPanel = (panelHeight: number) => <Panel title={`1 Agents [${state.agents.length}]`} width={sideWidth} height={panelHeight} focused={view.pane === 'agents'} lines={agentLines(state.agents, view.agentIndex, panelHeight - 2, Math.max(0, sideWidth - 4))} noColor={noColor} />;
   const unsupported = task && state.data[task.id]?.transcriptSupported === false;
   const chat = taskChatLines(state, view, chatWidth, tick);
   const chatPanel = <Panel title={`3 ${task ? `#${task.id} Chat` : 'Chat'} · follow ${view.chatTop === null ? 'on' : 'off'}`} width={chatWidth} height={bodyHeight} focused={view.pane === 'chat'} noColor={noColor} lines={[

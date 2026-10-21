@@ -569,14 +569,16 @@ describe('transcript ingest', () => {
   it('stores hello and heartbeat adapter metadata and clears absent metadata to unknown', async () => {
     await start();
     const detectedAgents = [{ type: 'codex', version: '1.0', trust: 'sandboxed' }] as const;
-    const node = await connect('alice', { trust: 'low', detectedAgents: [...detectedAgents] });
+    const node = await connect('alice', { trust: 'low', detectedAgents: [...detectedAgents], adapterType: 'claude-code' });
     await node.next('welcome');
-    expect(db.agents.require('alice')).toMatchObject({ trust: 'low', detected_agents: JSON.stringify(detectedAgents) });
+    expect(db.agents.require('alice')).toMatchObject({ trust: 'low', detected_agents: JSON.stringify(detectedAgents), adapter_type: 'claude-code' });
     node.heartbeat(status({ trust: 'enforced', detectedAgents: [] }));
     await vi.waitFor(() => expect(db.agents.require('alice').trust).toBe('enforced'));
     expect(db.agents.require('alice').detected_agents).toBe('[]');
+    expect(db.agents.require('alice').adapter_type).toBe('claude-code');
     node.heartbeat(status());
     await vi.waitFor(() => expect(db.agents.require('alice').trust).toBeNull());
     expect(db.agents.require('alice').detected_agents).toBeNull();
+    expect(db.agents.require('alice').adapter_type).toBe('claude-code');
   });
 });

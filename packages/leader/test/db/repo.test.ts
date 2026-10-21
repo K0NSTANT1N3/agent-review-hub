@@ -26,7 +26,7 @@ describe('schema and migrations', () => {
   });
 
   it('enables foreign keys and refuses dangling references', () => {
-    expect(db.schemaVersion).toBe(3);
+    expect(db.schemaVersion).toBe(4);
     expect(db.foreignKeysEnabled).toBe(true);
     expect(() => db.sessions.insert({ id: 's', agent_id: 'missing', state: 'idle', created_at: 1, last_used_at: 1 })).toThrow(/FOREIGN KEY/);
   });
@@ -41,7 +41,7 @@ describe('schema and migrations', () => {
       first.close();
       const second = openDatabase(filename);
       try {
-        expect(second.schemaVersion).toBe(3);
+        expect(second.schemaVersion).toBe(4);
         expect(second.foreignKeysEnabled).toBe(true);
         expect(second.agents.require('persisted').owner_name).toBe('Owner');
         expect(second.integrity).toBe('ok');
@@ -67,7 +67,7 @@ describe('schema migration v1 to v2', () => {
       v1.close();
       const migrated = openDatabase(filename);
       try {
-        expect(migrated.schemaVersion).toBe(3);
+        expect(migrated.schemaVersion).toBe(4);
         expect(migrated.sessions.require('s1').profile).toBe('reviewer');
         expect(migrated.apiTokens.all()).toEqual([]);
       } finally { migrated.close(); }
@@ -89,11 +89,33 @@ describe('schema migration v2 to v3', () => {
       old.close();
       const migrated = openDatabase(filename);
       try {
-        expect(migrated.schemaVersion).toBe(3);
-        expect(migrated.agents.require('a')).toMatchObject({ owner_name: 'Alice', trust: null, detected_agents: null });
+        expect(migrated.schemaVersion).toBe(4);
+        expect(migrated.agents.require('a')).toMatchObject({ owner_name: 'Alice', trust: null, detected_agents: null, adapter_type: null });
         expect(migrated.sessions.require('s')).toMatchObject({ profile: 'author', transcript_seq: 0 });
         expect(migrated.transcriptEvents.all()).toEqual([]);
         expect(migrated.transcriptReceipts.all()).toEqual([]);
+        expect(migrated.integrity).toBe('ok');
+      } finally { migrated.close(); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});
+
+describe('schema migration v3 to v4', () => {
+  it('adds adapter_type without clearing stored trust or discovery', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'quorum-db-v3-'));
+    const filename = join(directory, 'leader.db');
+    try {
+      const old = new Database(filename);
+      const schema = readFileSync(new URL('../../src/db/schema.sql', import.meta.url), 'utf8');
+      old.exec(schema.split('-- v4:')[0]!.replace(/^PRAGMA .*;\s*$/gm, ''));
+      old.exec('CREATE TABLE schema_version (version INTEGER PRIMARY KEY); INSERT INTO schema_version VALUES (3);');
+      old.prepare("INSERT INTO agents (id, owner_name, token_hash, created_at, trust, detected_agents) VALUES ('a', 'Alice', 'h', 1, 'low', ?)")
+        .run(JSON.stringify([{ type: 'codex', version: '1.0', trust: 'sandboxed' }]));
+      old.close();
+      const migrated = openDatabase(filename);
+      try {
+        expect(migrated.schemaVersion).toBe(4);
+        expect(migrated.agents.require('a')).toMatchObject({ trust: 'low', adapter_type: null });
         expect(migrated.integrity).toBe('ok');
       } finally { migrated.close(); }
     } finally { rmSync(directory, { recursive: true, force: true }); }

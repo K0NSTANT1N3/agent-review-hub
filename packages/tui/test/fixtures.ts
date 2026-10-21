@@ -6,7 +6,7 @@ export function taskView(overrides: Partial<TaskView> = {}): TaskView {
 }
 
 export function agentView(overrides: Partial<AgentView> = {}): AgentView {
-  return { id: 'codex@tazo', ownerName: 'tazo', status: 'online', lastHeartbeatAt: 8000, maxSessions: 2, lendMode: 'always', lendTokensPerDay: 100000, humanIdleSec: 100, paused: false, tags: [], contextWindow: 200000, rateLimitedUntil: null, lockedSessions: 1, idleSessions: 0, lentToday: 2000, budgetRemaining: 98000, trust: 'sandboxed', detectedAgents: [{ type: 'codex', version: '0.163.0', trust: 'sandboxed' }], ...overrides };
+  return { id: 'codex@tazo', ownerName: 'tazo', status: 'online', lastHeartbeatAt: 8000, maxSessions: 2, lendMode: 'always', lendTokensPerDay: 100000, humanIdleSec: 100, paused: false, tags: [], contextWindow: 200000, rateLimitedUntil: null, lockedSessions: 1, idleSessions: 0, lentToday: 2000, budgetRemaining: 98000, trust: 'sandboxed', adapterType: 'codex', detectedAgents: [{ type: 'codex', version: '0.163.0', trust: 'sandboxed' }], ...overrides };
 }
 
 export function sessionView(overrides: Partial<SessionView> = {}): SessionView {
@@ -46,5 +46,5 @@ export function detail(overrides: Partial<TaskDetail> = {}): TaskDetail {
 
 export function fixtureState(): State {
   const d = detail();
-  return { ...initialState, connection: 'connected', tasks: [d.task], agents: [agentView(), agentView({ id: 'claude@bob', ownerName: 'bob', trust: 'enforced', detectedAgents: [{ type: 'claude-code', version: '2.1.304', trust: 'enforced' }] })], sessions: [sessionView()], data: { 12: { detail: d, messages: d.messages, events: d.events, transcripts: transcripts(), transcriptSupported: true, human: [] } } };
+  return { ...initialState, connection: 'connected', tasks: [d.task], agents: [agentView(), agentView({ id: 'claude@bob', ownerName: 'bob', trust: 'enforced', adapterType: 'claude-code', detectedAgents: [{ type: 'claude-code', version: '2.1.304', trust: 'enforced' }] })], sessions: [sessionView()], data: { 12: { detail: d, messages: d.messages, events: d.events, transcripts: transcripts(), transcriptSupported: true, human: [] } } };
 }

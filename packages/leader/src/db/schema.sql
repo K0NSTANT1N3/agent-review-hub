@@ -218,3 +218,6 @@ CREATE TABLE transcript_receipts (
   id        TEXT PRIMARY KEY,
   agent_id  TEXT NOT NULL REFERENCES agents(id)
 );
+
+-- v4: active adapter type from Node hello (distinct from detected CLIs).
+ALTER TABLE agents ADD COLUMN adapter_type TEXT;

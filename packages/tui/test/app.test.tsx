@@ -6,7 +6,7 @@ import { ClientError, OWNER_TOKEN_HELP, type CallOptions, type QuorumApi } from 
 import { Screen } from '../src/components/screen.js';
 import { widthOf } from '../src/text.js';
 import type { StreamHandlers } from '../src/ws-stream.js';
-import { detail, fixtureState, taskView, transcripts } from './fixtures.js';
+import { agentView, detail, fixtureState, taskView, transcripts } from './fixtures.js';
 
 afterEach(cleanup);
 
@@ -237,7 +237,7 @@ describe('fixed terminal rendering', () => {
     state.agents[0] = { ...state.agents[0]!, trust: undefined };
     const app = render(<Screen state={state} view={{ ...initialView, pane: 'agents' }} columns={80} rows={24} team="leader.test" noColor />);
     expect(app.lastFrame()).toContain('[unknown]');
-    expect(app.lastFrame()).toContain('codex 0.163.0');
+    expect(app.lastFrame()).toContain('[codex]');
     expect(app.lastFrame()).not.toContain('#12 Chat');
     app.rerender(<Screen state={state} view={initialView} columns={120} rows={32} team="leader.test" noColor />);
     await vi.waitFor(() => expect(app.lastFrame()).toContain('1 Agents'));
@@ -246,5 +246,27 @@ describe('fixed terminal rendering', () => {
     expect(frame).toContain('#12 Chat');
     expect(frame.split('\n')).toHaveLength(32);
     expect(frame.split('\n').every((line) => widthOf(line) <= 120)).toBe(true);
+  });
+
+  it('shows the active adapter type and truncates extra CLIs at a word boundary', () => {
+    const state = fixtureState();
+    state.agents[0] = agentView({
+      adapterType: 'claude-code',
+      detectedAgents: [
+        { type: 'claude-code', version: '2.1.305', trust: 'enforced' },
+        { type: 'codex', version: '0.163.0', trust: 'sandboxed' },
+        { type: 'pi', version: '1.3.0', trust: 'low' },
+        { type: 'opencode', version: '0.15.0', trust: 'sandboxed' },
+      ],
+    });
+    const app = render(<Screen state={state} view={{ ...initialView, pane: 'agents' }} columns={40} rows={24} team="leader.test" noColor />);
+    const frame = app.lastFrame()!;
+    expect(frame).toContain('[claude-code]');
+    expect(frame).not.toMatch(/\[claude-code,/);
+    expect(frame).toContain('also: codex 0.163.0');
+    expect(frame).toMatch(/also: .+\.\.\.|also: .+…/);
+    expect(frame).not.toContain('opencod');
+    app.rerender(<Screen state={{ ...state, agents: [agentView({ adapterType: undefined, detectedAgents: [] })] }} view={{ ...initialView, pane: 'agents' }} columns={40} rows={24} team="leader.test" noColor />);
+    expect(app.lastFrame()).toContain('[unknown]');
   });
 });

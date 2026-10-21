@@ -48,6 +48,7 @@ export function agentView(db: LeaderDb, a: AgentRow, now: number, tz: string): A
     budgetRemaining: budgetRemaining(db, a, now, tz),
     ...(a.trust === null ? {} : { trust: a.trust as AgentView['trust'] }),
     ...(a.detected_agents === null ? {} : { detectedAgents: JSON.parse(a.detected_agents) as AgentView['detectedAgents'] }),
+    ...(a.adapter_type === null ? {} : { adapterType: a.adapter_type as AgentView['adapterType'] }),
   };
 }
 
