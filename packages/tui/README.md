@@ -5,12 +5,14 @@ Full-screen Ink client for one Quorum Leader. Node 22 or later required.
 ```sh
 corepack pnpm --filter @quorum/tui build
 node packages/tui/dist/cli.js --url https://leader.example.com --token '<token>'
+node packages/tui/dist/cli.js --help
 ```
 
 Flags override `QUORUM_URL` / `QUORUM_TOKEN`, then the existing `quorum` CLI login.
 Config path: `QUORUM_CONFIG`, else `$XDG_CONFIG_HOME/quorum/cli.json`, else
 `~/.config/quorum/cli.json`. JSON format: `{ "url": "https://leader.example.com", "token": "…" }`.
 The UI warns when the file is group/world readable. Set `NO_COLOR` to disable colors.
+`quorum-tui` needs an interactive terminal (stdin and stdout must be TTYs).
 The Leader hostname labels the team because the REST API has no team-name field.
 
 Tab cycles Agents, Tasks, Chat, Input. At 80×24, the focused pane uses the full width.
