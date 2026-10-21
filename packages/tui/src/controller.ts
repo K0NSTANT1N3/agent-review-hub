@@ -1,4 +1,5 @@
 import type { QuorumApi } from './api-client.js';
+import type { TranscriptSession } from '@quorum/protocol';
 import { ClientError, loadTranscript } from './api-client.js';
 import type { StoreAction } from './store.js';
 
@@ -32,10 +33,11 @@ export async function refreshTeam(client: QuorumApi, dispatch: Dispatch, revisio
   if (failed?.status === 'rejected') dispatch({ type: 'error', error: errorMessage(failed.reason) });
 }
 
-export async function refreshTask(client: QuorumApi, taskId: number, dispatch: Dispatch, supported?: boolean): Promise<void> {
+export async function refreshTask(client: QuorumApi, taskId: number, dispatch: Dispatch, supported?: boolean, transcripts: TranscriptSession[] = []): Promise<void> {
+  const afterSeq = Object.fromEntries(transcripts.map((session) => [session.sid, session.events.at(-1)?.seq ?? 0]));
   const results = await Promise.allSettled([
     client.call('getTask', { id: taskId }).then((detail) => dispatch({ type: 'detail', detail })),
-    ...(supported === false ? [] : [loadTranscript(client, taskId).then((result) => dispatch({ type: 'transcript', taskId, ...result }))]),
+    ...(supported === false ? [] : [loadTranscript(client, taskId).then((result) => dispatch({ type: 'transcript', taskId, afterSeq, ...result }))]),
   ]);
   for (const result of results) if (result.status === 'rejected') dispatch({ type: 'error', error: errorMessage(result.reason) });
 }

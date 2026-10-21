@@ -94,6 +94,19 @@ describe('store', () => {
     expect(state.data[12]?.messages.length).toBeGreaterThan(0);
   });
 
+  it('keeps live appends received during a REST load while removing older pruned events', () => {
+    let state = fixtureState();
+    const before = state.data[12]!.transcripts;
+    const afterSeq = Object.fromEntries(before.map((session) => [session.sid, session.events.at(-1)!.seq]));
+    const live = { ...before[0]!, taskId: 12, events: [{ seq: 5, at: 9000, kind: 'text' as const, mode: 'final' as const, text: 'arrived during fetch' }] };
+    state = reducer(state, { type: 'ui', event: { type: 'transcript.appended', data: live } });
+    state = reducer(state, { type: 'ui', event: { type: 'transcript.appended', data: { ...live, sid: 'new-session', events: [{ ...live.events[0]!, seq: 1 }] } } });
+    state = reducer(state, { type: 'transcript', taskId: 12, supported: true, afterSeq, sessions: [{ ...before[0]!, events: before[0]!.events.slice(2) }] });
+    expect(state.data[12]!.transcripts.find((session) => session.sid === 'author')!.events.map((event) => event.seq)).toEqual([3, 4, 5]);
+    expect(state.data[12]!.transcripts.find((session) => session.sid === 'new-session')!.events.map((event) => event.seq)).toEqual([1]);
+    expect(state.data[12]!.transcripts.some((session) => session.sid === 'reviewer')).toBe(false);
+  });
+
   it('uses locked session / conversation identities for live status and clears it for paused or terminal tasks', () => {
     const state = fixtureState();
     expect([...activeSids(state, state.tasks[0])]).toEqual(['reviewer']);

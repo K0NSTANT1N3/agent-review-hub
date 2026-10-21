@@ -107,6 +107,12 @@ describe('Codex adapter', () => {
     await expect(turn(createCodexAdapter(config, replay))).rejects.toMatchObject({ code: 'RATE_LIMITED' });
   });
 
+  it('accepts successful work that discusses rate limits and HTTP 429', async () => {
+    const text = 'Implemented rate limit handling for HTTP 429 and usage limits.';
+    const replay = replaySpawn([transcript(message(text))], 'test case: rate limit');
+    expect(await turn(createCodexAdapter(config, replay))).toMatchObject({ text });
+  });
+
   it('rejects incomplete turns and reports the stderr tail plus malformed lines', async () => {
     const replay = replaySpawn(['not JSON\n' + jsonLines(message('partial'))], 'diagnostic tail', 2);
     await expect(turn(createCodexAdapter(config, replay))).rejects.toMatchObject({

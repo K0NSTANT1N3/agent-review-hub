@@ -130,8 +130,9 @@ export function createPiAdapter(config: PiConfig, options: { spawnFn?: SpawnFn }
       });
       if (aborted) throw new AdapterError('CANCELLED');
       const detail = [turnError, result.stderr, agentText].filter(Boolean).join('\n');
-      if (/rate limit|usage limit|429/i.test(detail)) throw new AdapterError('RATE_LIMITED', sanitizeFailureMessage(detail));
-      if (result.code !== 0 || !ended || !finalMessage || id === null || id.length === 0 || turnError !== '') {
+      const failed = result.code !== 0 || !ended || !finalMessage || id === null || id.length === 0 || turnError !== '';
+      if (failed && /rate limit|usage limit|429/i.test(detail)) throw new AdapterError('RATE_LIMITED', sanitizeFailureMessage(detail));
+      if (failed || id === null) {
         throw new AdapterError('ADAPTER_ERROR', sanitizeFailureMessage(`${config.type} turn did not complete (exit ${result.code}, signal ${result.signal}). ${detail}\n${result.malformedLines.join('\n')}`));
       }
       return { nativeId: id, text, usage, contextTokens };

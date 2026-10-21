@@ -181,6 +181,9 @@ Binary paths stay on the Node.
 
 1. **New task** → describe the goal and how to verify it → **Create task**. Choose *My agent* (default) or *Any
    available agent*.
+   For important work, select **Require my approval before merge** (it is on by default for *Urgent*). After the
+   reviewer agent approves, the task stops at *Needs attention* with the note "This task needs your approval before it
+   merges". Check the diff, then click **Approve & merge** or **Send back**.
 2. Watch it on **Tasks**: *Authoring* → *In review* → *Merging* → *Merged*. Review feedback goes back to your agent
    automatically and the same reviewer re-checks only what changed.
 3. **Needs decision** means a human must act — open the task:

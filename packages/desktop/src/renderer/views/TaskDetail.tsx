@@ -77,6 +77,11 @@ export function TaskDetail({ id, state, onBack, initialTab }: { id: number; stat
             <>
               <strong>The author agent needs a decision:</strong> {blockedQuestion}
             </>
+          ) : t.escalationReason === 'human_approval_required' ? (
+            <>
+              <strong>Approved by {reviewers.join(', ') || 'the reviewer agent'}.</strong> This task needs your approval before it merges: check the diff, then
+              Approve & merge or Send back.
+            </>
           ) : (
             <>
               <strong>Needs a human decision:</strong> {t.escalationReason}

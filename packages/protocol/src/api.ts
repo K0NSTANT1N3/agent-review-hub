@@ -112,6 +112,7 @@ export const TaskViewSchema = z.object({
   pausedFromState: TaskStateSchema.nullable(),
   pauseReason: z.string().nullable(),
   escalationReason: z.string().nullable(),
+  requireHumanApproval: z.boolean(),
   branch: z.string().nullable(),
   baseCommit: z.string().nullable(),
   headCommit: z.string().nullable(),
@@ -330,6 +331,8 @@ export const CreateTaskRequestSchema = z.object({
   tags: z.array(z.string()).default([]),
   priority: TaskPrioritySchema.default(1),
   mode: TaskModeSchema.default('own'),
+  /** Stop after the reviewer agent approves and wait for the requester (or an admin) to approve the merge. */
+  requireHumanApproval: z.boolean().default(false),
 });
 export type CreateTaskRequest = z.input<typeof CreateTaskRequestSchema>;
 

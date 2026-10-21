@@ -36,7 +36,7 @@ export type StoreAction =
   | { type: 'sessions'; sessions: SessionView[]; revision?: number }
   | { type: 'activities'; activities: TeamActivityView[]; revision?: number }
   | { type: 'detail'; detail: TaskDetail }
-  | { type: 'transcript'; taskId: number; sessions: TranscriptSession[]; supported: boolean }
+  | { type: 'transcript'; taskId: number; sessions: TranscriptSession[]; supported: boolean; afterSeq?: Record<string, number> }
   | { type: 'human'; taskId: number; action: HumanAction }
   | { type: 'ui'; event: UiEvent };
 
@@ -81,7 +81,14 @@ export function reducer(state: State, action: StoreAction): State {
         human: data.human.filter((item) => !item.comment || !action.detail.issues.some((issue) => issue.source === 'human' && issue.comment === item.comment)),
       }));
     }
-    case 'transcript': return updateData(state, action.taskId, (data) => ({ ...data, transcriptSupported: action.supported, transcripts: action.supported ? replaceTranscript(action.sessions) : [] }));
+    case 'transcript': return updateData(state, action.taskId, (data) => {
+      // A REST snapshot may predate appends received while the request was in flight.
+      // Replace older rows for retention, then keep events newer than the request's cursor.
+      const live = action.afterSeq === undefined ? [] : data.transcripts.map((session) => ({
+        ...session, events: session.events.filter((event) => event.seq > (action.afterSeq![session.sid] ?? 0)),
+      })).filter((session) => session.events.length > 0);
+      return { ...data, transcriptSupported: action.supported, transcripts: action.supported ? mergeTranscript(replaceTranscript(action.sessions), live) : [] };
+    });
     case 'human': return updateData(state, action.taskId, (data) => ({ ...data, human: upsert(data.human, [action.action]) }));
     case 'ui': {
       const event = action.event;

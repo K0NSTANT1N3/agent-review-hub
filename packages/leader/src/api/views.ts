@@ -87,6 +87,7 @@ export function taskView(db: LeaderDb, t: TaskRow, waitReason: TaskWaitReason | 
     pausedFromState: t.paused_from_state as V<TaskView['pausedFromState']>,
     pauseReason: t.pause_reason,
     escalationReason: t.escalation_reason,
+    requireHumanApproval: t.require_human_approval === 1,
     branch: t.branch,
     baseCommit: t.base_commit,
     headCommit: t.head_commit,

@@ -239,6 +239,7 @@ describe('enums and api', () => {
       tags: [],
       priority: 1,
       mode: 'own',
+      requireHumanApproval: false,
     });
   });
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export function migrate(db: Database.Database): void {
   // WAL must be configured outside a transaction; foreign keys are per connection.
@@ -17,7 +17,7 @@ export function migrate(db: Database.Database): void {
       // v2 adds api_tokens (the last table in schema.sql) and sessions.profile, which is recovered from the
       // session.open command that created each session.
       const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
-      db.exec(schema.slice(schema.indexOf('CREATE TABLE api_tokens'), schema.indexOf('-- v3:')));
+      db.exec(schema.slice(schema.indexOf('CREATE TABLE api_tokens'), schema.indexOf('-- v4:')));
       db.exec('ALTER TABLE sessions ADD COLUMN profile TEXT');
       db.exec(`UPDATE sessions SET profile = (
         SELECT json_extract(m.payload, '$.cmd.profile') FROM messages m
@@ -26,14 +26,19 @@ export function migrate(db: Database.Database): void {
       db.prepare('UPDATE schema_version SET version = ?').run(2);
     }
     if (rows[0] !== undefined && rows[0].version < 3) {
-      const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
-      db.exec(schema.slice(schema.indexOf('-- v3:'), schema.indexOf('-- v4:')));
+      // v3 adds tasks.require_human_approval (PR #93).
+      db.exec('ALTER TABLE tasks ADD COLUMN require_human_approval INTEGER NOT NULL DEFAULT 0');
       db.prepare('UPDATE schema_version SET version = ?').run(3);
     }
     if (rows[0] !== undefined && rows[0].version < 4) {
       const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
-      db.exec(schema.slice(schema.indexOf('-- v4:')));
+      db.exec(schema.slice(schema.indexOf('-- v4:'), schema.indexOf('-- v5:')));
       db.prepare('UPDATE schema_version SET version = ?').run(4);
+    }
+    if (rows[0] !== undefined && rows[0].version < 5) {
+      const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+      db.exec(schema.slice(schema.indexOf('-- v5:')));
+      db.prepare('UPDATE schema_version SET version = ?').run(5);
     }
     if (rows.length === 0) {
       const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');

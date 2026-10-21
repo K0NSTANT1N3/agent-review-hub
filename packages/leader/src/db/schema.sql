@@ -49,6 +49,7 @@ CREATE TABLE tasks (
   tags                   TEXT NOT NULL DEFAULT '[]',
   priority               INTEGER NOT NULL DEFAULT 1,     -- 0 low, 1 normal, 2 high, 3 urgent
   mode                   TEXT NOT NULL DEFAULT 'own',    -- 'own' | 'pool'
+  require_human_approval INTEGER NOT NULL DEFAULT 0,     -- 1: a human approves the merge after the reviewer agent
   requester_agent_id     TEXT NOT NULL REFERENCES agents(id),
   author_agent_id        TEXT REFERENCES agents(id),
   author_session_id      TEXT REFERENCES sessions(id),
@@ -185,7 +186,7 @@ CREATE TABLE api_tokens (                        -- extra credentials for script
 );
 CREATE INDEX api_tokens_agent ON api_tokens(agent_id);
 
--- v3: transcript storage and Node-reported adapter metadata.
+-- v4: transcript storage and Node-reported adapter metadata.
 ALTER TABLE agents ADD COLUMN trust TEXT;
 ALTER TABLE agents ADD COLUMN detected_agents TEXT;
 ALTER TABLE sessions ADD COLUMN transcript_seq INTEGER NOT NULL DEFAULT 0;
@@ -219,5 +220,5 @@ CREATE TABLE transcript_receipts (
   agent_id  TEXT NOT NULL REFERENCES agents(id)
 );
 
--- v4: active adapter type from Node hello (distinct from detected CLIs).
+-- v5: active adapter type from Node hello (distinct from detected CLIs).
 ALTER TABLE agents ADD COLUMN adapter_type TEXT;

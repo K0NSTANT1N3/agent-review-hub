@@ -177,6 +177,12 @@ describe.each(['pi', 'omp'] as const)('%s adapter', (type) => {
     await expect(turn(createPiAdapter(config(type), replaySpawn([stdout], stderr, 1)))).rejects.toMatchObject({ code: 'RATE_LIMITED' });
   });
 
+  it('accepts successful work that discusses rate limits and HTTP 429', async () => {
+    const text = 'Implemented rate limit handling for HTTP 429 and usage limits.';
+    const replay = replaySpawn([transcript(assistant(text))], 'test case: rate limit');
+    expect(await turn(createPiAdapter(config(type), replay))).toMatchObject({ text });
+  });
+
   it('redacts home paths in failure messages and caps them', async () => {
     const home = homedir();
     const stderr = `${home}/.omp/secret.log ${'x'.repeat(3000)}`;

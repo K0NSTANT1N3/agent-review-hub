@@ -60,7 +60,7 @@ export function App({ client, url, token, warning, createStream, seed, columns, 
           const ids = Object.values(stateRef.current.data).flatMap((data) => data.human.flatMap((action) => action.directiveId ? [action.directiveId] : []));
           void refreshDirectives(client, ids, safeDispatch);
           const id = selectionRef.current;
-          if (id !== undefined) void refreshTask(client, id, safeDispatch, stateRef.current.data[id]?.transcriptSupported);
+          if (id !== undefined) void refreshTask(client, id, safeDispatch, stateRef.current.data[id]?.transcriptSupported, stateRef.current.data[id]?.transcripts);
         }
       },
       onAuthError: (reason) => safeDispatch({ type: 'error', error: `WebSocket authentication failed: ${reason}. Check --token or the CLI config.` }),
@@ -73,7 +73,7 @@ export function App({ client, url, token, warning, createStream, seed, columns, 
   useEffect(() => {
     if (taskId === undefined) return;
     let alive = true;
-    void refreshTask(client, taskId, (action) => { if (alive) dispatch(action); }, stateRef.current.data[taskId]?.transcriptSupported);
+    void refreshTask(client, taskId, (action) => { if (alive) dispatch(action); }, stateRef.current.data[taskId]?.transcriptSupported, stateRef.current.data[taskId]?.transcripts);
     setView((current) => ({ ...current, taskId, chatTop: null, confirmCancel: false }));
     return () => { alive = false; };
   }, [client, taskId]);
@@ -95,7 +95,7 @@ export function App({ client, url, token, warning, createStream, seed, columns, 
       });
       setView((current) => ({ ...current, editor: emptyEditor, pane: 'chat', inputMode: 'message', confirmCancel: false }));
       const id = command.kind === 'create' ? selectionRef.current : command.task.id;
-      if (id !== undefined) await refreshTask(client, id, dispatch, stateRef.current.data[id]?.transcriptSupported);
+      if (id !== undefined) await refreshTask(client, id, dispatch, stateRef.current.data[id]?.transcriptSupported, stateRef.current.data[id]?.transcripts);
       if (command.kind === 'message' && command.mode === 'ask') void refreshTeam(client, dispatch, stateRef.current.revision);
     } catch (error) {
       dispatch({ type: 'error', error: errorMessage(error) });

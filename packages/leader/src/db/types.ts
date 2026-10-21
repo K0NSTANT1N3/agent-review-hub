@@ -64,6 +64,7 @@ export interface TaskRow {
   tags: string;
   priority: number;
   mode: string;
+  require_human_approval: number;
   requester_agent_id: string;
   author_agent_id: string | null;
   author_session_id: string | null;

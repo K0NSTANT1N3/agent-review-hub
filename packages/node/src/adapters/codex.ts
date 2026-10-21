@@ -126,11 +126,12 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
         },
       });
       const detail = redactSecrets([turnError, result.stderr, agentText].filter(Boolean).join('\n'), secrets);
-      if (/rate limit|usage limit|429/i.test(detail)) {
+      const failed = result.code !== 0 || !completed || !receivedMessage || id === null || id.length === 0 || turnError !== '';
+      if (failed && /rate limit|usage limit|429/i.test(detail)) {
         const resetAt = parseResetAt(detail);
         throw new AdapterError('RATE_LIMITED', sanitizeFailureMessage(detail), resetAt === undefined ? {} : { resetAt });
       }
-      if (!completed || !receivedMessage || id === null || id.length === 0 || turnError !== '') {
+      if (failed || id === null) {
         throw new AdapterError('ADAPTER_ERROR', sanitizeFailureMessage(`Codex turn did not complete (exit ${result.code}, signal ${result.signal}). ${detail}\n${redactSecrets(result.malformedLines.join('\n'), secrets)}`));
       }
       // Codex exposes cumulative turn input, not context size. Estimate visible retained history

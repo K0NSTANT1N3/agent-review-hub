@@ -2,7 +2,7 @@ import type { AgentView, IssueView, MessageView, SessionView, TaskDetail, TaskEv
 import { initialState, type State } from '../src/store.js';
 
 export function taskView(overrides: Partial<TaskView> = {}): TaskView {
-  return { id: 12, title: 'Rate-limit failed logins', description: 'Limit failed logins to 5 per 15 minutes.', tags: ['auth'], priority: 1, mode: 'own', requesterAgentId: 'codex@tazo', requesterOwner: 'tazo', authorAgentId: 'codex@tazo', authorSessionId: 'author', state: 'IN_REVIEW', pausedFromState: null, pauseReason: null, escalationReason: null, branch: 'quorum/12', baseCommit: '3f2a91c', headCommit: 'c91d5aa', lastReviewedCommit: '8b04e7d', reviewRound: 2, testFixAttempts: 0, syncAttempts: 0, files: ['src/auth/login.ts'], diffLines: 71, lastTestOutput: '42 tests passed', mergedCommit: null, createdAt: 1000, updatedAt: 8000, stateEnteredAt: 7000, approvedAt: null, ...overrides };
+  return { id: 12, title: 'Rate-limit failed logins', description: 'Limit failed logins to 5 per 15 minutes.', tags: ['auth'], priority: 1, mode: 'own', requesterAgentId: 'codex@tazo', requesterOwner: 'tazo', authorAgentId: 'codex@tazo', authorSessionId: 'author', state: 'IN_REVIEW', pausedFromState: null, pauseReason: null, escalationReason: null, requireHumanApproval: false, branch: 'quorum/12', baseCommit: '3f2a91c', headCommit: 'c91d5aa', lastReviewedCommit: '8b04e7d', reviewRound: 2, testFixAttempts: 0, syncAttempts: 0, files: ['src/auth/login.ts'], diffLines: 71, lastTestOutput: '42 tests passed', mergedCommit: null, createdAt: 1000, updatedAt: 8000, stateEnteredAt: 7000, approvedAt: null, ...overrides };
 }
 
 export function agentView(overrides: Partial<AgentView> = {}): AgentView {
