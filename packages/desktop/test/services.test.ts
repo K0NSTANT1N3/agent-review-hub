@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addAgent, startLeader } from '@quorum/leader';
 import { CustomAdapterConfigSchema, type NodeConfig, type OwnerSettings } from '@quorum/protocol';
+import { createTokenRequest } from '../src/shared/cli-tokens.js';
 import { DEFAULT_SETTINGS } from '../src/shared/ipc.js';
 import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, isValidPublicHost, publicLeaderUrl } from '../src/main/join-code.js';
 import { networkInterfaces } from 'node:os';
@@ -386,5 +387,38 @@ describe('Services', () => {
       node: { running: false, error: expect.stringContaining('keychain locked') },
     });
     expect(await broken.api('listAgents')).toMatchObject({ ok: false, error: 'TOKEN_UNREADABLE' });
+  });
+
+  it('lets a teammate mint an owner token and save it to tui.json (0600) without touching the quorum CLI login', async () => {
+    const { host } = await hosted();
+    const { joinCode } = await host.invite({ agentId: '', ownerName: 'Bo' });
+    const member = make('member');
+    await member.setupJoin({ joinCode, settings: DEFAULT_SETTINGS });
+
+    const minted = await member.api('createApiToken', { body: createTokenRequest('', 'owner') });
+    if (!minted.ok) throw new Error(minted.message);
+    expect(minted.data).toMatchObject({ scope: 'owner', agentId: 'bo-agent', label: 'quorum tui' });
+    const listed = await member.api('listApiTokens');
+    expect(listed.ok && listed.data.tokens.map((t) => [t.id, t.scope])).toEqual([[minted.data.id, 'owner']]);
+
+    // A requester login already saved by `quorum login` must stay untouched.
+    const env = { XDG_CONFIG_HOME: join(dir, 'xdg') };
+    const cliPath = join(dir, 'xdg', 'quorum', 'cli.json');
+    mkdirSync(join(dir, 'xdg', 'quorum'), { recursive: true });
+    const cliLogin = '{"url":"http://cli.test","token":"qrq_requester"}\n';
+    writeFileSync(cliPath, cliLogin, { mode: 0o600 });
+    const path = member.saveTuiToken(minted.data.token, env);
+    expect(path).toBe(join(dir, 'xdg', 'quorum', 'tui.json'));
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ url: member.state().apiUrl, token: minted.data.token });
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readFileSync(cliPath, 'utf8')).toBe(cliLogin);
+    expect(member.saveTuiToken(minted.data.token, { QUORUM_TUI_CONFIG: join(dir, 'custom.json'), QUORUM_CONFIG: cliPath })).toBe(join(dir, 'custom.json'));
+    expect(readFileSync(cliPath, 'utf8')).toBe(cliLogin);
+
+    expect(() => member.saveTuiToken('not-a-token', env)).toThrow(/not a Quorum API token/);
+    expect(() => make('fresh').saveTuiToken(minted.data.token, env)).toThrow(/not set up/);
+
+    const revoked = await member.api('revokeApiToken', { id: minted.data.id });
+    expect(revoked).toMatchObject({ ok: true, data: { scope: 'owner', revokedAt: expect.any(Number) } });
   });
 });

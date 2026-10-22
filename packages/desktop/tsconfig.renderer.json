@@ -9,5 +9,5 @@
     "types": [],
     "customConditions": ["development"]
   },
-  "include": ["src/renderer", "src/shared"]
+  "include": ["src/renderer", "src/shared", "test/renderer"]
 }

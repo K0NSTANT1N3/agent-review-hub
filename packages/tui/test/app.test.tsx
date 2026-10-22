@@ -185,7 +185,7 @@ describe('keyboard actions', () => {
     await app.key('a');
     expect(app.lastFrame()).toContain('Error · Esc dismiss');
     expect(app.lastFrame()).toContain('owner token');
-    expect(app.lastFrame()).toContain('quorum-leader add-token --scope owner');
+    expect(app.lastFrame()).toContain('Save for quorum tui');
     await app.key('\u001b');
     expect(app.lastFrame()).not.toContain('Error · Esc dismiss');
   });

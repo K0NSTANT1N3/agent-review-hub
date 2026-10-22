@@ -10,7 +10,7 @@ export interface QuorumApi {
   call<R extends ApiRouteName>(route: R, options?: CallOptions): Promise<ApiResponse<R>>;
 }
 
-export const OWNER_TOKEN_HELP = 'Approve/send back/pause/cancel need an owner token (Settings → Agent CLI access, or quorum-leader add-token --scope owner).';
+export const OWNER_TOKEN_HELP = 'Approve/send back/pause/cancel need an owner token. Any teammate can make one in the Quorum app: Settings → Agent CLI access → Terminal UI (owner) → Save for quorum tui.';
 const ownerActions = new Set<ApiRouteName>(['approveTask', 'sendBackTask', 'pauseTask', 'resumeTask', 'cancelTask']);
 
 export class ClientError extends Error {

@@ -14,9 +14,11 @@ import {
   type UiEvent,
 } from '@quorum/protocol';
 import { isCliAdapter } from '../shared/adapter-choice.js';
+import { API_TOKEN_PATTERN } from '../shared/cli-tokens.js';
 import type { ApiCallOptions, ApiResult, AppState, DesktopSettings, HostSetup, JoinSetup, Mode } from '../shared/ipc.js';
 import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, isValidPublicHost, publicLeaderUrl } from './join-code.js';
 import { leaderNetworkKind } from './network.js';
+import { tuiConfigPath, writeTuiConfig, type Env } from './tui-config.js';
 import { UiStream } from './ui-stream.js';
 
 const execFileAsync = promisify(execFile);
@@ -298,6 +300,18 @@ export class Services {
       this.nodeError = null;
       this.authError = null;
     });
+  }
+
+  /**
+   * Saves a token to the TUI-only login (tui.json), never to the shared `quorum` CLI login.
+   * The URL comes from this app's own config, never from the renderer. The token is never logged.
+   */
+  saveTuiToken(token: string, env: Env = process.env): string {
+    const c = this.requireConfig();
+    if (typeof token !== 'string' || !API_TOKEN_PATTERN.test(token)) throw new Error('This is not a Quorum API token.');
+    const path = tuiConfigPath(env);
+    writeTuiConfig(path, { url: httpBaseFromLeaderUrl(c.leaderUrl), token });
+    return path;
   }
 
   async api<R extends ApiRouteName>(route: R, options: ApiCallOptions = {}): Promise<ApiResult<R>> {

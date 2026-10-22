@@ -14,10 +14,13 @@ quorum-tui --help
 The desktop installers include Node.js. For local npm package files, Node 22 or later is required.
 The npm packages are prepared but not published. Do not install the unrelated registry packages under `@quorum`.
 
-Flags override `QUORUM_URL` / `QUORUM_TOKEN`, then the existing `quorum` CLI login.
-Config path: `QUORUM_CONFIG`, else `$XDG_CONFIG_HOME/quorum/cli.json`, else
-`~/.config/quorum/cli.json`. JSON format: `{ "url": "https://leader.example.com", "token": "…" }`.
-The UI warns when the file is group/world readable. Set `NO_COLOR` to disable colors.
+The TUI reads the connection in this order: flags, then `QUORUM_URL` / `QUORUM_TOKEN`,
+then the TUI login, then the `quorum` CLI login. Each value falls through separately.
+TUI login path: `QUORUM_TUI_CONFIG`, else `$XDG_CONFIG_HOME/quorum/tui.json`, else
+`~/.config/quorum/tui.json`. The desktop app writes owner tokens there. The `quorum` CLI never reads it.
+CLI login path: `QUORUM_CONFIG`, else `$XDG_CONFIG_HOME/quorum/cli.json`, else
+`~/.config/quorum/cli.json`. Both use the JSON format `{ "url": "https://leader.example.com", "token": "…" }`.
+The UI warns when either file is group/world readable (not on Windows). Set `NO_COLOR` to disable colors.
 `quorum-tui` needs an interactive terminal (stdin and stdout must be TTYs).
 The Leader hostname labels the team because the REST API has no team-name field.
 
@@ -27,8 +30,13 @@ or sends the input. `m` cycles answer author, send back, and ask an agent.
 `i` focuses the message input. Esc leaves input or dismisses an error.
 
 `a` approves, `s` starts a send-back comment, `p` pauses/resumes, `c` asks for y/n
-before cancellation. Approve/send back/pause/cancel require an owner token:
-`quorum-leader add-token --scope owner`. Settings → Agent CLI access creates requester tokens.
+before cancellation. Approve/send back/pause/cancel require an owner token.
+All team members can make one in the desktop app: open **Settings → Agent CLI access**,
+select **Terminal UI (owner)**, click **Create terminal UI token**, then click
+**Save for quorum tui**. The app writes the token to the TUI login (`tui.json`) with mode 0600.
+It never writes an owner token to `cli.json`, so coding agents that use the `quorum` CLI do not get it.
+Do not put an owner token on a command line (`--token`): it stays in shell history.
+On a headless Leader, the host can use `quorum-leader add-token --scope owner`.
 `t` confirms y/n, pauses the task, waits for local pause cleanup and all in-flight work,
 then hands the terminal to that session's native agent TUI. Exit the agent to return;
 Quorum checks git, resumes the task, and reloads its transcript. Attach always

@@ -306,15 +306,17 @@ You get desktop notifications when your task is merged, needs a decision, or you
 
 The `quorum` CLI lets a coding agent or a script use Quorum as you.
 The CLI can create tasks, wait for tasks, read diffs, answer a blocked author agent and ask agents.
-A CLI token cannot approve, send back, cancel or merge a task. Only you can do these actions in the app.
+A CLI (requester) token cannot approve, send back, pause, cancel or merge a task.
+You can do these actions in the app, or in the terminal UI with an owner token (see [Use the terminal UI](#use-the-terminal-ui)).
 
 First, install the command-line tools (see §2). Then connect the CLI:
 
 1. Open **Settings → Agent CLI access**.
-2. Type a label, for example `Claude Code on my laptop`.
-3. Click **Create CLI token**.
-4. Copy the `quorum login` command. The app shows the token one time only.
-5. Run the command in a terminal on the same computer.
+2. Keep the token type **CLI (requester)**.
+3. Type a label, for example `Claude Code on my laptop`.
+4. Click **Create CLI token**.
+5. Copy the `quorum login` command. The app shows the token one time only.
+6. Run the command in a terminal on the same computer.
 
 ```bash
 quorum login --url http://127.0.0.1:7420 --token qrq_…
@@ -348,7 +350,8 @@ The program shows the agents, the tasks and the transcript of the selected task.
 To start the terminal UI:
 
 1. Install the command-line tools (see §2).
-2. Run `quorum login` with the Leader URL and token (see above).
+2. Save an owner token for the terminal UI (see [Make an owner token](#make-an-owner-token)).
+   A requester login from `quorum login` also starts the UI, but it cannot approve, send back, pause or cancel.
 3. Run the program in an interactive terminal:
 
    ```bash
@@ -356,6 +359,7 @@ To start the terminal UI:
    ```
 
 Use `quorum tui --url https://leader.example.com --token '<token>'` to override the saved login.
+Do not use `--token` with an owner token, because the shell history keeps the command.
 `quorum-tui` remains available as a separate command.
 Run `quorum tui --help` to see the options without starting the UI.
 
@@ -370,30 +374,65 @@ The program reads the connection data in this order:
 
 1. The `--url` and `--token` flags.
 2. The `QUORUM_URL` and `QUORUM_TOKEN` environment variables.
-3. The `quorum` CLI config file.
+3. The TUI login file (`tui.json`).
+4. The `quorum` CLI login file (`cli.json`).
 
-The config file path is `QUORUM_CONFIG`, then `$XDG_CONFIG_HOME/quorum/cli.json`, then `~/.config/quorum/cli.json`.
-The file format is `{ "url": "https://leader.example.com", "token": "…" }`.
-The TUI uses the same file as `quorum login`.
+The program reads the URL and the token separately in this order.
 
-CAUTION: If the group or other users can read the config file, the TUI tells you.
+The TUI login file path is `QUORUM_TUI_CONFIG`, then `$XDG_CONFIG_HOME/quorum/tui.json`, then `~/.config/quorum/tui.json`.
+The app writes owner tokens to this file. The `quorum` CLI does not read this file.
+
+The CLI login file path is `QUORUM_CONFIG`, then `$XDG_CONFIG_HOME/quorum/cli.json`, then `~/.config/quorum/cli.json`.
+`quorum login` writes this file.
+
+The two files have the same format: `{ "url": "https://leader.example.com", "token": "…" }`.
+
+CAUTION: If the group or other users can read a login file, the TUI tells you.
 Set the file mode to `0600`:
 
 ```bash
-chmod 600 ~/.config/quorum/cli.json
+chmod 600 ~/.config/quorum/tui.json ~/.config/quorum/cli.json
 ```
 
 A requester token can read data, create tasks, answer a blocked author and ask an agent.
 An owner token can also approve, send back, pause and cancel the tasks of its owner. Attach (`t`, then `y`) also needs this permission.
 An admin owner token can do these actions on all tasks.
 
-To make an owner token:
+#### Make an owner token
+
+All team members can make an owner token in the app. You do not need the host.
+
+1. Open **Settings → Agent CLI access**.
+2. Select the token type **Terminal UI (owner)**.
+3. Read the warning.
+4. Type a label, for example `quorum tui on my laptop`.
+5. Click **Create terminal UI token**.
+6. Click **Save for quorum tui**.
+   The app writes the Leader URL and the token to the TUI login file (`tui.json`) with mode `0600`.
+   The app does not change the `quorum` CLI login file (`cli.json`).
+7. Run `quorum tui`.
+
+WARNING: An owner token can approve, send back, pause and cancel your tasks.
+An approved task goes to the merge queue.
+If you are a team admin, the token can do these actions on all tasks.
+Keep the token secret, as you keep a password.
+
+CAUTION: Do not put an owner token in `cli.json` or on a command line.
+Coding agents use the `quorum` CLI, and the CLI reads `cli.json`.
+The shell history keeps each command line.
+If you do not save the token, click **Copy token only**.
+Then set the `QUORUM_TOKEN` environment variable without a command line, for example with `read -rs QUORUM_TOKEN; export QUORUM_TOKEN`.
+
+To stop an owner token, click **Revoke** in **Settings → Agent CLI access**.
+The **Type** column shows the scope of each token.
+
+On a headless Leader, the host can also make an owner token:
 
 ```bash
 quorum-leader add-token --config quorum.leader.json --id <agent id> --scope owner
 ```
 
-**Settings → Agent CLI access** makes a requester token.
+#### Attach and keyboard
 
 To attach a local agent's native TUI, pass the local Node config as well:
 
