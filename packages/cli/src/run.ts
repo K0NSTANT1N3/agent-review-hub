@@ -1,4 +1,4 @@
-import { readConfig } from '@quorum/tui/config';
+import { resolveConfig as resolveTuiConfig } from '@quorum/tui/config';
 import type { TuiOptions } from '@quorum/tui/start';
 import { VERSION } from './version.js';
 import { readFileSync } from 'node:fs';
@@ -66,10 +66,13 @@ Options:
                   (or QUORUM_NODE_CONFIG)
   -h, --help      show this help
 
-Uses the same config file as quorum login. Needs an interactive terminal.
+Login: flags, then QUORUM_URL / QUORUM_TOKEN, then the TUI login
+(QUORUM_TUI_CONFIG, else ~/.config/quorum/tui.json), then the quorum login (cli.json).
+Needs an interactive terminal.
 Keyboard: tab panes, ↑/↓ select, enter open/send, ? help, q quit.
 Approve, send back, pause and cancel need an owner token. Make one in the Quorum app:
-Settings, Agent CLI access, Terminal UI (owner), then Save for quorum tui.`;
+Settings, Agent CLI access, Terminal UI (owner), then Save for quorum tui.
+The app saves it to tui.json only; other quorum commands never read that file.`;
 
 export interface Deps {
   env: Env;
@@ -178,16 +181,16 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
       case 'tui': {
         const { values, positionals } = parse({ 'node-config': { type: 'string' } });
         if (positionals.length > 0 || values.json) throw new UsageError('usage: quorum tui [--url <leader url>] [--token <token>] [--node-config <quorum.node.json>]');
-        const config = resolveConfig(values, deps.env);
+        // The TUI also reads its own login (tui.json, where the app saves owner tokens) before the CLI login.
+        const { url, token, warning } = resolveTuiConfig({ ...(typeof values.url === 'string' ? { url: values.url } : {}), ...(typeof values.token === 'string' ? { token: values.token } : {}) }, deps.env);
         // Use the CLI's auth error and URL normalization, including ws(s) join URLs.
-        const client = connect(values);
+        const client = connect({ url, token });
         if (!deps.stdinIsTTY || deps.stdoutIsTTY === false) throw new Error('quorum tui needs an interactive terminal.');
         // Fail connection/authentication with the same exit codes as scripted commands.
         await client.call('listAgents');
-        const { warning } = readConfig(configPath(deps.env));
         const launch = deps.startTui ?? (await import('@quorum/tui/start')).startTui;
         const nodeConfig = values['node-config'] ?? deps.env.QUORUM_NODE_CONFIG;
-        await launch({ url: client.baseUrl, token: config.token!, warning, ...(nodeConfig === undefined ? {} : { nodeConfig }) });
+        await launch({ url: client.baseUrl, token: token!, warning, ...(nodeConfig === undefined ? {} : { nodeConfig }) });
         return EXIT.OK;
       }
 

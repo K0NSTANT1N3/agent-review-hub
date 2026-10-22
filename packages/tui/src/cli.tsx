@@ -6,8 +6,10 @@ import { normalizeLeaderUrl, parseFlags, resolveConfig } from './config.js';
 const HELP = `quorum-tui [--url <http(s) Leader URL>] [--token <token>]
 
 Local attach: --node-config <quorum.node.json> or QUORUM_NODE_CONFIG.
-Connection: flags, then QUORUM_URL / QUORUM_TOKEN, then the quorum CLI config.
-Config: QUORUM_CONFIG, else XDG_CONFIG_HOME/quorum/cli.json, else ~/.config/quorum/cli.json.
+Connection: flags, then QUORUM_URL / QUORUM_TOKEN, then the TUI login, then the quorum CLI login.
+TUI login: QUORUM_TUI_CONFIG, else XDG_CONFIG_HOME/quorum/tui.json, else ~/.config/quorum/tui.json
+(the Quorum app saves owner tokens there; the quorum CLI never reads it).
+CLI login: QUORUM_CONFIG, else XDG_CONFIG_HOME/quorum/cli.json, else ~/.config/quorum/cli.json.
 Keyboard: tab panes, ↑/↓ select, enter open/send, a approve, s send back,
 p pause/resume, t attach (y/n), c cancel (y/n), n new task, / filter, m message mode, ? help, q quit.
 `;
@@ -17,7 +19,7 @@ async function main(): Promise<void> {
   if (flags.help) { process.stdout.write(HELP); return; }
   if (flags.version) { process.stdout.write(`quorum-tui ${JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version}\n`); return; }
   const config = resolveConfig(flags, process.env);
-  if (!config.url || !config.token) throw new Error('Set --url and --token, or configure the quorum CLI first. See quorum-tui --help.');
+  if (!config.url || !config.token) throw new Error('Set --url and --token, save a token for quorum tui in the Quorum app, or run quorum login. See quorum-tui --help.');
   const url = normalizeLeaderUrl(config.url);
   await startTui({ url, token: config.token, warning: config.warning, nodeConfig: flags['node-config'] ?? process.env.QUORUM_NODE_CONFIG });
 }

@@ -15,8 +15,9 @@ function setup() {
   const out = vi.fn();
   const err = vi.fn();
   const startTui = vi.fn<NonNullable<Deps['startTui']>>().mockResolvedValue();
-  const deps: Deps = { env: { QUORUM_CONFIG: path }, out, err, startTui, readStdin: async () => '', stdinIsTTY: true, fetch: vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ agents: [] }))) };
-  return { deps, out, err, startTui };
+  const tuiPath = join(directory, 'tui.json');
+  const deps: Deps = { env: { QUORUM_CONFIG: path, QUORUM_TUI_CONFIG: tuiPath }, out, err, startTui, readStdin: async () => '', stdinIsTTY: true, fetch: vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ agents: [] }))) };
+  return { deps, out, err, startTui, tuiPath };
 }
 
 describe('quorum tui', () => {
@@ -41,6 +42,29 @@ describe('quorum tui', () => {
     expect(startTui).toHaveBeenLastCalledWith(expect.objectContaining({ url: 'http://flag.test', token: 'flag-token' }));
   });
 
+  it('prefers the TUI login (tui.json) over the CLI login, below flags and environment', async () => {
+    const { deps, startTui, tuiPath } = setup();
+    writeFileSync(tuiPath, JSON.stringify({ url: 'https://tui.test', token: 'owner-token' }), { mode: 0o600 });
+    await run(['tui'], deps);
+    expect(startTui).toHaveBeenLastCalledWith({ url: 'https://tui.test', token: 'owner-token', warning: undefined });
+    deps.env.QUORUM_TOKEN = 'env-token';
+    await run(['tui'], deps);
+    expect(startTui).toHaveBeenLastCalledWith(expect.objectContaining({ url: 'https://tui.test', token: 'env-token' }));
+    await run(['tui', '--token', 'flag-token'], deps);
+    expect(startTui).toHaveBeenLastCalledWith(expect.objectContaining({ token: 'flag-token' }));
+  });
+
+  it('keeps other commands on the CLI login: they never read tui.json', async () => {
+    const { deps, tuiPath } = setup();
+    writeFileSync(tuiPath, JSON.stringify({ url: 'https://tui.test', token: 'owner-token' }), { mode: 0o600 });
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ agents: [] })));
+    deps.fetch = fetchMock;
+    expect(await run(['agents'], deps)).toBe(EXIT.OK);
+    const [url, init] = fetchMock.mock.lastCall!;
+    expect(String(url)).toBe('https://file.test/api/agents');
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer file-token');
+  });
+
   it('passes the local Node config for attach from the flag or QUORUM_NODE_CONFIG', async () => {
     const { deps, startTui } = setup();
     await run(['tui'], deps);
@@ -54,7 +78,7 @@ describe('quorum tui', () => {
 
   it.each([['tui', '--help'], ['tui', '-h'], ['--help'], ['--version']])('shows %j without login, TTY or UI launch', async (...argv) => {
     const { deps, out, startTui } = setup();
-    deps.env = { QUORUM_CONFIG: '/missing/config.json' };
+    deps.env = { QUORUM_CONFIG: '/missing/config.json', QUORUM_TUI_CONFIG: '/missing/tui.json' };
     deps.stdinIsTTY = false;
     expect(await run(argv, deps)).toBe(EXIT.OK);
     expect(out).toHaveBeenCalled();
@@ -81,7 +105,7 @@ describe('quorum tui', () => {
 
   it('uses auth exit 6 for missing config and error exit 1 for terminal failure', async () => {
     const { deps, err, startTui } = setup();
-    deps.env = { QUORUM_CONFIG: '/missing/config.json' };
+    deps.env = { QUORUM_CONFIG: '/missing/config.json', QUORUM_TUI_CONFIG: '/missing/tui.json' };
     expect(await run(['tui'], deps)).toBe(EXIT.AUTH);
     expect(startTui).not.toHaveBeenCalled();
     deps.env.QUORUM_URL = 'https://leader.test';

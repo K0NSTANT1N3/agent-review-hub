@@ -100,7 +100,7 @@ export interface QuorumBridge {
   networkAddresses(): Promise<AddressOption[]>;
   installCli(): Promise<string>;
   checkAgent(): Promise<{ ok: boolean; detail: string }>;
-  /** Writes an API token and this app's Leader URL into the `quorum` CLI config that `quorum tui` reads; returns the file path. */
+  /** Writes an API token and this app's Leader URL into the TUI-only login (tui.json); returns the file path. */
   saveTuiToken(token: string): Promise<string>;
   openExternal(url: string): Promise<void>;
   api<R extends ApiRouteName>(route: R, options?: ApiCallOptions): Promise<ApiResult<R>>;

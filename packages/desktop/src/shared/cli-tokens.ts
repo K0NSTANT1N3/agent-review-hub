@@ -17,12 +17,9 @@ export function createTokenRequest(label: string, scope: ApiTokenScope): CreateA
   return { label: label.trim() || (scope === 'owner' ? 'quorum tui' : 'quorum CLI'), scope };
 }
 
-/**
- * Requester tokens become the saved CLI login. Owner tokens open the terminal UI directly,
- * so the shared CLI login keeps its requester token unless the user clicks "Save for quorum tui".
- */
-export function tokenCommand(scope: ApiTokenScope, url: string | null, token: string): string {
-  return `quorum ${scope === 'owner' ? 'tui' : 'login'} --url ${url ?? '<leader url>'} --token ${token}`;
+/** Requester tokens only. Owner tokens are never shown in a command line, which would put them in shell history. */
+export function loginCommand(url: string | null, token: string): string {
+  return `quorum login --url ${url ?? '<leader url>'} --token ${token}`;
 }
 
 /** Shown before an owner token is created. Admin owner tokens act on every task (see the Leader's requesterOrAdmin check). */

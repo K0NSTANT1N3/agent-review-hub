@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { TokenScopeChoice } from '../../src/renderer/components/TokenScopeChoice';
-import { API_TOKEN_PATTERN, createTokenRequest, DEFAULT_TOKEN_SCOPE, ownerTokenWarning, tokenCommand, tokenScopeLabel } from '../../src/shared/cli-tokens';
+import { API_TOKEN_PATTERN, createTokenRequest, DEFAULT_TOKEN_SCOPE, ownerTokenWarning, loginCommand, tokenScopeLabel } from '../../src/shared/cli-tokens';
 
 const render = (value: 'requester' | 'owner', isAdmin = false) => renderToStaticMarkup(<TokenScopeChoice value={value} isAdmin={isAdmin} onChange={() => {}} />);
 const checked = (html: string) => [...html.matchAll(/<input[^>]*value="(\w+)"[^>]*>/g)].filter((m) => m[0].includes('checked')).map((m) => m[1]);
@@ -24,13 +24,13 @@ describe('token scope choice', () => {
     expect(ownerTokenWarning(true)).not.toContain('your tasks');
   });
 
-  it('sends the chosen scope with a default label and labels listed tokens by scope', () => {
+  it('sends the chosen scope with a default label, labels listed tokens by scope and keeps the requester login command', () => {
     expect(createTokenRequest('  ', 'requester')).toEqual({ label: 'quorum CLI', scope: 'requester' });
     expect(createTokenRequest(' laptop ', 'owner')).toEqual({ label: 'laptop', scope: 'owner' });
     expect(tokenScopeLabel('owner')).toBe('Terminal UI (owner)');
     expect(tokenScopeLabel('requester')).toBe('CLI (requester)');
-    expect(tokenCommand('requester', 'http://h:7420', 'qrq_t')).toBe('quorum login --url http://h:7420 --token qrq_t');
-    expect(tokenCommand('owner', null, 'qrq_t')).toBe('quorum tui --url <leader url> --token qrq_t');
+    expect(loginCommand('http://h:7420', 'qrq_t')).toBe('quorum login --url http://h:7420 --token qrq_t');
+    expect(loginCommand(null, 'qrq_t')).toBe('quorum login --url <leader url> --token qrq_t');
   });
 
   it('recognizes only Leader-minted API tokens', () => {

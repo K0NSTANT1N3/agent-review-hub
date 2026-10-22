@@ -352,6 +352,7 @@ To start the terminal UI:
    ```
 
 Use `quorum tui --url https://leader.example.com --token '<token>'` to override the saved login.
+Do not use `--token` with an owner token, because the shell history keeps the command.
 `quorum-tui` remains available as a separate command.
 Run `quorum tui --help` to see the options without starting the UI.
 
@@ -366,17 +367,24 @@ The program reads the connection data in this order:
 
 1. The `--url` and `--token` flags.
 2. The `QUORUM_URL` and `QUORUM_TOKEN` environment variables.
-3. The `quorum` CLI config file.
+3. The TUI login file (`tui.json`).
+4. The `quorum` CLI login file (`cli.json`).
 
-The config file path is `QUORUM_CONFIG`, then `$XDG_CONFIG_HOME/quorum/cli.json`, then `~/.config/quorum/cli.json`.
-The file format is `{ "url": "https://leader.example.com", "token": "…" }`.
-The TUI uses the same file as `quorum login`.
+The program reads the URL and the token separately in this order.
 
-CAUTION: If the group or other users can read the config file, the TUI tells you.
+The TUI login file path is `QUORUM_TUI_CONFIG`, then `$XDG_CONFIG_HOME/quorum/tui.json`, then `~/.config/quorum/tui.json`.
+The app writes owner tokens to this file. The `quorum` CLI does not read this file.
+
+The CLI login file path is `QUORUM_CONFIG`, then `$XDG_CONFIG_HOME/quorum/cli.json`, then `~/.config/quorum/cli.json`.
+`quorum login` writes this file.
+
+The two files have the same format: `{ "url": "https://leader.example.com", "token": "…" }`.
+
+CAUTION: If the group or other users can read a login file, the TUI tells you.
 Set the file mode to `0600`:
 
 ```bash
-chmod 600 ~/.config/quorum/cli.json
+chmod 600 ~/.config/quorum/tui.json ~/.config/quorum/cli.json
 ```
 
 A requester token can read data, create tasks, answer a blocked author and ask an agent.
@@ -393,8 +401,8 @@ All team members can make an owner token in the app. You do not need the host.
 4. Type a label, for example `quorum tui on my laptop`.
 5. Click **Create terminal UI token**.
 6. Click **Save for quorum tui**.
-   The app writes the Leader URL and the token to the `quorum` CLI config file with mode `0600`.
-   This replaces the login that `quorum login` saved before.
+   The app writes the Leader URL and the token to the TUI login file (`tui.json`) with mode `0600`.
+   The app does not change the `quorum` CLI login file (`cli.json`).
 7. Run `quorum tui`.
 
 WARNING: An owner token can approve, send back, pause and cancel your tasks.
@@ -402,10 +410,11 @@ An approved task goes to the merge queue.
 If you are a team admin, the token can do these actions on all tasks.
 Keep the token secret, as you keep a password.
 
-CAUTION: The `quorum` CLI reads the same config file.
-Thus, scripts and coding agents that use `quorum` on this computer also get the owner permissions.
-If you do not want this, do not save the token.
-Copy the `quorum tui` command instead, and run it when you need owner actions.
+CAUTION: Do not put an owner token in `cli.json` or on a command line.
+Coding agents use the `quorum` CLI, and the CLI reads `cli.json`.
+The shell history keeps each command line.
+If you do not save the token, click **Copy token only**.
+Then set the `QUORUM_TOKEN` environment variable without a command line, for example with `read -rs QUORUM_TOKEN; export QUORUM_TOKEN`.
 
 To stop an owner token, click **Revoke** in **Settings → Agent CLI access**.
 The **Type** column shows the scope of each token.

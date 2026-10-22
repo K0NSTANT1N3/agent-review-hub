@@ -123,7 +123,7 @@ quorum tui --help
 
 You can also run `quorum-tui`. Both commands use the same connection data.
 
-It reuses the `quorum` CLI config (`QUORUM_URL` / `QUORUM_TOKEN`, or `~/.config/quorum/cli.json` after `quorum login`). A **requester** token can read, create tasks, answer a blocked author and ask agents. Approve, send back, pause and cancel need an **owner** token. Any teammate can make one in the app (**Settings → Agent CLI access → Terminal UI (owner) → Save for quorum tui**); a headless host can use `quorum-leader add-token --scope owner`. The keys and 80×24 layout are in [INSTALL.md](docs/INSTALL.md#use-the-terminal-ui).
+It reads flags, then `QUORUM_URL` / `QUORUM_TOKEN`, then its own login `~/.config/quorum/tui.json`, then the `quorum` CLI login `~/.config/quorum/cli.json`. A **requester** token can read, create tasks, answer a blocked author and ask agents. Approve, send back, pause and cancel need an **owner** token. Any teammate can make one in the app (**Settings → Agent CLI access → Terminal UI (owner) → Save for quorum tui**). The app saves it to `tui.json` only, so the CLI login that coding agents use never holds it. A headless host can use `quorum-leader add-token --scope owner`. The keys and 80×24 layout are in [INSTALL.md](docs/INSTALL.md#use-the-terminal-ui).
 
 ### Run on a VPS
 

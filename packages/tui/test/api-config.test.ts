@@ -3,15 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientError, loadTranscript, OWNER_TOKEN_HELP, QuorumClient } from '../src/api-client.js';
-import { configPath, normalizeLeaderUrl, parseFlags, readConfig, resolveConfig } from '../src/config.js';
+import { configPath, normalizeLeaderUrl, parseFlags, readConfig, resolveConfig, tuiConfigPath } from '../src/config.js';
 import { taskView } from './fixtures.js';
 
 const directories: string[] = [];
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }); });
-function configFile(mode = 0o600, text = JSON.stringify({ url: 'http://file.test', token: 'file-token' })): string {
+function configFile(mode = 0o600, text = JSON.stringify({ url: 'http://file.test', token: 'file-token' }), name = 'cli.json'): string {
   const directory = mkdtempSync(join(tmpdir(), 'quorum-tui-'));
   directories.push(directory);
-  const path = join(directory, 'cli.json');
+  const path = join(directory, name);
   writeFileSync(path, text, { mode });
   chmodSync(path, mode);
   return path;
@@ -23,9 +23,39 @@ describe('CLI config', () => {
     expect(configPath({ QUORUM_CONFIG: path, XDG_CONFIG_HOME: '/ignored' })).toBe(path);
     expect(configPath({ XDG_CONFIG_HOME: '/xdg' })).toBe('/xdg/quorum/cli.json');
     expect(configPath({})).toMatch(/\.config\/quorum\/cli.json$/);
-    expect(resolveConfig({}, { QUORUM_CONFIG: path })).toMatchObject({ url: 'http://file.test', token: 'file-token' });
-    expect(resolveConfig({ url: 'https://flag.test' }, { QUORUM_CONFIG: path, QUORUM_URL: 'http://env.test', QUORUM_TOKEN: 'env-token' })).toMatchObject({ url: 'https://flag.test', token: 'env-token' });
-    expect(resolveConfig({ token: 'flag-token' }, { QUORUM_CONFIG: path, QUORUM_TOKEN: 'env-token' }).token).toBe('flag-token');
+    const noTui = { QUORUM_TUI_CONFIG: '/does-not-exist/tui.json' };
+    expect(resolveConfig({}, { ...noTui, QUORUM_CONFIG: path })).toMatchObject({ url: 'http://file.test', token: 'file-token' });
+    expect(resolveConfig({ url: 'https://flag.test' }, { ...noTui, QUORUM_CONFIG: path, QUORUM_URL: 'http://env.test', QUORUM_TOKEN: 'env-token' })).toMatchObject({ url: 'https://flag.test', token: 'env-token' });
+    expect(resolveConfig({ token: 'flag-token' }, { ...noTui, QUORUM_CONFIG: path, QUORUM_TOKEN: 'env-token' }).token).toBe('flag-token');
+  });
+
+  it('reads the TUI login at QUORUM_TUI_CONFIG, else XDG_CONFIG_HOME, else ~/.config', () => {
+    expect(tuiConfigPath({ QUORUM_TUI_CONFIG: '/t.json', QUORUM_CONFIG: '/c.json', XDG_CONFIG_HOME: '/ignored' })).toBe('/t.json');
+    expect(tuiConfigPath({ QUORUM_CONFIG: '/c.json', XDG_CONFIG_HOME: '/xdg' })).toBe('/xdg/quorum/tui.json');
+    expect(tuiConfigPath({})).toMatch(/\.config\/quorum\/tui.json$/);
+  });
+
+  it('resolves flags, then QUORUM_URL/QUORUM_TOKEN, then tui.json, then cli.json', () => {
+    const cli = configFile(0o600, JSON.stringify({ url: 'http://cli.test', token: 'cli-token' }));
+    const tui = configFile(0o600, JSON.stringify({ url: 'http://tui.test', token: 'tui-token' }), 'tui.json');
+    const env = { QUORUM_CONFIG: cli, QUORUM_TUI_CONFIG: tui };
+    expect(resolveConfig({}, env)).toEqual({ url: 'http://tui.test', token: 'tui-token', warning: undefined });
+    expect(resolveConfig({}, { ...env, QUORUM_TUI_CONFIG: '/does-not-exist/tui.json' })).toMatchObject({ url: 'http://cli.test', token: 'cli-token' });
+    expect(resolveConfig({}, { ...env, QUORUM_TOKEN: 'env-token', QUORUM_URL: 'http://env.test' })).toMatchObject({ url: 'http://env.test', token: 'env-token' });
+    expect(resolveConfig({ url: 'http://flag.test', token: 'flag-token' }, { ...env, QUORUM_TOKEN: 'env-token' })).toMatchObject({ url: 'http://flag.test', token: 'flag-token' });
+    // Fields fall through one by one: a TUI login without a URL still uses the CLI login's URL.
+    const tokenOnly = configFile(0o600, JSON.stringify({ token: 'tui-token' }), 'tui.json');
+    expect(resolveConfig({}, { ...env, QUORUM_TUI_CONFIG: tokenOnly })).toMatchObject({ url: 'http://cli.test', token: 'tui-token' });
+  });
+
+  it('warns when tui.json is group/world readable, except on Windows', () => {
+    const tui = configFile(0o644, JSON.stringify({ url: 'http://tui.test', token: 'tui-token' }), 'tui.json');
+    const env = { QUORUM_CONFIG: '/does-not-exist/cli.json', QUORUM_TUI_CONFIG: tui };
+    const { warning } = resolveConfig({}, env, 'darwin');
+    expect(warning).toContain(tui);
+    expect(warning).toContain('chmod 600');
+    expect(warning).not.toContain('tui-token');
+    expect(resolveConfig({}, env, 'win32').warning).toBeUndefined();
   });
 
   it.each([0o640, 0o604, 0o644])('warns when token file is group/world readable (%s)', (mode) => {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ApiTokenScope, DirectiveView } from '@quorum/protocol';
-import { createTokenRequest, DEFAULT_TOKEN_SCOPE, tokenCommand, tokenScopeLabel } from '../../shared/cli-tokens';
+import { createTokenRequest, DEFAULT_TOKEN_SCOPE, loginCommand, tokenScopeLabel } from '../../shared/cli-tokens';
 import type { AppState, DesktopSettings } from '../../shared/ipc';
 import { bridge, call, formatTokens, onUiEvent, timeAgo, useLive } from '../bridge';
 import { Bar, Card, Empty, ErrorNote } from '../components/common';
@@ -331,8 +331,6 @@ function CliAccess({ state }: { state: AppState }) {
   };
 
   const saveForTui = async (token: string) => {
-    const replace = 'This replaces the saved quorum login on this computer. The quorum CLI uses the same file, so scripts and agents that run quorum here also get owner rights. Continue?';
-    if (!window.confirm(replace)) return;
     setError(null);
     try {
       setSavedTo(await bridge().saveTuiToken(token));
@@ -341,7 +339,7 @@ function CliAccess({ state }: { state: AppState }) {
     }
   };
 
-  const command = created === null ? '' : tokenCommand(created.scope, state.apiUrl, created.token);
+  const copy = (text: string) => void navigator.clipboard.writeText(text).then(() => setCopied(true));
   const live = (tokens.data?.tokens ?? []).filter((t) => t.revokedAt === null);
 
   return (
@@ -364,21 +362,32 @@ function CliAccess({ state }: { state: AppState }) {
         </button>
       </div>
       <ErrorNote error={error ?? tokens.error} />
-      {created !== null && (
+      {created?.scope === 'requester' && (
         <div className="stack-sm">
           <div className="note note-warn">Copy this now. The token is shown only once and works like a password.</div>
-          <textarea readOnly rows={2} value={command} onFocus={(e) => e.currentTarget.select()} />
-          <div className="row">
-            <button onClick={() => void navigator.clipboard.writeText(command).then(() => setCopied(true))}>{copied ? 'Copied ✓' : created.scope === 'owner' ? 'Copy quorum tui command' : 'Copy login command'}</button>
-            {created.scope === 'owner' && (
-              <button className="primary" disabled={savedTo !== null} onClick={() => void saveForTui(created.token)}>
-                {savedTo !== null ? 'Saved ✓' : 'Save for quorum tui'}
-              </button>
-            )}
+          <textarea readOnly rows={2} value={loginCommand(state.apiUrl, created.token)} onFocus={(e) => e.currentTarget.select()} />
+          <button onClick={() => copy(loginCommand(state.apiUrl, created.token))}>{copied ? 'Copied ✓' : 'Copy login command'}</button>
+        </div>
+      )}
+      {created?.scope === 'owner' && (
+        <div className="stack-sm">
+          <div className="note note-warn">
+            Save or copy the token now. It is shown only once. It is a password: keep it out of shell history, chat and the <code>quorum</code> CLI login.
           </div>
-          {savedTo !== null && (
+          <div className="row">
+            <button className="primary" disabled={savedTo !== null} onClick={() => void saveForTui(created.token)}>
+              {savedTo !== null ? 'Saved ✓' : 'Save for quorum tui'}
+            </button>
+            <button onClick={() => copy(created.token)}>{copied ? 'Copied ✓' : 'Copy token only'}</button>
+          </div>
+          {savedTo !== null ? (
             <p role="status">
-              Saved to <code>{savedTo}</code> (mode 0600). Run <code>quorum tui</code> in a terminal.
+              Saved to <code>{savedTo}</code>. Run <code>quorum tui</code>.
+            </p>
+          ) : (
+            <p className="hint">
+              Save writes only the terminal UI login (mode 0600), never the <code>quorum</code> CLI login that coding agents use. Without saving, put the token in
+              the <code>QUORUM_TOKEN</code> environment variable, not on a command line.
             </p>
           )}
         </div>

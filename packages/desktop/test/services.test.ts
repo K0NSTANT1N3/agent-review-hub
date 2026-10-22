@@ -389,7 +389,7 @@ describe('Services', () => {
     expect(await broken.api('listAgents')).toMatchObject({ ok: false, error: 'TOKEN_UNREADABLE' });
   });
 
-  it('lets a teammate mint an owner token with the app credential and save it for quorum tui with mode 0600', async () => {
+  it('lets a teammate mint an owner token and save it to tui.json (0600) without touching the quorum CLI login', async () => {
     const { host } = await hosted();
     const { joinCode } = await host.invite({ agentId: '', ownerName: 'Bo' });
     const member = make('member');
@@ -401,13 +401,22 @@ describe('Services', () => {
     const listed = await member.api('listApiTokens');
     expect(listed.ok && listed.data.tokens.map((t) => [t.id, t.scope])).toEqual([[minted.data.id, 'owner']]);
 
-    const path = join(dir, 'xdg', 'quorum', 'cli.json');
-    expect(member.saveTuiToken(minted.data.token, path)).toBe(path);
+    // A requester login already saved by `quorum login` must stay untouched.
+    const env = { XDG_CONFIG_HOME: join(dir, 'xdg') };
+    const cliPath = join(dir, 'xdg', 'quorum', 'cli.json');
+    mkdirSync(join(dir, 'xdg', 'quorum'), { recursive: true });
+    const cliLogin = '{"url":"http://cli.test","token":"qrq_requester"}\n';
+    writeFileSync(cliPath, cliLogin, { mode: 0o600 });
+    const path = member.saveTuiToken(minted.data.token, env);
+    expect(path).toBe(join(dir, 'xdg', 'quorum', 'tui.json'));
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ url: member.state().apiUrl, token: minted.data.token });
     if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readFileSync(cliPath, 'utf8')).toBe(cliLogin);
+    expect(member.saveTuiToken(minted.data.token, { QUORUM_TUI_CONFIG: join(dir, 'custom.json'), QUORUM_CONFIG: cliPath })).toBe(join(dir, 'custom.json'));
+    expect(readFileSync(cliPath, 'utf8')).toBe(cliLogin);
 
-    expect(() => member.saveTuiToken('not-a-token', path)).toThrow(/not a Quorum API token/);
-    expect(() => make('fresh').saveTuiToken(minted.data.token, path)).toThrow(/not set up/);
+    expect(() => member.saveTuiToken('not-a-token', env)).toThrow(/not a Quorum API token/);
+    expect(() => make('fresh').saveTuiToken(minted.data.token, env)).toThrow(/not set up/);
 
     const revoked = await member.api('revokeApiToken', { id: minted.data.id });
     expect(revoked).toMatchObject({ ok: true, data: { scope: 'owner', revokedAt: expect.any(Number) } });
