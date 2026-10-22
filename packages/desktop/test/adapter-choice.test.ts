@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CLI_ADAPTER_TRUST_NOTE, CLI_ADAPTER_TYPES, isCliAdapter, settingsAdapter } from '../src/shared/adapter-choice.js';
+import { CLI_ADAPTER_TRUST_NOTE, CLI_ADAPTER_TYPES, isCliAdapter, settingsAdapter, WELCOME_REQUIREMENTS } from '../src/shared/adapter-choice.js';
 
 describe('desktop adapter choice', () => {
   it('adds codex, pi, omp and kilo with the same optional fields and a one-line trust note', () => {
@@ -17,5 +17,12 @@ describe('desktop adapter choice', () => {
     expect(settingsAdapter('opencode')).toMatchObject({ type: 'opencode', baseUrl: 'http://localhost:4096' });
     expect(settingsAdapter('mock')).toEqual({ type: 'mock', scriptPath: '', contextWindow: 200000 });
     expect(isCliAdapter(settingsAdapter('claude-code'))).toBe(false);
+  });
+
+  it('welcome screen asks for Git access and one supported agent, not Claude Code only', () => {
+    expect(WELCOME_REQUIREMENTS).toContain('Git access to the team repository');
+    expect(WELCOME_REQUIREMENTS).toContain('one supported coding agent installed and logged in');
+    for (const agent of ['Claude Code', 'Codex', 'pi', 'omp', 'Kilo Code']) expect(WELCOME_REQUIREMENTS).toContain(agent);
+    expect(WELCOME_REQUIREMENTS).not.toMatch(/run claude once|a logged-in Claude Code/);
   });
 });

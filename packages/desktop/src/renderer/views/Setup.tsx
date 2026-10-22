@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { WELCOME_REQUIREMENTS } from '../../shared/adapter-choice';
 import { DEFAULT_SETTINGS, type AddressOption, type DesktopSettings } from '../../shared/ipc';
 import { bridge } from '../bridge';
 import { ErrorNote } from '../components/common';
@@ -81,7 +82,7 @@ export function Setup() {
             <span>Paste the join code your host sent you.</span>
           </button>
         </div>
-        <p className="hint">You need Git access to the team repository and a logged-in Claude Code (run <code>claude</code> once) on this computer.</p>
+        <p className="hint">{WELCOME_REQUIREMENTS}</p>
       </div>
     );
   }

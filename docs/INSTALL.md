@@ -53,7 +53,14 @@ You do not need a source checkout or a separate Node.js installation.
 On macOS and Linux, the action makes `quorum` and `quorum-tui` symlinks in `~/.local/bin`.
 If this directory is not on PATH, the confirmation names the shell file that the action will update
 (`~/.zshrc`, `~/.bashrc`, or a fish configuration file).
-On Windows, the action adds the private CLI directory to your user PATH. Open a new terminal from the Start menu.
+
+On Windows, the action puts the private CLI directory first in your user PATH.
+Then the action finds the `quorum` command that a new terminal starts.
+If a different `quorum` comes first, the result shows its path. Windows reads the system PATH before the user PATH.
+Remove that program, or move its directory after the Quorum directory in PATH.
+If `quorum` is open, the action stops. Close all `quorum` and `quorum-tui` windows, then try again.
+
+After the installation, open a new terminal from the Start menu.
 If an existing terminal app keeps the old PATH, close that app and open it again.
 
 The tools use a private copy in the Quorum data folder. On Linux, they continue to work after an AppImage closes.
