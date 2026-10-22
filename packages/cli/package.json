@@ -1,6 +1,6 @@
 {
   "name": "@quorum/cli",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "description": "quorum: drive Quorum from a terminal, a script or a coding agent",
   "license": "MIT",
   "keywords": [
@@ -45,7 +45,8 @@
     "prepack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm run build"
   },
   "dependencies": {
-    "@quorum/protocol": "workspace:*"
+    "@quorum/protocol": "workspace:*",
+    "@quorum/tui": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

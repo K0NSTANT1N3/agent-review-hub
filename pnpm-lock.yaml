@@ -44,6 +44,9 @@ importers:
       '@quorum/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@quorum/tui':
+        specifier: workspace:*
+        version: link:../tui
 
   packages/desktop:
     dependencies:

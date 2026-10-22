@@ -10,6 +10,10 @@ files:
   - dist/**
   - package.json
   - node_modules/**
+extraResources:
+  - from: ../cli-stage
+    to: cli
+    filter: ["**/*"]
 asarUnpack:
   - "**/*.node"
   - "**/@anthropic-ai/**"

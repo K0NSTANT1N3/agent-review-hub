@@ -1,6 +1,6 @@
 # Project status — single source of truth
 
-> Every agent and contributor: read this first. Last update: **2026-10-21** — TUI and agent transcripts on `feat/tui-agent-transcripts`.
+> Every agent and contributor: read this first. Last update: **2026-10-22** — CLI and TUI delivery prepared for v0.1.5.
 
 ## State
 
@@ -51,10 +51,11 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 | macOS worktree paths | Fixed: session worktree reuse failed when the data path contained a symlink (macOS `/var` → `/private/var`). |
 | `quorum` CLI + API tokens | `packages/cli`; requester-scope tokens (create in Settings → Agent CLI access, or `quorum-leader add-token`). e2e #22–#24. |
 
-## Unreleased (feat/tui-agent-transcripts)
+## Next release: v0.1.5 (unreleased)
 
 | Change | Notes |
 |---|---|
+| CLI delivery | Desktop installers include `quorum`, `quorum tui`, `quorum-tui` and Node 22. Settings installs the commands with a confirmation. npm manifests and pack checks are prepared; nothing is published. |
 | TUI | `quorum-tui` (`packages/tui`) is a full-screen Ink client. It shows agents, tasks and transcripts. It uses the `quorum` CLI config. Approve, send back, pause and cancel need an owner token. |
 | Transcripts | Node `transcript` frames (`transcript-v1`). REST `GET /api/tasks/:id/transcript`. UI event `transcript.appended`. The Node replaces the owner home path with `~` before the events go to the Leader. |
 | New adapters | Codex, pi and omp CLI adapters. The Node starts a new command for each profile. The Node can resume a session. Trust: Codex `sandboxed`. pi and omp `low`. |
@@ -76,7 +77,6 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 |---|---|
 | Code signing | Installers are unsigned (macOS: right-click → Open; Windows: More info → Run anyway). Add certificates to the Release workflow when available. |
 | macOS Intel build | The Release workflow builds on `macos-latest` (Apple Silicon). Add an `macos-13` matrix entry for x64 if needed. |
-| Ship the CLI | Bundle `quorum` with the installers or publish it to npm; today it runs from a source checkout. |
 | Second-opinion reviews, GitHub PR integration, task decomposition | Out of scope for v0.1 (spec §23). |
 
 ## How to work on it

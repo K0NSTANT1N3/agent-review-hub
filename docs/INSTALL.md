@@ -34,6 +34,37 @@ Download the installer for your system from the project's **Releases** page:
 | macOS | `Quorum-x.y.z-mac-arm64.dmg` | Builds are unsigned. Do the [macOS first-run steps](#macos-first-run) below. |
 | Windows | `Quorum-x.y.z-win-x64.exe` | Builds are unsigned: on the SmartScreen prompt choose **More info → Run anyway**. |
 
+### Install the command-line tools
+
+The v0.1.5 installers include `quorum`, `quorum-tui` and Node.js.
+You do not need a source checkout or a separate Node.js installation.
+
+1. Install the app in a permanent location. On macOS, copy **Quorum.app** from the DMG to **Applications**.
+2. Open Quorum. Host or join a team.
+3. Open **Settings**. Click **Install command-line tool**.
+4. Read the confirmation. Click **Install**.
+5. Open a new terminal. Run:
+
+   ```bash
+   quorum --version
+   quorum tui --help
+   ```
+
+On macOS and Linux, the action makes `quorum` and `quorum-tui` symlinks in `~/.local/bin`.
+If this directory is not on PATH, the confirmation names the shell file that the action will update
+(`~/.zshrc`, `~/.bashrc`, or a fish configuration file).
+On Windows, the action adds the private CLI directory to your user PATH. Open a new terminal from the Start menu.
+If an existing terminal app keeps the old PATH, close that app and open it again.
+
+The tools use a private copy in the Quorum data folder. On Linux, they continue to work after an AppImage closes.
+After you update Quorum, click **Install command-line tool** again to update the commands.
+The action does not replace an unrelated command with the same name. Move that command before you try again.
+If your shell does not read the named shell file, add `~/.local/bin` to PATH in your shell configuration.
+
+To remove the commands on macOS or Linux, delete the two symlinks and the `command-line` directory in the Quorum data folder.
+Remove the line marked `# Quorum command-line tools` from the shell file if you no longer need it.
+On Windows, remove the CLI directory from your user PATH, then delete that directory.
+
 ### macOS first run
 
 The app is unsigned, so macOS blocks it the first time. Do these steps one time only.
@@ -201,7 +232,7 @@ The `quorum` CLI lets a coding agent or a script use Quorum as you.
 The CLI can create tasks, wait for tasks, read diffs, answer a blocked author agent and ask agents.
 A CLI token cannot approve, send back, cancel or merge a task. Only you can do these actions in the app.
 
-To connect the CLI:
+First, install the command-line tools (see §2). Then connect the CLI:
 
 1. Open **Settings → Agent CLI access**.
 2. Type a label, for example `Claude Code on my laptop`.
@@ -217,12 +248,6 @@ quorum task answer 12 "Use Redis for the counters."
 quorum task wait 12 --json
 quorum task diff 12
 quorum ask bob-agent "Where is the retry logic for payments?"
-```
-
-The installers do not include the CLI in v0.1. To use the CLI, install the CLI package file (see [§10.1](#101-install-the-programs)), or build it from source (see §7) and make an alias:
-
-```bash
-alias quorum="node /path/to/agent-review-hub/packages/cli/dist/cli.js"
 ```
 
 Agents use `--json` and the exit code:
@@ -244,32 +269,26 @@ On a headless Leader, the host can make a token with `quorum-leader add-token --
 `quorum-tui` is a terminal program for one Leader.
 The program shows the agents, the tasks and the transcript of the selected task.
 
-To start `quorum-tui` from the repository:
+To start the terminal UI:
 
-1. Build the TUI package:
-
-   ```bash
-   corepack pnpm --filter @quorum/tui build
-   ```
-
-2. Start the program in a TTY terminal:
+1. Install the command-line tools (see §2).
+2. Run `quorum login` with the Leader URL and token (see above).
+3. Run the program in an interactive terminal:
 
    ```bash
-   node packages/tui/dist/cli.js --url https://leader.example.com --token '<token>'
+   quorum tui
    ```
 
-You can make an alias:
-
-```bash
-alias quorum-tui="node /path/to/agent-review-hub/packages/tui/dist/cli.js"
-```
+Use `quorum tui --url https://leader.example.com --token '<token>'` to override the saved login.
+`quorum-tui` remains available as a separate command.
+Run `quorum tui --help` to see the options without starting the UI.
 
 The program accepts these flags:
 
 * `--url` — Leader URL (`http://` or `https://`)
 * `--token` — API token
 * `--help` (`-h`) — help text
-* `--version` — `quorum-tui 0.1.0`
+* `quorum --version` — CLI version; `quorum-tui --version` — standalone TUI version
 
 The program reads the connection data in this order:
 
@@ -410,7 +429,7 @@ Make the npm package files from the repository, then install them with npm:
 ```bash
 git clone https://github.com/K0NSTANT1N3/agent-review-hub.git && cd agent-review-hub
 corepack pnpm install --filter '@quorum/leader...' --filter '@quorum/node...' --filter '@quorum/cli...'
-for p in protocol leader node cli; do (cd packages/$p && corepack pnpm pack --pack-destination ../../dist-npm); done
+for p in protocol leader node tui cli; do (cd packages/$p && corepack pnpm pack --pack-destination ../../dist-npm); done
 npm install -g --allow-scripts=better-sqlite3 ./dist-npm/*.tgz
 ```
 
@@ -421,7 +440,7 @@ The `--filter` options install only the server packages. They do not download th
 `--allow-scripts=better-sqlite3` permits the SQLite native module to install. With an older npm version that does not support this option, omit it.
 
 This installs three programs: `quorum-leader` (the Leader), `quorum-node` (the agent Node) and `quorum` (the CLI for coding agents and scripts).
-Each program shows its commands with `--help`. Install all four package files together, because the other packages use `@quorum/protocol`.
+Each program shows its commands with `--help`. The CLI also includes `quorum tui` and the separate `quorum-tui` command. Install all five package files together, because the other packages use `@quorum/protocol`.
 
 CAUTION: Do not install `@quorum/...` packages from the npm registry. The maintainers did not publish Quorum to npm. The `@quorum` scope on npm belongs to a different organization.
 

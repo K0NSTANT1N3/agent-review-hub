@@ -33,6 +33,10 @@ jobs:
         env:
           # Unsigned builds; see docs/INSTALL.md for first-launch steps on macOS and Windows.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke-test bundled CLI and terminal UI
+        run: node packages/desktop/scripts/smoke-cli.mjs
+      - name: Check npm package contents (no publish)
+        run: pnpm check:npm-pack
       - uses: actions/upload-artifact@v4
         with:
           name: quorum-${{ matrix.os }}

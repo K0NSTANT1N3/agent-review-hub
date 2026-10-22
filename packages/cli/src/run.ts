@@ -1,3 +1,6 @@
+import { readConfig } from '@quorum/tui/config';
+import type { TuiOptions } from '@quorum/tui/start';
+import { VERSION } from './version.js';
 import { readFileSync } from 'node:fs';
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import type { DirectiveView, TaskDetail } from '@quorum/protocol';
@@ -21,6 +24,8 @@ export const USAGE = `quorum: drive Quorum from a terminal, a script or a coding
 Usage:
   quorum login --url <leader url> --token <token | ->
   quorum agents
+  quorum tui [--url <leader url>] [--token <token>]
+  quorum --version
   quorum task create --title <text> [--description <text> | --description-file <path | ->]
                      [--tags a,b] [--priority low|normal|high|urgent] [--mode own|pool] [--require-approval]
                      [--wait] [--timeout <sec>]
@@ -35,6 +40,7 @@ Global options:
   --json          machine-readable output on stdout
   --url, --token  override QUORUM_URL / QUORUM_TOKEN / the saved login
   -h, --help      show this help
+  --version       show the CLI version
 
 Exit codes:
   0  done (task merged, answer received)
@@ -49,12 +55,27 @@ Tokens: create one in the Quorum app (Settings, Agent CLI access) or with
 \`quorum-leader add-token\`. CLI tokens can read, create tasks, answer a blocked
 author and ask agents. They can never approve, send back, cancel or merge.`;
 
+export const TUI_USAGE = `quorum tui: terminal UI for tasks and live agent transcripts
+
+Usage:
+  quorum tui [--url <leader url>] [--token <token>]
+
+Options:
+  --url, --token  override QUORUM_URL / QUORUM_TOKEN / the saved login
+  -h, --help      show this help
+
+Uses the same config file as quorum login. Needs an interactive terminal.
+Keyboard: tab panes, ↑/↓ select, enter open/send, ? help, q quit.
+Approve, send back, pause and cancel need an owner token.`;
+
 export interface Deps {
   env: Env;
   out: (text: string) => void;
   err: (text: string) => void;
   readStdin: () => Promise<string>;
   stdinIsTTY: boolean;
+  stdoutIsTTY?: boolean;
+  startTui?: (options: TuiOptions) => Promise<void>;
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -77,6 +98,7 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
   let json = argv.includes('--json');
   try {
     const [cmd, sub] = argv;
+    if (cmd === '--version' && argv.length === 1) { deps.out(`quorum ${VERSION}`); return EXIT.OK; }
     if (cmd === undefined || cmd === 'help' || cmd === '--help' || cmd === '-h') {
       deps.out(USAGE);
       return cmd === undefined ? EXIT.USAGE : EXIT.OK;
@@ -97,6 +119,12 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
       }
       return new QuorumClient(normalizeLeaderUrl(cfg.url), cfg.token, deps.fetch);
     };
+
+    if (rest.includes('--help') || rest.includes('-h')) {
+      parse({});
+      deps.out(command === 'tui' ? TUI_USAGE : USAGE);
+      return EXIT.OK;
+    }
 
     const emit = (data: unknown, human: string) => deps.out(json ? JSON.stringify(data, null, 2) : human);
 
@@ -144,6 +172,21 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
     const interval = (deps.env.QUORUM_POLL_MS !== undefined ? Number(deps.env.QUORUM_POLL_MS) : 2000) || 2000;
 
     switch (command) {
+      case 'tui': {
+        const { values, positionals } = parse({});
+        if (positionals.length > 0 || values.json) throw new UsageError('usage: quorum tui [--url <leader url>] [--token <token>]');
+        const config = resolveConfig(values, deps.env);
+        // Use the CLI's auth error and URL normalization, including ws(s) join URLs.
+        const client = connect(values);
+        if (!deps.stdinIsTTY || deps.stdoutIsTTY === false) throw new Error('quorum tui needs an interactive terminal.');
+        // Fail connection/authentication with the same exit codes as scripted commands.
+        await client.call('listAgents');
+        const { warning } = readConfig(configPath(deps.env));
+        const launch = deps.startTui ?? (await import('@quorum/tui/start')).startTui;
+        await launch({ url: client.baseUrl, token: config.token!, warning });
+        return EXIT.OK;
+      }
+
       case 'login': {
         const { values } = parse({});
         if (typeof values.url !== 'string' || typeof values.token !== 'string') throw new UsageError('login needs --url and --token');
