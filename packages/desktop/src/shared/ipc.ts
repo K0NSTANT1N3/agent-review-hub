@@ -100,6 +100,8 @@ export interface QuorumBridge {
   networkAddresses(): Promise<AddressOption[]>;
   installCli(): Promise<string>;
   checkAgent(): Promise<{ ok: boolean; detail: string }>;
+  /** Writes an API token and this app's Leader URL into the `quorum` CLI config that `quorum tui` reads; returns the file path. */
+  saveTuiToken(token: string): Promise<string>;
   openExternal(url: string): Promise<void>;
   api<R extends ApiRouteName>(route: R, options?: ApiCallOptions): Promise<ApiResult<R>>;
   onState(listener: (state: AppState) => void): () => void;
@@ -117,6 +119,7 @@ export const IPC = {
   networkAddresses: 'quorum:network-addresses',
   installCli: 'quorum:install-cli',
   checkAgent: 'quorum:check-agent',
+  saveTuiToken: 'quorum:save-tui-token',
   openExternal: 'quorum:open-external',
   api: 'quorum:api',
   state: 'quorum:state',

@@ -4,5 +4,6 @@
     "noEmit": true,
     "customConditions": ["development"]
   },
-  "include": ["src/main", "src/preload", "src/shared", "test"]
+  "include": ["src/main", "src/preload", "src/shared", "test"],
+  "exclude": ["test/renderer"]
 }

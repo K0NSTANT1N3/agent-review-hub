@@ -126,6 +126,7 @@ handle(IPC.installCli, async () => {
   return response === 1 ? installCli(options) : 'Installation cancelled.';
 });
 handle(IPC.checkAgent, () => services.checkAgent());
+handle(IPC.saveTuiToken, (token: string) => services.saveTuiToken(token));
 handle(IPC.openExternal, async (url: string) => {
   if (/^https?:\/\//.test(url)) await shell.openExternal(url);
 });

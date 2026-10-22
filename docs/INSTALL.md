@@ -299,15 +299,17 @@ You get desktop notifications when your task is merged, needs a decision, or you
 
 The `quorum` CLI lets a coding agent or a script use Quorum as you.
 The CLI can create tasks, wait for tasks, read diffs, answer a blocked author agent and ask agents.
-A CLI token cannot approve, send back, cancel or merge a task. Only you can do these actions in the app.
+A CLI (requester) token cannot approve, send back, pause, cancel or merge a task.
+You can do these actions in the app, or in the terminal UI with an owner token (see [Use the terminal UI](#use-the-terminal-ui)).
 
 First, install the command-line tools (see §2). Then connect the CLI:
 
 1. Open **Settings → Agent CLI access**.
-2. Type a label, for example `Claude Code on my laptop`.
-3. Click **Create CLI token**.
-4. Copy the `quorum login` command. The app shows the token one time only.
-5. Run the command in a terminal on the same computer.
+2. Keep the token type **CLI (requester)**.
+3. Type a label, for example `Claude Code on my laptop`.
+4. Click **Create CLI token**.
+5. Copy the `quorum login` command. The app shows the token one time only.
+6. Run the command in a terminal on the same computer.
 
 ```bash
 quorum login --url http://127.0.0.1:7420 --token qrq_…
@@ -341,7 +343,8 @@ The program shows the agents, the tasks and the transcript of the selected task.
 To start the terminal UI:
 
 1. Install the command-line tools (see §2).
-2. Run `quorum login` with the Leader URL and token (see above).
+2. Save an owner token for the terminal UI (see [Make an owner token](#make-an-owner-token)).
+   A requester login from `quorum login` also starts the UI, but it cannot approve, send back, pause or cancel.
 3. Run the program in an interactive terminal:
 
    ```bash
@@ -380,13 +383,40 @@ A requester token can read data, create tasks, answer a blocked author and ask a
 An owner token can also approve, send back, pause and cancel the tasks of its owner. Attach (`t`, then `y`) also needs this permission.
 An admin owner token can do these actions on all tasks.
 
-To make an owner token:
+#### Make an owner token
+
+All team members can make an owner token in the app. You do not need the host.
+
+1. Open **Settings → Agent CLI access**.
+2. Select the token type **Terminal UI (owner)**.
+3. Read the warning.
+4. Type a label, for example `quorum tui on my laptop`.
+5. Click **Create terminal UI token**.
+6. Click **Save for quorum tui**.
+   The app writes the Leader URL and the token to the `quorum` CLI config file with mode `0600`.
+   This replaces the login that `quorum login` saved before.
+7. Run `quorum tui`.
+
+WARNING: An owner token can approve, send back, pause and cancel your tasks.
+An approved task goes to the merge queue.
+If you are a team admin, the token can do these actions on all tasks.
+Keep the token secret, as you keep a password.
+
+CAUTION: The `quorum` CLI reads the same config file.
+Thus, scripts and coding agents that use `quorum` on this computer also get the owner permissions.
+If you do not want this, do not save the token.
+Copy the `quorum tui` command instead, and run it when you need owner actions.
+
+To stop an owner token, click **Revoke** in **Settings → Agent CLI access**.
+The **Type** column shows the scope of each token.
+
+On a headless Leader, the host can also make an owner token:
 
 ```bash
 quorum-leader add-token --config quorum.leader.json --id <agent id> --scope owner
 ```
 
-**Settings → Agent CLI access** makes a requester token.
+#### Attach and keyboard
 
 To attach a local agent's native TUI, pass the local Node config as well:
 

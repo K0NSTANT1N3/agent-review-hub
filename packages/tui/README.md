@@ -27,8 +27,12 @@ or sends the input. `m` cycles answer author, send back, and ask an agent.
 `i` focuses the message input. Esc leaves input or dismisses an error.
 
 `a` approves, `s` starts a send-back comment, `p` pauses/resumes, `c` asks for y/n
-before cancellation. Approve/send back/pause/cancel require an owner token:
-`quorum-leader add-token --scope owner`. Settings → Agent CLI access creates requester tokens.
+before cancellation. Approve/send back/pause/cancel require an owner token.
+All team members can make one in the desktop app: open **Settings → Agent CLI access**,
+select **Terminal UI (owner)**, click **Create terminal UI token**, then click
+**Save for quorum tui**. The app writes the token to the CLI config file with mode 0600.
+The `quorum` CLI reads the same file, so scripts on this computer also get owner permissions.
+On a headless Leader, the host can use `quorum-leader add-token --scope owner`.
 `t` confirms y/n, pauses the task, waits for local pause cleanup and all in-flight work,
 then hands the terminal to that session's native agent TUI. Exit the agent to return;
 Quorum checks git, resumes the task, and reloads its transcript. Attach always

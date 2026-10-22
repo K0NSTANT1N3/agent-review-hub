@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { DirectiveView } from '@quorum/protocol';
+import type { ApiTokenScope, DirectiveView } from '@quorum/protocol';
+import { createTokenRequest, DEFAULT_TOKEN_SCOPE, tokenCommand, tokenScopeLabel } from '../../shared/cli-tokens';
 import type { AppState, DesktopSettings } from '../../shared/ipc';
 import { bridge, call, formatTokens, onUiEvent, timeAgo, useLive } from '../bridge';
 import { Bar, Card, Empty, ErrorNote } from '../components/common';
 import { SettingsForm } from '../components/SettingsForm';
+import { TokenScopeChoice } from '../components/TokenScopeChoice';
+
+/** Error text from a main-process call without Electron's "Error invoking remote method" prefix. */
+const ipcMessage = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e));
 
 // ---------------------------------------------------------------------------
 // Directives — ask any agent a question (read-only)
@@ -163,7 +168,7 @@ export function Team({ state }: { state: AppState }) {
       setCode(r.joinCode);
       agents.reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e));
+      setError(ipcMessage(e));
     }
   };
 
@@ -289,22 +294,25 @@ export function Settings({ state }: { state: AppState }) {
 }
 
 // ---------------------------------------------------------------------------
-// Agent CLI access — requester-scope tokens for the `quorum` CLI
+// Agent CLI access — requester tokens for the `quorum` CLI, owner tokens for `quorum tui`
 // ---------------------------------------------------------------------------
 
 function CliAccess({ state }: { state: AppState }) {
   const tokens = useLive(() => call('listApiTokens'), [], { pollMs: 30_000 });
   const [label, setLabel] = useState('');
-  const [created, setCreated] = useState<{ token: string; label: string } | null>(null);
+  const [scope, setScope] = useState<ApiTokenScope>(DEFAULT_TOKEN_SCOPE);
+  const [created, setCreated] = useState<{ token: string; label: string; scope: ApiTokenScope } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [savedTo, setSavedTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const create = async () => {
     setError(null);
     setCopied(false);
+    setSavedTo(null);
     try {
-      const t = await call('createApiToken', { body: { label: label.trim() || 'quorum CLI' } });
-      setCreated({ token: t.token, label: t.label });
+      const t = await call('createApiToken', { body: createTokenRequest(label, scope) });
+      setCreated({ token: t.token, label: t.label, scope: t.scope });
       setLabel('');
       tokens.reload();
     } catch (e) {
@@ -322,27 +330,57 @@ function CliAccess({ state }: { state: AppState }) {
     }
   };
 
-  const login = created === null ? '' : `quorum login --url ${state.apiUrl ?? '<leader url>'} --token ${created.token}`;
+  const saveForTui = async (token: string) => {
+    const replace = 'This replaces the saved quorum login on this computer. The quorum CLI uses the same file, so scripts and agents that run quorum here also get owner rights. Continue?';
+    if (!window.confirm(replace)) return;
+    setError(null);
+    try {
+      setSavedTo(await bridge().saveTuiToken(token));
+    } catch (e) {
+      setError(ipcMessage(e));
+    }
+  };
+
+  const command = created === null ? '' : tokenCommand(created.scope, state.apiUrl, created.token);
   const live = (tokens.data?.tokens ?? []).filter((t) => t.revokedAt === null);
 
   return (
     <Card title="Agent CLI access">
       <p className="muted">
         Let a coding agent or script use Quorum as you through the <code>quorum</code> CLI: create tasks, wait for them, read diffs, answer a blocked author and
-        ask agents. CLI tokens can never approve, send back, cancel or merge. Those stay in this app.
+        ask agents. CLI (requester) tokens can never approve, send back, pause or cancel. A terminal UI (owner) token lets <code>quorum tui</code> do those
+        actions too.
       </p>
+      <TokenScopeChoice value={scope} isAdmin={state.isAdmin} onChange={setScope} />
       <div className="row">
-        <input className="grow" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label, e.g. Claude Code on my laptop" />
+        <input
+          className="grow"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder={scope === 'owner' ? 'Label, e.g. quorum tui on my laptop' : 'Label, e.g. Claude Code on my laptop'}
+        />
         <button className="primary" onClick={() => void create()}>
-          Create CLI token
+          {scope === 'owner' ? 'Create terminal UI token' : 'Create CLI token'}
         </button>
       </div>
       <ErrorNote error={error ?? tokens.error} />
       {created !== null && (
         <div className="stack-sm">
           <div className="note note-warn">Copy this now. The token is shown only once and works like a password.</div>
-          <textarea readOnly rows={2} value={login} onFocus={(e) => e.currentTarget.select()} />
-          <button onClick={() => void navigator.clipboard.writeText(login).then(() => setCopied(true))}>{copied ? 'Copied ✓' : 'Copy login command'}</button>
+          <textarea readOnly rows={2} value={command} onFocus={(e) => e.currentTarget.select()} />
+          <div className="row">
+            <button onClick={() => void navigator.clipboard.writeText(command).then(() => setCopied(true))}>{copied ? 'Copied ✓' : created.scope === 'owner' ? 'Copy quorum tui command' : 'Copy login command'}</button>
+            {created.scope === 'owner' && (
+              <button className="primary" disabled={savedTo !== null} onClick={() => void saveForTui(created.token)}>
+                {savedTo !== null ? 'Saved ✓' : 'Save for quorum tui'}
+              </button>
+            )}
+          </div>
+          {savedTo !== null && (
+            <p role="status">
+              Saved to <code>{savedTo}</code> (mode 0600). Run <code>quorum tui</code> in a terminal.
+            </p>
+          )}
         </div>
       )}
       {live.length > 0 && (
@@ -350,6 +388,7 @@ function CliAccess({ state }: { state: AppState }) {
           <thead>
             <tr>
               <th>Label</th>
+              <th>Type</th>
               <th>Created</th>
               <th>Last used</th>
               <th />
@@ -359,6 +398,7 @@ function CliAccess({ state }: { state: AppState }) {
             {live.map((t) => (
               <tr key={t.id}>
                 <td>{t.label || <span className="muted">unnamed</span>}</td>
+                <td>{tokenScopeLabel(t.scope)}</td>
                 <td>{timeAgo(t.createdAt)}</td>
                 <td>{timeAgo(t.lastUsedAt)}</td>
                 <td>

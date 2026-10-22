@@ -68,7 +68,8 @@ Options:
 
 Uses the same config file as quorum login. Needs an interactive terminal.
 Keyboard: tab panes, ↑/↓ select, enter open/send, ? help, q quit.
-Approve, send back, pause and cancel need an owner token.`;
+Approve, send back, pause and cancel need an owner token. Make one in the Quorum app:
+Settings, Agent CLI access, Terminal UI (owner), then Save for quorum tui.`;
 
 export interface Deps {
   env: Env;
