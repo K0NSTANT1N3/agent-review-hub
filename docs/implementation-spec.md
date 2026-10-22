@@ -1402,3 +1402,118 @@ Each must pass:
 - An LLM inside the Leader.
 - Cross-team federation of Leaders.
 - Docker sandboxing of tests (optional, behind config, only if time remains).
+
+
+## Local native TUI attach (`quorum-tui t`)
+
+The Node journal owns `nativeId`; it is never added to protocol frames, REST views,
+UI WebSocket events, or team transcripts. The TUI receives it only through an
+explicitly configured, authenticated local control connection. `--node-config`
+(or `QUORUM_NODE_CONFIG`) names the local Node config; its Node token authenticates
+control requests. The Leader API token is used only for normal task actions.
+Copying a remote Node config does not connect to that remote machine.
+
+### Endpoint and authorization
+
+Every Node daemon starts `~/.quorum/control/<sha256(absoluteDataDir)[0:24]>.sock` on Unix, in an owner-checked
+0700 directory; the socket is chmod 0600 before startup returns. An existing socket
+is refused rather than unlinked, preventing a second daemon from replacing a live
+endpoint. After an unclean exit the owner must confirm the Node is stopped and
+remove the stale socket before restarting. The short hash avoids Unix socket path limits even for long dataDir paths.
+The home directory itself must still fit the OS socket path limit. Shutdown removes the socket.
+
+Windows uses `\\.\pipe\quorum-<sha256(absoluteDataDir)[0:32]>` through Node's
+named-pipe transport. Windows has no Unix mode bits: pipe access inherits the
+creating account's Windows ACL; the Node token is still required. The client never
+accepts a pipe server/hostname or a TCP URL. Windows transport has not been exercised on Windows in this change; deployments should
+verify their account's pipe ACL/network policy. The local config is never sent to
+the Leader. This interface assumes the local owner account and its config are
+trusted; it is not a sandbox against other processes running as that same owner.
+
+The wire format is bounded newline-delimited JSON: `check`, `acquire`, `release`,
+with Node token, Leader origin, agent ID, session ID and task ID. Token hashes are
+compared in constant time. The endpoint verifies both Leader origin and agent ID,
+then looks up the session in its own journal. Unknown sessions report remote/local
+mismatch. Check replies contain no resume details. Only a successful acquisition
+returns adapter, executable, argv, cwd and optional CODEX_HOME. Neither side logs
+requests or resume IDs. An unauthenticated connection expires after five seconds.
+
+### Ownership and terminal lifecycle
+
+1. In Tasks/Chat, choose the listed author session, otherwise the task participant.
+   In Agents, choose that agent's task session. `t` shows y/n; input-mode `t` remains
+   literal text. `n`/Esc leaves the task untouched.
+2. Local `check` authenticates and rejects remote/unsupported sessions before any
+   pause. It records the last cancellation command ID.
+3. The TUI calls Leader `pauseTask`. A refusal stops attach without a resume call.
+   The response's paused-from state determines whether this session needs a fresh
+   `task.cancel` acknowledgement. Node waits until the new cancellation command
+   has completed, including releasing/resetting the worktree. This matters because
+   Leader pause acknowledgement alone does not imply Node cancellation has drained.
+4. Node acquisition gates new commands immediately, drains commands already queued,
+   verifies the journal's latest task command still belongs to the selected task,
+   and reopens that task's author branch or review commit (pause cleanup checks out
+   origin/main). It snapshots HEAD, branch, origin URL and remote refs, then records
+   durable `attached` state. New commands for this session wait behind the gate.
+   Node status reports attached sessions as busy. A second acquisition is refused.
+   Cross-session branch recovery also refuses attached/blocked worktrees, so another
+   session cannot commit, push or detach the worktree during manual ownership.
+5. Ink unmounts, restoring its raw mode/cursor and leaving the alternate screen.
+   The TUI awaits teardown/output flush and pauses its stdin reader before spawning.
+   The child uses `stdio: inherit`, no shell, the session worktree and exact native
+   ID: `claude --resume ID`, `codex resume ID`, `pi --session-id ID`, or
+   `omp --resume ID`. Codex receives the driver's `<dataDir>/codex-home`. Adapter
+   binaryPath overrides are honored for Codex/pi/omp. Ctrl+C reaches the child;
+   the parent keeps running to restore its terminal. Missing binaries have an
+   explicit error. Mock/OpenCode are rejected; no native ID yet is also an error.
+6. Child exit, signal exit and spawn errors all remount Ink in a finally block.
+   Node `release` runs the git guard before unlocking queued commands. The TUI
+   then calls `resumeTask` and reloads task detail/transcript, including on child
+   error. Failed resume leaves a clear error with manual `p` recovery guidance.
+   Input remains disabled while guard/resume/reload completes.
+
+### Git guard and failure policy
+
+Interactive CLIs bypass the adapter's per-tool enforcement. Every hand-back calls
+**the same `checkTurnGit` and restoration path used by CommandRunner author turns**,
+with guarding forced on even for Claude Code. HEAD or branch changes restore the
+original HEAD/branch with the existing forced checkout/clean policy, report the
+violation, and persist `attach-failed`. Restoration discards worktree changes as
+with existing author violations; additional local branches/commits may remain for
+inspection. Reviewer/directive edits use the existing read-only reset policy.
+Ordinary author file edits are left for the runner's normal recovery/commit path.
+
+An additional `git ls-remote --refs origin` snapshot detects observable remote-ref
+changes, including a manual push followed by a local reset to the original HEAD.
+Origin URL changes and inability to verify the remote also fail closed. Remote
+changes are **not force-reverted**: they may belong to teammates. Such failures,
+local guard failures, abandoned control connections, and Node restarts during
+attach persist a blocked marker. Every subsequent turn fails clearly with
+`GIT_ERROR` before branch preparation, cleanup, test commands or an agent turn.
+Cancellation cannot clear that marker. Retire the affected session after inspecting
+the worktree/remote; there is no automatic unblock endpoint.
+
+Remote-ref comparison is conservative: unrelated teammates' pushes can also block
+attach. It detects final observable changes, not a no-op push or a transient push
+whose refs are restored before hand-back. This is detection/recovery, not prevention
+of arbitrary git operations by an owner-controlled native CLI. It does not monitor
+other remotes or arbitrary external repositories. Forced Node/terminal termination
+cannot guarantee remount; durable blocking prevents silently continuing an uncertain
+native session on restart. Unexpected disconnect also blocks because the child may
+still be alive. A child that forks background processes is outside the CLI-exit
+ownership contract.
+
+Transcript reload reads Leader's existing normalized transcript. Manual native
+turns remain in the native session history and are available to later agent resumes;
+this change does not import those turns into team-visible transcript history.
+
+### Verification
+
+Tests use a fake control endpoint and spawner, plus real temporary git repositories
+and the real local socket server. Coverage includes `t`/y/n/input/Esc, pause refusal,
+exact resume arguments/CODEX_HOME/inherited stdio, drain and gate ordering, terminal
+restoration after spawn failure, authentication/local identity/Unix permissions,
+unsupported adapters, manual commit/branch switch/push, abandoned connections, and
+clear next-turn guard failures. No real subscription-backed agent is launched by
+these tests. macOS is the verification host; Linux/Windows terminal behavior and
+native CLI interactive versions remain manual integration checks.

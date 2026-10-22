@@ -37,6 +37,86 @@ afterEach(async () => {
 });
 
 describe('CommandRunner', { timeout: 20_000 }, () => {
+  it('reopens the task branch after pause cleanup and preserves the native session and manual file edits', async () => {
+    const fixture = await createFixture({ author: [{ match: { any: true }, turns: [{ reply: { status: 'done', summary: 'ok' } }] }] });
+    await openSession(fixture, 'open', 'sid-return', 'author');
+    const task = taskBrief(149, 'Attach branch');
+    await sendCommand(fixture.connection, 'author', { type: 'author.start', sid: 'sid-return', taskId: task.id, task, branch: 'quorum/task-149', continueExisting: false, issues: [], estimated: 1 });
+    await nextEvent(fixture.connection, (event) => event.type === 'author.submitted');
+    const session = fixture.journal.getSession('sid-return')!;
+    await sendCommand(fixture.connection, 'pause-cancel', { type: 'task.cancel', sid: 'sid-return', taskId: task.id });
+    await fixture.runner.drain();
+    expect((await git(session.worktree, ['branch', '--show-current'])).stdout.trim()).toBe('');
+    const lease = await fixture.runner.attach('sid-return', task.id);
+    expect((await git(session.worktree, ['branch', '--show-current'])).stdout.trim()).toBe('quorum/task-149');
+    await writeFile(join(session.worktree, 'manual-edit.txt'), 'keep');
+    // Branch recovery in a different session must not commit/push/detach this worktree.
+    await openSession(fixture, 'replacement-open', 'sid-replacement', 'author');
+    await sendCommand(fixture.connection, 'replacement-author', { type: 'author.start', sid: 'sid-replacement', taskId: task.id, task, branch: 'quorum/task-149', continueExisting: true, issues: [], estimated: 1 });
+    expect(await nextEvent(fixture.connection, (event) => event.type === 'turn.failed' && event.inReplyTo === 'replacement-author'))
+      .toMatchObject({ code: 'GIT_ERROR', message: expect.stringContaining('held by a native attach session') });
+    expect((await git(session.worktree, ['branch', '--show-current'])).stdout.trim()).toBe('quorum/task-149');
+    expect((await git(session.worktree, ['status', '--porcelain'])).stdout).toContain('manual-edit.txt');
+    await lease.release();
+    expect(fixture.journal.getSession('sid-return')?.nativeId).toBe(session.nativeId);
+    expect((await git(session.worktree, ['status', '--porcelain'])).stdout).toContain('manual-edit.txt');
+    await expect(fixture.runner.attach('sid-return', 999)).rejects.toThrow('Session task changed');
+  });
+
+  it.each(['commit', 'switch', 'push'] as const)('guards manual attach %s and clearly fails the next turn', async (operation) => {
+    const fixture = await createFixture({});
+    await openSession(fixture, 'open', 'sid-attach', 'author');
+    const cwd = fixture.journal.getSession('sid-attach')!.worktree;
+    const head = (await git(cwd, ['rev-parse', 'HEAD'])).stdout.trim();
+    const lease = await fixture.runner.attach('sid-attach');
+    if (operation === 'switch') {
+      expect((await git(cwd, ['checkout', '-b', 'manual'])).code).toBe(0);
+    } else {
+      await writeFile(join(cwd, 'manual.txt'), 'manual edit');
+      expect((await git(cwd, ['add', '-A'])).code).toBe(0);
+      expect((await git(cwd, ['-c', 'user.name=Manual', '-c', 'user.email=manual@example.invalid', 'commit', '-m', 'manual'])).code).toBe(0);
+      if (operation === 'push') {
+        expect((await git(cwd, ['push', 'origin', 'HEAD:refs/heads/manual-push'])).code).toBe(0);
+        // A push remains detectable even if HEAD is restored manually before hand-back.
+        expect((await git(cwd, ['reset', '--hard', head])).code).toBe(0);
+      }
+    }
+    await expect(lease.release()).rejects.toThrow(operation === 'push' ? 'Remote refs changed' : 'Worktree restored');
+    expect((await git(cwd, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(head);
+    expect((await git(cwd, ['branch', '--show-current'])).stdout.trim()).toBe('');
+    expect(fixture.journal.getSession('sid-attach')?.state).toBe('attach-failed');
+    const task = taskBrief(150, 'After attach');
+    await sendCommand(fixture.connection, 'after-attach', { type: 'author.start', sid: 'sid-attach', taskId: task.id, task, branch: 'quorum/task-150', continueExisting: false, issues: [], estimated: 1 });
+    expect(await nextEvent(fixture.connection, (event) => event.type === 'turn.failed' && event.inReplyTo === 'after-attach'))
+      .toMatchObject({ code: 'GIT_ERROR', message: expect.stringContaining('Session blocked; manual recovery required') });
+  });
+
+  it('drains in-flight work and blocks later commands until hand-back guard completes', async () => {
+    let started!: () => void;
+    const active = new Promise<void>((resolve) => { started = resolve; });
+    let finish!: () => void;
+    const wait = new Promise<void>((resolve) => { finish = resolve; });
+    const fixture = await createFixture({ directive: [{ match: { any: true }, turns: [{ reply: { answer: 'ok' } }] }] }, {
+      wrapAdapter(adapter) { return { ...adapter, async runTurn(opts) { started(); await wait; return adapter.runTurn(opts); } }; },
+    });
+    await openSession(fixture, 'open', 'sid-drain', 'directive');
+    await sendCommand(fixture.connection, 'active', { type: 'directive.run', sid: 'sid-drain', directiveId: 'one', requester: 'Alice', text: 'first', estimated: 1 });
+    await active;
+    let acquired = false;
+    const attachment = fixture.runner.attach('sid-drain').then((lease) => { acquired = true; return lease; });
+    await sendCommand(fixture.connection, 'queued', { type: 'directive.run', sid: 'sid-drain', directiveId: 'two', requester: 'Alice', text: 'next', estimated: 1 });
+    expect(acquired).toBe(false);
+    finish();
+    const lease = await attachment;
+    expect(fixture.journal.getCommand('queued')?.state).toBe('received');
+    expect(fixture.journal.getSession('sid-drain')?.state).toBe('attached');
+    await expect(fixture.runner.attach('sid-drain')).rejects.toThrow('already attached');
+    await lease.release();
+    await fixture.runner.drain();
+    expect(fixture.journal.getCommand('queued')?.state).toBe('done');
+    expect(fixture.journal.getSession('sid-drain')?.state).toBe('idle');
+  });
+
   it('streams mock events through the Leader client across author turns', async () => {
     const fixture = await createFixture({ author: [{ match: { any: true }, turns: [
       { writeFiles: { 'stream.txt': 'saved' }, reply: { status: 'done', summary: 'streamed' } },

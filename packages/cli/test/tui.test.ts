@@ -41,6 +41,17 @@ describe('quorum tui', () => {
     expect(startTui).toHaveBeenLastCalledWith(expect.objectContaining({ url: 'http://flag.test', token: 'flag-token' }));
   });
 
+  it('passes the local Node config for attach from the flag or QUORUM_NODE_CONFIG', async () => {
+    const { deps, startTui } = setup();
+    await run(['tui'], deps);
+    expect(startTui.mock.lastCall?.[0]).not.toHaveProperty('nodeConfig');
+    deps.env.QUORUM_NODE_CONFIG = '/env/quorum.node.json';
+    await run(['tui'], deps);
+    expect(startTui).toHaveBeenLastCalledWith(expect.objectContaining({ nodeConfig: '/env/quorum.node.json' }));
+    await run(['tui', '--node-config', '/flag/quorum.node.json'], deps);
+    expect(startTui).toHaveBeenLastCalledWith(expect.objectContaining({ nodeConfig: '/flag/quorum.node.json' }));
+  });
+
   it.each([['tui', '--help'], ['tui', '-h'], ['--help'], ['--version']])('shows %j without login, TTY or UI launch', async (...argv) => {
     const { deps, out, startTui } = setup();
     deps.env = { QUORUM_CONFIG: '/missing/config.json' };

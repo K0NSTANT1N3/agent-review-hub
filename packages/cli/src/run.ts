@@ -58,10 +58,12 @@ author and ask agents. They can never approve, send back, cancel or merge.`;
 export const TUI_USAGE = `quorum tui: terminal UI for tasks and live agent transcripts
 
 Usage:
-  quorum tui [--url <leader url>] [--token <token>]
+  quorum tui [--url <leader url>] [--token <token>] [--node-config <quorum.node.json>]
 
 Options:
   --url, --token  override QUORUM_URL / QUORUM_TOKEN / the saved login
+  --node-config   local Node config (mode 0600) to attach to this machine's agent sessions with t
+                  (or QUORUM_NODE_CONFIG)
   -h, --help      show this help
 
 Uses the same config file as quorum login. Needs an interactive terminal.
@@ -173,8 +175,8 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
 
     switch (command) {
       case 'tui': {
-        const { values, positionals } = parse({});
-        if (positionals.length > 0 || values.json) throw new UsageError('usage: quorum tui [--url <leader url>] [--token <token>]');
+        const { values, positionals } = parse({ 'node-config': { type: 'string' } });
+        if (positionals.length > 0 || values.json) throw new UsageError('usage: quorum tui [--url <leader url>] [--token <token>] [--node-config <quorum.node.json>]');
         const config = resolveConfig(values, deps.env);
         // Use the CLI's auth error and URL normalization, including ws(s) join URLs.
         const client = connect(values);
@@ -183,7 +185,8 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
         await client.call('listAgents');
         const { warning } = readConfig(configPath(deps.env));
         const launch = deps.startTui ?? (await import('@quorum/tui/start')).startTui;
-        await launch({ url: client.baseUrl, token: config.token!, warning });
+        const nodeConfig = values['node-config'] ?? deps.env.QUORUM_NODE_CONFIG;
+        await launch({ url: client.baseUrl, token: config.token!, warning, ...(nodeConfig === undefined ? {} : { nodeConfig }) });
         return EXIT.OK;
       }
 

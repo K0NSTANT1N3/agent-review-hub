@@ -39,19 +39,50 @@ class FakeClient implements QuorumApi {
   }
 }
 
-async function harness(client = new FakeClient()) {
+async function harness(client = new FakeClient(), onAttach?: Parameters<typeof App>[0]['onAttach']) {
   let handlers: StreamHandlers | undefined;
   const start = vi.fn();
   const stop = vi.fn();
   const createStream: StreamFactory = (callbacks) => { handlers = callbacks; return { start, stop }; };
-  const app = render(<App client={client} url="https://leader.test" token="test-token" createStream={createStream} seed={{ ...fixtureState(), tasks: client.tasks }} columns={80} rows={24} noColor />);
+  const app = render(<App onAttach={onAttach} client={client} url="https://leader.test" token="test-token" createStream={createStream} seed={{ ...fixtureState(), tasks: client.tasks }} columns={80} rows={24} noColor />);
   await vi.waitFor(() => expect(app.lastFrame()).toContain('Rate-limit failed logins'));
-  const key = async (text: string) => { app.stdin.write(text); await new Promise((resolve) => setTimeout(resolve, 35)); };
+  const key = async (text: string) => { app.stdin.write(text); await new Promise((resolve) => setTimeout(resolve, 100)); };
   const action = (route: ApiRouteName) => client.calls.filter((call) => call.route === route);
   return { ...app, client, key, action, start, stop, get handlers() { return handlers!; } };
 }
 
 describe('keyboard actions', () => {
+  it('requires t then y to attach; n, Escape and input keep control in Ink', async () => {
+    const attach = vi.fn();
+    const app = await harness(new FakeClient(), attach);
+    await app.key('t');
+    expect(app.lastFrame()).toContain('Attach task #12 session? y/n');
+    expect(attach).not.toHaveBeenCalled();
+    await app.key('n');
+    await app.key('t');
+    await app.key('\u001b');
+    expect(attach).not.toHaveBeenCalled();
+    await app.key('i');
+    await app.key('t');
+    expect(attach).not.toHaveBeenCalled();
+    await app.key('\u001b');
+    await app.key('t');
+    await app.key('y');
+    expect(attach).toHaveBeenCalledWith(12, 'author', expect.objectContaining({ sessions: expect.any(Array) }));
+  });
+
+  it('never attaches a reviewer session, even when its agent is selected', async () => {
+    const attach = vi.fn();
+    const app = await harness(new FakeClient(), attach);
+    await app.key('\t');
+    await app.key('\t');
+    await app.key('\u001b[B');
+    await app.key('t');
+    await app.key('y');
+    expect(attach).not.toHaveBeenCalled();
+    expect(app.lastFrame()).toContain('reviewer sessions stay read-only');
+  });
+
   it('maps approve and pause/resume to the matching routes', async () => {
     const app = await harness();
     await app.key('a');

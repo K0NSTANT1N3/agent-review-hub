@@ -137,6 +137,69 @@ export class CommandRunner {
   private readonly cancelResultBySid = new Map<string, string>();
   private readonly turnCommands = new Map<string, Command>();
   private stopping = false;
+  private readonly attachments = new Map<string, Promise<void>>();
+
+  /** Gate commands before waiting for already queued work; the native session has one owner. */
+  async attach(sid: string, taskId?: number): Promise<{ release(abandoned?: boolean): Promise<void> }> {
+    if (this.stopping || this.attachments.has(sid)) throw new Error('Session is already attached or Node is stopping.');
+    let unlock!: () => void;
+    const pending = this.queues.get(sid);
+    this.attachments.set(sid, new Promise<void>((resolve) => { unlock = resolve; }));
+    let before: { head: string; branch: string };
+    let remote: string;
+    try {
+      await pending;
+      const session = this.requireSession(sid);
+      const last = this.options.journal.lastSessionCommand(sid)?.cmd;
+      if (taskId !== undefined && (!last || !('taskId' in last) || last.taskId !== taskId)) throw new Error('Session task changed while pausing; select its current task and retry.');
+      if (['closed', 'lost', 'attach-failed'].includes(session.state)) throw new Error('Session is unavailable; manual recovery required.');
+      // Human pause cancellation releases the worktree onto origin/main. Reopen the task's
+      // branch/review commit before handing over the existing native conversation.
+      if (taskId !== undefined && last && 'branch' in last) {
+        if (last.type.startsWith('author.')) {
+          assertGitSuccess(await git(session.worktree, ['checkout', last.branch]), 'restore task branch for attach');
+        } else if ('headCommit' in last) {
+          assertGitSuccess(await git(session.worktree, ['checkout', '--detach', last.headCommit]), 'restore review commit for attach');
+        }
+      }
+      before = await this.gitState(sid);
+      remote = await this.attachRemoteState(sid);
+      this.options.journal.updateSession(sid, { state: 'attached' });
+    } catch (error) {
+      this.attachments.delete(sid);
+      unlock();
+      throw error;
+    }
+    return { release: async (abandoned = false) => {
+      try {
+        // Interactive CLIs bypass adapter tool policies, including Claude's enforced policy.
+        const failures: string[] = [];
+        try { await this.checkTurnGit(sid, this.sessionProfile(this.requireSession(sid)), before, true); }
+        catch (error) { failures.push(errorMessage(error)); }
+        try {
+          if (await this.attachRemoteState(sid) !== remote) failures.push('Remote refs changed during attach (possible manual push). Remote changes were not reverted.');
+        } catch (error) { failures.push(errorMessage(error)); }
+        if (abandoned) failures.push('Attach connection lost; native process ownership is unknown.');
+        if (failures.length) throw new Error(failures.join(' '));
+        this.options.journal.updateSession(sid, { state: 'idle' });
+      } catch (error) {
+        this.options.journal.updateSession(sid, { state: 'attach-failed' });
+        throw new Error(`Attach git guard failed: ${errorMessage(error)} Session blocked; manual recovery required.`, { cause: error });
+      } finally {
+        this.attachments.delete(sid);
+        unlock();
+      }
+    } };
+  }
+
+  private async attachRemoteState(sid: string): Promise<string> {
+    const cwd = this.worktree(sid);
+    const url = await git(cwd, ['remote', 'get-url', 'origin']);
+    assertGitSuccess(url, 'read attach remote');
+    const refs = await git(cwd, ['ls-remote', '--refs', 'origin']);
+    assertGitSuccess(refs, 'check attach remote refs');
+    return url.stdout + refs.stdout.split('\n').sort().join('\n');
+  }
 
   constructor(private readonly options: CommandRunnerOptions) {}
 
@@ -150,13 +213,14 @@ export class CommandRunner {
       if (active !== undefined && (cancelKey === null || active.workKey === cancelKey)) active.controller.abort();
     }
 
+    const attachment = this.attachments.get(command.sid);
     const previous = this.queues.get(command.sid) ?? Promise.resolve(null);
     const next = previous
       .catch((error: unknown) => {
         this.reportError(error);
         return null;
       })
-      .then(() => this.runCommand(msgId, command));
+      .then(async () => { await attachment; return this.runCommand(msgId, command); });
     this.queues.set(command.sid, next);
     void next.catch((error: unknown) => this.reportError(error)).finally(() => {
       if (this.queues.get(command.sid) === next) this.queues.delete(command.sid);
@@ -191,6 +255,9 @@ export class CommandRunner {
       return null;
     }
 
+    if (command.type !== 'session.close' && this.options.journal.getSession(command.sid)?.state === 'attach-failed') {
+      return this.finish(msgId, this.failureEvent(msgId, command, new RunnerFailure('GIT_ERROR', 'Native attach ended without a clean git guard. Session blocked; manual recovery required.')));
+    }
     if (command.type === 'session.open') return this.openSession(msgId, command);
     if (command.type === 'session.close') return this.closeSession(msgId, command);
     if (command.type === 'task.cancel') return this.cancelSessionWork(msgId, command);
@@ -206,9 +273,10 @@ export class CommandRunner {
     const usage = new UsageAccumulator();
     this.turnCommands.set(command.sid, command);
     const session = this.options.journal.getSession(command.sid);
-    if (session !== null) this.options.journal.updateSession(command.sid, { state: 'busy' });
+    if (session !== null && !['attached', 'attach-failed'].includes(session.state)) this.options.journal.updateSession(command.sid, { state: 'busy' });
 
     try {
+      if (session?.state === 'attach-failed' || session?.state === 'attached') throw new RunnerFailure('GIT_ERROR', 'Native attach ended without a clean git guard. Session blocked; manual recovery required.');
       this.throwIfAborted(controller.signal);
       const event = await this.executeTurnCommand(msgId, command, controller.signal, usage);
       return this.finish(msgId, event);
@@ -903,6 +971,9 @@ export class CommandRunner {
       if (session.sid === sid || session.state === 'busy' || session.state === 'closed') continue;
       const checkedOut = await git(session.worktree, ['branch', '--show-current']);
       if (checkedOut.code !== 0 || checkedOut.stdout.trim() !== branch) continue;
+      if (this.attachments.has(session.sid) || ['attached', 'attach-failed'].includes(session.state)) {
+        throw new RunnerFailure('GIT_ERROR', `Task branch ${branch} is held by a native attach session. Hand back or retire that session before recovering its branch.`);
+      }
 
       await ensureCleanBeforeAuthorTurn(config, session.sid);
       const pushed = await git(session.worktree, ['push', 'origin', branch]);

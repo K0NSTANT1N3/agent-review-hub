@@ -27,3 +27,9 @@ export function registerTerminalCleanup(
     target.removeListener('unhandledRejection', crash);
   };
 }
+
+/** Unmount restores Ink's raw mode, cursor and alternate screen before the child inherits stdio. */
+export async function handoffTerminal<T>(terminal: { suspend(): void | Promise<void>; restore(): void }, run: () => Promise<T>): Promise<T> {
+  try { await terminal.suspend(); return await run(); }
+  finally { terminal.restore(); }
+}

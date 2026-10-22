@@ -5,10 +5,11 @@ import { normalizeLeaderUrl, parseFlags, resolveConfig } from './config.js';
 
 const HELP = `quorum-tui [--url <http(s) Leader URL>] [--token <token>]
 
+Local attach: --node-config <quorum.node.json> or QUORUM_NODE_CONFIG.
 Connection: flags, then QUORUM_URL / QUORUM_TOKEN, then the quorum CLI config.
 Config: QUORUM_CONFIG, else XDG_CONFIG_HOME/quorum/cli.json, else ~/.config/quorum/cli.json.
 Keyboard: tab panes, ↑/↓ select, enter open/send, a approve, s send back,
-p pause/resume, c cancel (y/n), n new task, / filter, m message mode, ? help, q quit.
+p pause/resume, t attach (y/n), c cancel (y/n), n new task, / filter, m message mode, ? help, q quit.
 `;
 
 async function main(): Promise<void> {
@@ -18,7 +19,7 @@ async function main(): Promise<void> {
   const config = resolveConfig(flags, process.env);
   if (!config.url || !config.token) throw new Error('Set --url and --token, or configure the quorum CLI first. See quorum-tui --help.');
   const url = normalizeLeaderUrl(config.url);
-  await startTui({ url, token: config.token, warning: config.warning });
+  await startTui({ url, token: config.token, warning: config.warning, nodeConfig: flags['node-config'] ?? process.env.QUORUM_NODE_CONFIG });
 }
 
 main().catch((error: unknown) => {
