@@ -39,6 +39,7 @@ describe('CLI config', () => {
 
   it('accepts private files and handles missing, malformed and untyped config', () => {
     expect(readConfig(configFile()).warning).toBeUndefined();
+    expect(readConfig(configFile(0o644), 'win32').warning).toBeUndefined();
     expect(readConfig('/does-not-exist/quorum-cli.json')).toEqual({ config: {} });
     expect(readConfig(configFile(0o600, '{oops'))).toEqual({ config: {} });
     expect(readConfig(configFile(0o600, '{"url":42,"token":null}')).config).toEqual({});
@@ -51,7 +52,10 @@ describe('CLI config', () => {
     expect(() => parseFlags(['--unknown'])).toThrow();
     expect(() => parseFlags(['--token'])).toThrow();
     expect(normalizeLeaderUrl(' https://leader.test/path ')).toBe('https://leader.test');
-    expect(() => normalizeLeaderUrl('ws://leader.test')).toThrow('http');
+    // The same join URLs the quorum CLI and the desktop app accept.
+    expect(normalizeLeaderUrl('ws://leader.test:7420/ws/node')).toBe('http://leader.test:7420');
+    expect(normalizeLeaderUrl('wss://leader.test/ws/node')).toBe('https://leader.test');
+    expect(() => normalizeLeaderUrl('ftp://leader.test')).toThrow('http');
     expect(() => normalizeLeaderUrl('http://user:pass@leader.test')).toThrow('credentials');
   });
 });
