@@ -60,8 +60,8 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 | Transcripts | Node `transcript` frames (`transcript-v1`). REST `GET /api/tasks/:id/transcript`. UI event `transcript.appended`. The Node replaces the owner home path with `~` before the events go to the Leader. |
 | New adapters | Codex, pi and omp CLI adapters. The Node starts a new command for each profile. The Node can resume a session. Trust: Codex `sandboxed`. pi and omp `low`. |
 | Owner tokens | Scope `owner` on API tokens. `quorum-leader add-token --scope owner`. Owner tokens can act on the tasks of their owner. An admin owner token can act on all tasks. |
-| Codex isolation | The driver sets `CODEX_HOME=<dataDir>/codex-home` with a link to `auth.json`. The agent does not read owner `config.toml`, `AGENTS.md` or skills. Turns also have `--ignore-user-config --ignore-rules`. |
-| Known gaps | The operator did not complete a live check of Codex isolation (the account usage limit stopped the check). Kilo now has an isolated JSON CLI adapter (see below). omp cannot stop configured MCP servers. |
+| Codex isolation | The driver sets `CODEX_HOME=<dataDir>/codex-home` with a link to `auth.json`. It sets `HOME` and `ZDOTDIR` to the empty `<dataDir>/codex-home/home`. Turns also have `--ignore-user-config --ignore-rules`. A live check on 2026-10-22 with `codex-cli 0.163.0` showed no reviewer write in new or resumed sessions. The prompt had no owner config, `AGENTS.md`, skills or shell startup files. |
+| Known gaps | The Codex read-only sandbox can read all files of the owner. A prompt can tell a reviewer to read an owner file by its absolute path, and the text goes into the transcript. Kilo now has an isolated JSON CLI adapter (see below). omp cannot stop configured MCP servers. |
 
 ## Who did what
 

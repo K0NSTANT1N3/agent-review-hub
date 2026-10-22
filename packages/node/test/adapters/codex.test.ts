@@ -1,6 +1,6 @@
 import { AgentEventSchema } from '@quorum/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { lstatSync, mkdtempSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCodexAdapter, parseResetAt, prepareCodexHome } from '../../src/adapters/codex.js';
@@ -161,10 +161,39 @@ describe('Codex adapter', () => {
       const replay = replaySpawn([fixture('codex-t2')]);
       await turn(createCodexAdapter(config, { ...replay, homeDir }), { profile: 'reviewer' });
       expect(replay.calls[0]![2].env.CODEX_HOME).toBe(homeDir);
+      expect(replay.calls[0]![2].env.HOME).toBe(join(homeDir, 'home'));
       expect(readlinkSync(join(homeDir, 'auth.json'))).toBe(join(owner, 'auth.json'));
       expect(lstatSync(join(homeDir, 'config.toml'), { throwIfNoEntry: false })).toBeUndefined();
       expect(lstatSync(join(homeDir, 'AGENTS.md'), { throwIfNoEntry: false })).toBeUndefined();
       expect(statSync(homeDir).mode & 0o077).toBe(0);
+      vi.unstubAllEnvs();
+    });
+
+    it('hides the owner home, skills and shell startup files from Codex and its tool shells', async () => {
+      const owner = tempDir();
+      writeFileSync(join(owner, 'auth.json'), '{}');
+      const ownerHome = tempDir();
+      mkdirSync(join(ownerHome, '.agents', 'skills', 'private-notes'), { recursive: true });
+      writeFileSync(join(ownerHome, '.zshrc'), 'export CODEX_HOME="$HOME/.codex"');
+      const homeDir = join(tempDir(), 'codex-home');
+      vi.stubEnv('CODEX_HOME', owner);
+      vi.stubEnv('HOME', ownerHome);
+      vi.stubEnv('ZDOTDIR', ownerHome);
+      vi.stubEnv('BASH_ENV', join(ownerHome, '.bashrc'));
+      vi.stubEnv('ENV', join(ownerHome, '.shrc'));
+      for (const nativeId of [null, 'thread-1']) {
+        const replay = replaySpawn([fixture('codex-t2')]);
+        await turn(createCodexAdapter(config, { ...replay, homeDir }), { profile: 'reviewer', nativeId });
+        const env = replay.calls[0]![2].env;
+        expect(env.HOME).toBe(join(homeDir, 'home'));
+        expect(env.ZDOTDIR).toBe(join(homeDir, 'home'));
+        expect(env).not.toHaveProperty('BASH_ENV');
+        expect(env).not.toHaveProperty('ENV');
+        expect(JSON.stringify(env)).not.toContain(ownerHome);
+      }
+      expect(readdirSync(join(homeDir, 'home'))).toEqual([]);
+      expect(statSync(join(homeDir, 'home')).mode & 0o077).toBe(0);
+      expect(process.env.HOME).toBe(ownerHome);
       vi.unstubAllEnvs();
     });
 

@@ -20,6 +20,7 @@ export function prepareCodexHome(homeDir: string, sourceHome: string = process.e
   const auth = join(sourceHome, 'auth.json');
   if (!existsSync(auth)) throw new AdapterError('ADAPTER_ERROR', `Codex is not logged in (no auth.json in ${sourceHome}); run \`codex login\``);
   mkdirSync(homeDir, { recursive: true, mode: 0o700 });
+  mkdirSync(codexUserHome(homeDir), { recursive: true, mode: 0o700 });
   const link = join(homeDir, 'auth.json');
   const stat = lstatSync(link, { throwIfNoEntry: false });
   if (stat?.isSymbolicLink() && readlinkSync(link) === auth) return;
@@ -30,6 +31,24 @@ export function prepareCodexHome(homeDir: string, sourceHome: string = process.e
   } catch {
     copyFileSync(auth, link);
   }
+}
+
+/** The empty HOME that Quorum turns run with. Lives inside the Quorum Codex home. */
+export function codexUserHome(homeDir: string): string {
+  return join(homeDir, 'home');
+}
+
+/**
+ * CODEX_HOME alone is not enough. Codex lists every skill under $HOME/.agents/skills in the prompt,
+ * and its shell snapshot sources the owner's ~/.zshrc (or $ZDOTDIR/.zshrc) into every tool shell,
+ * which brings back the owner's exports, functions and CODEX_HOME. An empty HOME stops both.
+ */
+export function codexEnv(homeDir: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, CODEX_HOME: homeDir, HOME: codexUserHome(homeDir), ZDOTDIR: codexUserHome(homeDir) };
+  // Startup files that bash and sh read from the environment, not from HOME.
+  delete env.BASH_ENV;
+  delete env.ENV;
+  return env;
 }
 
 /** Reads Codex's "try again at 5:02 AM" into the next matching local time. */
@@ -76,7 +95,7 @@ export function createCodexAdapter(config: CodexConfig, options: { spawnFn?: Spa
       let usage = { inputTokens: 0, outputTokens: 0 };
       const result = await runCliProcess({
         binary: config.binaryPath ?? 'codex', argv, cwd, signal, timeoutMs, spawnFn: options.spawnFn,
-        ...(options.homeDir === undefined ? {} : { env: { ...process.env, CODEX_HOME: options.homeDir } }),
+        ...(options.homeDir === undefined ? {} : { env: codexEnv(options.homeDir) }),
         onJson: (value) => {
           const event = record(value);
           const item = record(event.item);
