@@ -18,6 +18,7 @@ import { ensureBaseClone, type WorktreeConfig } from './git/worktrees.js';
 import { NodeJournal, openJournal } from './journal.js';
 import { CommandRunner } from './runner/command-runner.js';
 import { LeaderClient } from './ws/leader-client.js';
+import { startLocalControl } from './local-control.js';
 import { adapterTrust, detectAgents } from './detect.js';
 
 const DEFAULT_TURN_TIMEOUT_SEC = 1800;
@@ -46,6 +47,7 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
   const logger = pino({ level: process.env.QUORUM_LOG_LEVEL ?? 'info' }).child({ agentId: config.agentId });
   const journal = await openJournal(config.dataDir);
   let leaderClient: LeaderClient | undefined;
+  let control: Awaited<ReturnType<typeof startLocalControl>> | undefined;
 
   try {
     const interrupted = journal.recoverOnStartup();
@@ -93,7 +95,7 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
       const sessions = journal.listSessions().map((session) => ({
         sid: session.sid,
         alive: session.state !== 'closed' && session.state !== 'lost',
-        busy: session.state === 'busy',
+        busy: session.state === 'busy' || session.state === 'attached',
         contextTokens: session.contextTokens,
       }));
       return NodeStatusSchema.parse({
@@ -122,6 +124,8 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
       },
       onError: (error) => logger.error({ error }, 'command runner error'),
     });
+
+    control = await startLocalControl(config, journal, runner);
 
     leaderClient = new LeaderClient({
       config,
@@ -163,6 +167,7 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
           // Stop turns first, then disconnect so no new commands arrive while queued work drains.
           runner.stop();
           await leaderClient?.stop();
+          await control?.close();
           await runner.drain();
           journal.close();
           logger.info({ stopped }, 'node daemon stopped');
@@ -177,6 +182,7 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
     };
   } catch (error) {
     await leaderClient?.stop().catch(() => undefined);
+    await control?.close();
     journal.close();
     throw error;
   }
@@ -185,6 +191,10 @@ export async function startDaemon(input: NodeConfig, options: StartDaemonOptions
 async function restoreSessions(journal: NodeJournal, logger: Logger): Promise<void> {
   for (const session of journal.listSessions()) {
     if (session.state === 'closed') continue;
+    if (session.state === 'attached' || session.state === 'attach-failed') {
+      journal.updateSession(session.sid, { state: 'attach-failed' });
+      continue;
+    }
     if (await sessionWorktreeExists(session.worktree)) {
       journal.updateSession(session.sid, { state: 'idle' });
       continue;

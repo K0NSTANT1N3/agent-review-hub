@@ -42,7 +42,7 @@ export function resolveConfig(flags: Partial<ConnectionConfig>, env: Env) {
 }
 
 export function parseFlags(args: string[]) {
-  return parseArgs({ args, options: { url: { type: 'string' }, token: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' } } }).values;
+  return parseArgs({ args, options: { 'node-config': { type: 'string' }, url: { type: 'string' }, token: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' } } }).values;
 }
 
 export function normalizeLeaderUrl(input: string): string {

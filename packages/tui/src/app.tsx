@@ -12,7 +12,11 @@ export interface Stream { start(): void; stop(): void }
 export type StreamFactory = (handlers: StreamHandlers) => Stream;
 export const initialView: ViewState = { pane: 'chat', agentIndex: 0, filter: '', mode: 'answer', editor: emptyEditor, inputMode: 'message', chatTop: null, help: false, confirmCancel: false, busy: false };
 
-export function App({ client, url, token, warning, createStream, seed, columns, rows, noColor = process.env.NO_COLOR !== undefined }: {
+export function App({ client, url, token, warning, createStream, seed, onAttach, attaching = false, attachError, initialTaskId, columns, rows, noColor = process.env.NO_COLOR !== undefined }: {
+  onAttach?: (taskId: number, sid: string, state: State) => void;
+  attaching?: boolean;
+  attachError?: string;
+  initialTaskId?: number;
   client: QuorumApi;
   url: string;
   token: string;
@@ -24,7 +28,7 @@ export function App({ client, url, token, warning, createStream, seed, columns, 
   noColor?: boolean;
 }) {
   const [state, dispatch] = useReducer(reducer, seed ?? initialState);
-  const [view, setView] = useState<ViewState>(initialView);
+  const [view, setView] = useState<ViewState>({ ...initialView, taskId: initialTaskId });
   const [tick, setTick] = useState(0);
   const size = useWindowSize();
   const { exit } = useApp();
@@ -33,11 +37,14 @@ export function App({ client, url, token, warning, createStream, seed, columns, 
   const stateRef = useRef(state);
   const selectionRef = useRef(taskId);
   const busy = useRef(false);
+  const [confirmAttach, setConfirmAttach] = useState(false);
   const newTitle = useRef('');
   stateRef.current = state;
   selectionRef.current = taskId;
   const width = columns ?? size.columns;
   const height = rows ?? size.rows;
+
+  useEffect(() => { if (attachError) dispatch({ type: 'error', error: attachError }); }, [attachError]);
 
   useEffect(() => {
     let alive = true;
@@ -111,17 +118,31 @@ export function App({ client, url, token, warning, createStream, seed, columns, 
   }
 
   usePaste((text) => {
-    if (view.pane === 'input' && !busy.current) setView((current) => {
+    if (view.pane === 'input' && !busy.current && !attaching) setView((current) => {
       const editor = editText(current.editor, text, {}, current.inputMode === 'new-title' ? 200 : 20_000);
       return { ...current, editor, ...(current.inputMode === 'filter' ? { filter: editor.value, chatTop: null } : {}) };
     });
   });
 
   useInput((input, key) => {
+    if (attaching) return;
     if (input === 'c' && key.ctrl) { exit(); return; }
     if (key.escape) {
+      setConfirmAttach(false);
       dispatch({ type: 'error' });
       setView((current) => ({ ...current, help: false, confirmCancel: false, pane: current.inputMode === 'filter' ? 'tasks' : 'chat', inputMode: 'message', editor: emptyEditor }));
+      return;
+    }
+    if (confirmAttach) {
+      setConfirmAttach(false);
+      if (input.toLowerCase() === 'y' && task) {
+        const sessions = state.sessions.filter((session) => session.lockKind === 'task' && session.lockRef === String(task.id));
+        const chosen = view.pane === 'agents' ? sessions.find((session) => session.agentId === state.agents[view.agentIndex]?.id)
+          : sessions.find((session) => session.id === task.authorSessionId) ?? sessions[0] ?? state.sessions.find((session) => session.id === task.authorSessionId);
+        if (!chosen) dispatch({ type: 'error', error: 'No selected task session. In Agents select a task participant, then press t.' });
+        else if (!onAttach) dispatch({ type: 'error', error: 'Local attach is unavailable in this client.' });
+        else onAttach(task.id, chosen.id, state);
+      } else if (input.toLowerCase() !== 'n') setConfirmAttach(true);
       return;
     }
     if (view.confirmCancel) {
@@ -183,6 +204,7 @@ export function App({ client, url, token, warning, createStream, seed, columns, 
       setView((current) => ({ ...current, pane: current.pane === 'tasks' && key.return ? 'chat' : 'input', mode: current.pane === 'agents' && key.return ? 'ask' : current.mode, inputMode: 'message', editor: emptyEditor }));
       return;
     }
+    if (input === 't' && task) { setConfirmAttach(true); return; }
     if (input === 'm') { changeMode(); return; }
     if (input === '/') { setView((current) => ({ ...current, pane: 'input', inputMode: 'filter', editor: { value: current.filter, cursor: [...current.filter].length } })); return; }
     const action = shortcut(input);
@@ -193,5 +215,5 @@ export function App({ client, url, token, warning, createStream, seed, columns, 
     else if (action) void run({ kind: action, task });
   });
 
-  return <Screen state={state} view={view} columns={width} rows={height} team={new URL(url).host} warning={warning} tick={tick} noColor={noColor} />;
+  return <Screen state={state} view={{ ...view, confirmAttach, busy: view.busy || attaching }} columns={width} rows={height} team={new URL(url).host} warning={warning} tick={tick} noColor={noColor} />;
 }

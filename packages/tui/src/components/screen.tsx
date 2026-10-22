@@ -20,6 +20,7 @@ export interface ViewState {
   chatTop: number | null;
   help: boolean;
   confirmCancel: boolean;
+  confirmAttach?: boolean;
   busy: boolean;
 }
 
@@ -71,6 +72,7 @@ export const HELP = [
   'm Cycle answer author / send back / ask an agent',
   'a Approve task; s Send back with a comment',
   'p Pause / resume task; c Cancel (y/n confirmation)',
+  't Attach selected task session locally (y/n); Agents chooses participant',
   'n New task: enter title, then description (own mode)',
   '/ Filter tasks by id, title or state; Esc Finish filter',
   'PgUp Stop following and scroll up; PgDn Scroll / follow',
@@ -137,8 +139,8 @@ export function Screen({ state, view, columns, rows, team, warning, tick = 0, no
   ]} />;
   const agent = state.agents[Math.min(view.agentIndex, state.agents.length - 1)];
   const mode = view.mode === 'answer' ? `Answer author · ${task?.authorAgentId ?? 'unassigned'}` : view.mode === 'send-back' ? 'Send back' : `Ask an agent · ${agent?.id ?? 'select agent'}`;
-  const inputTitle = view.confirmCancel ? `Cancel task #${task?.id}? y/n` : view.inputMode === 'filter' ? 'Filter tasks' : view.inputMode === 'new-title' ? 'New task · title' : view.inputMode === 'new-description' ? 'New task · description' : mode;
-  const input = view.confirmCancel ? 'Press y to cancel, n to keep task.' : view.busy ? 'Sending…' : view.pane === 'input' ? editorLine(view.editor, width - 6) : 'Enter: write message · m: change mode';
+  const inputTitle = view.confirmAttach ? `Attach task #${task?.id} session? y/n` : view.confirmCancel ? `Cancel task #${task?.id}? y/n` : view.inputMode === 'filter' ? 'Filter tasks' : view.inputMode === 'new-title' ? 'New task · title' : view.inputMode === 'new-description' ? 'New task · description' : mode;
+  const input = view.confirmAttach ? 'Press y to pause task and attach, n to keep viewing.' : view.confirmCancel ? 'Press y to cancel, n to keep task.' : view.busy ? 'Sending…' : view.pane === 'input' ? editorLine(view.editor, width - 6) : 'Enter: write message · m: change mode';
   const usage = task ? transcriptUsage(state.data[task.id]?.transcripts ?? []) : '';
   return (
     <Box width={width} height={height} flexDirection="column" overflow="hidden">
@@ -153,7 +155,7 @@ export function Screen({ state, view, columns, rows, team, warning, tick = 0, no
       <Panel title={inputTitle} width={width} height={3} focused={view.pane === 'input' || view.confirmCancel} lines={[{ text: `› ${input}` }]} noColor={noColor} />
       <Text color={!noColor && state.error ? 'redBright' : undefined}>{fit(state.error ?? warning ?? '', width)}</Text>
       <Text>{fit('↑/↓ select  tab pane  enter open/send  a approve  s send back  p pause/resume', width)}</Text>
-      <Text>{fit('c cancel(y/n)  n new  / filter  m mode  PgUp/PgDn scroll  ? help  q quit', width)}</Text>
+      <Text>{fit('t attach(y/n)  c cancel(y/n)  n new  / filter  m mode  PgUp/PgDn scroll  ? help  q quit', width)}</Text>
       <Text dimColor={!noColor}>{fit(usage || `${task ? `Task #${task.id} · round ${task.reviewRound}` : `${tasks.length} tasks`} · ${state.connection}`, width)}</Text>
     </Box>
   );

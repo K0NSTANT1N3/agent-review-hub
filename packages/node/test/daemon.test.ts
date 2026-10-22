@@ -25,6 +25,18 @@ afterEach(async () => {
 });
 
 describe('Node daemon', () => {
+  it('keeps interrupted attach blocked across daemon startup', async () => {
+    const fixture = await createFixture({ interruptedAttach: true });
+    await fixture.connection.next('hello');
+    fixture.connection.send(welcomeFrame());
+    await fixture.connection.next('heartbeat');
+    await sendCommand(fixture.connection, 'after-restart', { type: 'author.sync', sid: 'interrupted-attach', taskId: 1, branch: 'quorum/task-1', mainBranch: 'main', estimated: 1 });
+    expect(await expectEvent(fixture.connection, 'turn.failed', 'after-restart')).toMatchObject({ code: 'GIT_ERROR', message: expect.stringContaining('Session blocked') });
+    const journal = await openJournal(fixture.dataDir);
+    expect(journal.getSession('interrupted-attach')?.state).toBe('attach-failed');
+    journal.close();
+  });
+
   it('runs a full author and review flow and applies updated settings on the next heartbeat', async () => {
     const fixture = await createFixture();
     const hello = await fixture.connection.next('hello');
@@ -143,7 +155,7 @@ describe('Node daemon', () => {
   }, 15_000);
 });
 
-async function createFixture(options: { adapter?: AgentAdapter } = {}): Promise<Fixture> {
+async function createFixture(options: { adapter?: AgentAdapter; interruptedAttach?: boolean } = {}): Promise<Fixture> {
   const leader = new FakeLeader();
   await leader.start();
   let repo: TempRepo | undefined;
@@ -172,6 +184,11 @@ async function createFixture(options: { adapter?: AgentAdapter } = {}): Promise<
       gitIdentity: repo.config.gitIdentity,
       adapter: { type: 'mock', scriptPath },
     });
+    if (options.interruptedAttach) {
+      const journal = await openJournal(config.dataDir);
+      journal.createSession({ sid: 'interrupted-attach', nativeId: 'native', worktree: repo.seedPath, profile: 'author', contextTokens: 0, state: 'attached' });
+      journal.close();
+    }
     daemon = await startDaemon(config, {
       assumeIdle: true,
       ...(options.adapter === undefined ? {} : { adapter: options.adapter }),

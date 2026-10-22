@@ -23,6 +23,6 @@ branch quorum/12 · head c91d5aa · tests passed
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ↑/↓ select  tab pane  enter open/send  a approve  s send back  p pause/resume
-c cancel(y/n)  n new  / filter  m mode  PgUp/PgDn scroll  ? help  q quit
+t attach(y/n)  c cancel(y/n)  n new  / filter  m mode  PgUp/PgDn scroll  ? help
 tokens 1000 in / 200 out · context 4000"
 `;

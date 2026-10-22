@@ -289,7 +289,7 @@ chmod 600 ~/.config/quorum/cli.json
 ```
 
 A requester token can read data, create tasks, answer a blocked author and ask an agent.
-An owner token can also approve, send back, pause and cancel the tasks of its owner.
+An owner token can also approve, send back, pause and cancel the tasks of its owner. Attach (`t`, then `y`) also needs this permission.
 An admin owner token can do these actions on all tasks.
 
 To make an owner token:
@@ -299,6 +299,28 @@ quorum-leader add-token --config quorum.leader.json --id <agent id> --scope owne
 ```
 
 **Settings → Agent CLI access** makes a requester token.
+
+To attach a local agent's native TUI, pass the local Node config as well:
+
+```sh
+node packages/tui/dist/cli.js --url https://leader.example.com --token '<owner API token>' --node-config /path/to/quorum.node.json
+```
+
+`QUORUM_NODE_CONFIG` is the environment alternative. The Node config holds the
+Node's own token; keep it private (0600 on Unix). Start the Node on this machine.
+`t` selects the task's author/participant, or the selected agent's task session
+when the Agents pane is focused. Confirm with `y`; `n` or Esc cancels. Quorum pauses
+the task, drains local work, leaves Ink's alternate screen, and runs the native
+resume command with inherited terminal input/output. Exit that agent to return.
+Quorum restores the screen, checks git, resumes the task and reloads the transcript.
+
+Attach supports Claude Code, Codex, pi and omp. Codex uses the Node driver's
+`<dataDir>/codex-home`. Remote sessions, mock and OpenCode cannot attach. Native
+session IDs stay on this machine; the Leader/team never receive them. Manual git
+commits/branch switches trigger restoration and a blocked-session warning; possible
+pushes block future turns without rewriting the remote. Inspect and retire a
+blocked session before continuing. Details: [TUI README](../packages/tui/README.md).
+
 
 `quorum-tui` must have a TTY on stdin and on stdout.
 
@@ -315,6 +337,7 @@ Keyboard:
 | `a` | Approve the task |
 | `s` | Start a send-back comment |
 | `p` | Pause or resume the task |
+| `t` | Attach local native agent session (then `y` or `n`; needs `--node-config`) |
 | `c` | Cancel the task (then `y` or `n`) |
 | `n` | Create a task (title, then description, own mode, priority 1 / normal) |
 | `/` | Filter tasks |

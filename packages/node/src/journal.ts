@@ -255,6 +255,15 @@ export class NodeJournal {
     return row ? mapInbox(row) : null;
   }
 
+  /** Local attach uses command acknowledgements; this metadata never leaves the Node. */
+  lastSessionCommand(sid: string, type?: string): InboxRecord | null {
+    const row = this.db.prepare(`SELECT * FROM inbox WHERE json_extract(cmd, '$.sid') = ?
+      AND ((? IS NULL AND json_extract(cmd, '$.type') != 'task.cancel') OR json_extract(cmd, '$.type') = ?)
+      AND json_extract(cmd, '$.taskId') IS NOT NULL ORDER BY rowid DESC LIMIT 1`)
+      .get(sid, type ?? null, type ?? null) as InboxRow | undefined;
+    return row ? mapInbox(row) : null;
+  }
+
   createSession(session: NewJournalSession): JournalSession {
     const createdAt = session.createdAt ?? this.now();
     this.db.prepare(`
