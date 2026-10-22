@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createKiloAdapter, kiloResetAt, prepareKiloEnvironment } from '../../src/adapters/kilo.js';
+import { createKiloAdapter, kiloResetAt, prepareKiloEnvironment, KILO_WRITE_TOOLS } from '../../src/adapters/kilo.js';
 import { createAdapter } from '../../src/adapters/index.js';
 import { adapterTrust } from '../../src/detect.js';
 import type { AgentEventInput, Profile } from '../../src/adapters/types.js';
@@ -33,7 +33,8 @@ describe('Kilo CLI adapter', () => {
     const review: AgentEventInput[] = [];
     await turn(adapter, { profile: 'reviewer', onEvent: (event) => review.push(event) });
     expect(review.filter((e) => e.kind === 'tool_call').every((e) => e.toolKind === 'read')).toBe(true);
-    expect(review.some((e) => e.kind === 'tool_result' && !e.ok && e.output.includes('pwned.txt'))).toBe(true);
+    // The capture only proves the reviewer made no write-capable call; the spawn-env test proves the denials.
+    expect(review.some((e) => e.kind === 'tool_call' && ['edit', 'write', 'bash'].includes(e.toolKind))).toBe(false);
     await adapter.closeSession(result.nativeId);
   });
 
@@ -63,8 +64,11 @@ describe('Kilo CLI adapter', () => {
       expect(env.OPENCODE_CONFIG).toBeUndefined();
       for (const flag of ['KILO_DISABLE_PROJECT_CONFIG', 'KILO_DISABLE_CLAUDE_CODE', 'KILO_DISABLE_EXTERNAL_SKILLS', 'KILO_DISABLE_DEFAULT_PLUGINS']) expect(env[flag]).toBe('true');
       const permission = JSON.parse(env.KILO_PERMISSION!);
-      expect(permission).toEqual({ '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow',
-        ...(profile === 'author' ? { edit: 'allow', bash: 'allow' } : {}) });
+      expect(permission).toMatchObject({ '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow' });
+      // Every write-capable tool is named, so a later deep-merged allow for one key cannot widen the profile.
+      for (const tool of KILO_WRITE_TOOLS) {
+        expect(permission[tool]).toBe(profile === 'author' && (tool === 'edit' || tool === 'bash') ? 'allow' : 'deny');
+      }
       const inline = JSON.parse(env.KILO_CONFIG_CONTENT!);
       expect(inline.agent.quorum.permission).toEqual(permission);
       expect(inline).toMatchObject({ instructions: [], mcp: {}, plugin: [], lsp: false, formatter: false });

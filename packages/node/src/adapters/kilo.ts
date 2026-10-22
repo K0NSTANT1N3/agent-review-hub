@@ -11,9 +11,19 @@ import { AdapterError, type AgentAdapter, type AgentEventInput, type Profile } f
 
 type KiloConfig = Extract<AdapterConfig, { type: 'kilo' }>;
 
+/**
+ * Tools that write, run commands or reach outside the worktree. Read-only profiles deny each by name:
+ * Kilo deep-merges permission maps, so a wildcard deny alone can be widened by a later allow for one key
+ * (an org policy loaded through an OAuth login, or a `tools` entry).
+ */
+export const KILO_WRITE_TOOLS = [
+  'edit', 'write', 'patch', 'multiedit', 'bash', 'task', 'todowrite', 'webfetch', 'websearch', 'codesearch',
+  'external_directory', 'skill', 'board_post', 'kilo_memory_save', 'repo_clone',
+] as const;
+
 export function kiloPermissions(profile: Profile): Record<string, string> {
-  return { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow',
-    ...(profile === 'author' ? { edit: 'allow', bash: 'allow' } : {}) };
+  const writes = Object.fromEntries(KILO_WRITE_TOOLS.map((tool) => [tool, profile === 'author' && (tool === 'edit' || tool === 'bash') ? 'allow' : 'deny']));
+  return { '*': 'deny', ...writes, read: 'allow', glob: 'allow', grep: 'allow', list: 'allow' };
 }
 
 /** Only provider login records cross from the owner. No config, skills, MCP, or approval state. */
