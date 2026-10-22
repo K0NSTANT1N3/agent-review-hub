@@ -118,17 +118,23 @@ export async function attachTask(client: QuorumApi, taskId: number, control: Att
 export function spawnResume(command: ResumeCommand, spawnFn: typeof spawn = spawn): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawnFn(command.binary, command.argv, { cwd: command.cwd, stdio: 'inherit', shell: false,
-      env: { ...process.env, ...(command.codexHome ? { CODEX_HOME: command.codexHome } : {}) } });
+      env: { ...agentEnv(process.env), ...(command.codexHome ? { CODEX_HOME: command.codexHome } : {}) } });
     const ignoreInterrupt = () => undefined;
     process.on('SIGINT', ignoreInterrupt);
     child.once('close', () => process.removeListener('SIGINT', ignoreInterrupt));
     child.once('error', (error: NodeJS.ErrnoException) => reject(new Error(error.code === 'ENOENT'
       ? `Missing agent binary: ${command.binary}. Install it or fix the Node adapter binaryPath.` : message(error))));
-    child.once('exit', (code, signal) => {
+    // close, not exit: the agent has released the terminal only once its stdio closes.
+    child.once('close', (code, signal) => {
       if (code === 0) resolve();
       else reject(new Error(`Native ${command.adapter} exited with ${signal ?? code}.`));
     });
   });
+}
+
+/** The agent gets the owner's shell environment minus Quorum's own credentials (Node config path, API token). */
+export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith('QUORUM_')));
 }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }

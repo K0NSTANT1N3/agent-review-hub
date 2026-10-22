@@ -68,7 +68,19 @@ describe('keyboard actions', () => {
     await app.key('\u001b');
     await app.key('t');
     await app.key('y');
-    expect(attach).toHaveBeenCalledWith(12, 'reviewer', expect.objectContaining({ sessions: expect.any(Array) }));
+    expect(attach).toHaveBeenCalledWith(12, 'author', expect.objectContaining({ sessions: expect.any(Array) }));
+  });
+
+  it('never attaches a reviewer session, even when its agent is selected', async () => {
+    const attach = vi.fn();
+    const app = await harness(new FakeClient(), attach);
+    await app.key('\t');
+    await app.key('\t');
+    await app.key('\u001b[B');
+    await app.key('t');
+    await app.key('y');
+    expect(attach).not.toHaveBeenCalled();
+    expect(app.lastFrame()).toContain('reviewer sessions stay read-only');
   });
 
   it('maps approve and pause/resume to the matching routes', async () => {

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { attachTask, localControl, spawnResume, type AttachControl, type ResumeCommand } from '../src/attach.js';
+import { agentEnv, attachTask, localControl, spawnResume, type AttachControl, type ResumeCommand } from '../src/attach.js';
 import { handoffTerminal } from '../src/terminal.js';
 import type { QuorumApi } from '../src/api-client.js';
 
@@ -60,7 +60,7 @@ describe('native attach lifecycle', () => {
 
   it('uses inherited stdio, exact native ID and Codex home with a fake spawner', async () => {
     const child = new EventEmitter();
-    const spawner = vi.fn(() => { queueMicrotask(() => { child.emit('exit', 0, null); child.emit('close'); }); return child; });
+    const spawner = vi.fn(() => { queueMicrotask(() => { child.emit('exit', 0, null); child.emit('close', 0, null); }); return child; });
     await spawnResume(command, spawner as unknown as typeof spawn);
     expect(spawner).toHaveBeenCalledWith('codex', ['resume', 'private-native-id'], expect.objectContaining({
       cwd: '/worktree', stdio: 'inherit', shell: false, env: expect.objectContaining({ CODEX_HOME: '/node/codex-home' }),
@@ -103,5 +103,10 @@ describe('native attach lifecycle', () => {
     expect(requests.map((request) => request.action)).toEqual(['check', 'acquire', 'release']);
     expect(requests.every((request) => request.token === 'node-secret')).toBe(true);
     expect(h.order).toEqual(['pauseTask', 'unmount', 'spawn', 'remount', 'resumeTask', 'transcript']);
+  });
+
+  it('strips Quorum credentials from the agent environment', async () => {
+    const env = agentEnv({ PATH: '/bin', HOME: '/home/u', TERM: 'xterm', QUORUM_TOKEN: 'qrq_owner', QUORUM_NODE_CONFIG: '/home/u/quorum.node.json', QUORUM_URL: 'http://l' });
+    expect(env).toEqual({ PATH: '/bin', HOME: '/home/u', TERM: 'xterm' });
   });
 });

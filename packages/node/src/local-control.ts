@@ -1,4 +1,4 @@
-import { createServer, type Socket } from 'node:net';
+import { createConnection, createServer, type Socket } from 'node:net';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { chmod, lstat, mkdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -22,12 +22,15 @@ export async function startLocalControl(config: NodeConfig, journal: Pick<NodeJo
     const stat = await lstat(dir);
     if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.()) throw new Error('Unsafe local control directory.');
     await chmod(dir, 0o700);
-    // Refuse an existing endpoint: never unlink another live daemon's socket.
-    try {
-      await lstat(path);
-      throw new Error('Local control socket already exists. Stop the other Node, or remove the stale socket after confirming it is stopped.');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // Never unlink another live daemon's socket, but do clear one a crashed Node left behind.
+    const existing = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (existing !== undefined) {
+      if (!existing.isSocket() || existing.uid !== process.getuid?.()) throw new Error('Unsafe local control socket path.');
+      if (await socketAnswers(path)) throw new Error('Local control socket is in use. Another Node with this data directory is running.');
+      await unlink(path);
     }
   }
   const sockets = new Set<Socket>();
@@ -76,8 +79,12 @@ export async function startLocalControl(config: NodeConfig, journal: Pick<NodeJo
             if (typeof request.sid !== 'string') throw new Error('Missing session.');
             const session = journal.getSession(request.sid);
             if (!session) throw new Error('Remote session: session is not present on this Node.');
-            const type = config.adapter.type;
-            if (type === 'mock' || type === 'opencode') throw new Error(`Adapter ${type} does not support native resume.`);
+            const adapter = config.adapter;
+            const type = adapter.type;
+            // Only adapters with a known interactive resume command.
+            if (type !== 'claude-code' && type !== 'codex' && type !== 'pi' && type !== 'omp') throw new Error(`Adapter ${type} does not support native resume.`);
+            // A reviewer or directive session must stay read-only; an interactive agent can write.
+            if (session.profile !== 'author') throw new Error('Only author sessions can be attached; reviewer and directive sessions stay read-only.');
             if (request.action === 'check') {
               checked = { sid: session.sid, cancelId: journal.lastSessionCommand(session.sid, 'task.cancel')?.msgId };
               socket.write(JSON.stringify({ ok: true }) + '\n');
@@ -85,8 +92,7 @@ export async function startLocalControl(config: NodeConfig, journal: Pick<NodeJo
             }
             if (request.action !== 'acquire' || lease) throw new Error('Invalid attach request.');
             if (checked?.sid !== session.sid || typeof request.taskId !== 'number') throw new Error('Check the selected task session before acquiring.');
-            const expectsCancel = session.profile === 'reviewer' ? request.pausedFromState === 'IN_REVIEW'
-              : session.profile === 'author' && ['AUTHORING', 'SYNCING'].includes(String(request.pausedFromState));
+            const expectsCancel = ['AUTHORING', 'SYNCING'].includes(String(request.pausedFromState));
             if (expectsCancel) {
               const deadline = Date.now() + 35 * 60_000;
               for (;;) {
@@ -103,7 +109,7 @@ export async function startLocalControl(config: NodeConfig, journal: Pick<NodeJo
               lease = undefined;
               throw new Error('Session has no native ID yet; wait for its first turn.');
             }
-            const binary = config.adapter.type === 'claude-code' ? 'claude' : config.adapter.binaryPath ?? type;
+            const binary = adapter.type === 'claude-code' ? 'claude' : adapter.binaryPath ?? type;
             const argv = type === 'codex' ? ['resume', ready.nativeId]
               : type === 'pi' ? ['--session-id', ready.nativeId] : ['--resume', ready.nativeId];
             socket.write(JSON.stringify({ ok: true, command: { adapter: type, binary, argv, cwd: ready.worktree,
@@ -131,6 +137,17 @@ export async function startLocalControl(config: NodeConfig, journal: Pick<NodeJo
     await Promise.all([...cleanups]);
     if (process.platform !== 'win32') await unlink(path).catch(() => undefined);
   } };
+}
+
+/** True when a live server accepts connections at `path`; a refused or missing socket is stale. */
+function socketAnswers(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createConnection(path);
+    const done = (live: boolean) => { probe.destroy(); resolve(live); };
+    probe.once('connect', () => done(true));
+    probe.once('error', () => done(false));
+    probe.setTimeout(1000, () => done(false));
+  });
 }
 
 function origin(value: unknown): string {

@@ -33,7 +33,7 @@ describe('store', () => {
     state = reducer(state, { type: 'ui', event: { type: 'session.updated', data: sessionView({ state: 'idle' }) } });
     state = reducer(state, { type: 'ui', event: { type: 'team.activity.updated', data: { activities: [], queue: [] } } });
     state = reducer(state, { type: 'ui', event: { type: 'task.needs_attention', data: { taskId: 12, reason: 'escalated', message: 'help' } } });
-    expect(state).toMatchObject({ connection: 'reconnecting', error: 'oops', agents: [{ status: 'offline' }, {}], sessions: [{ state: 'idle' }], activities: [] });
+    expect(state).toMatchObject({ connection: 'reconnecting', error: 'oops', agents: [{ status: 'offline' }, {}], sessions: [{ id: 'author' }, { id: 'reviewer', state: 'idle' }], activities: [] });
     expect(reducer(state, { type: 'ui', event: { type: 'message.created', data: message({ taskId: null }) } })).toBe(state);
   });
 

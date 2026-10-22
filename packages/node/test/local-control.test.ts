@@ -1,5 +1,6 @@
+import { spawn } from 'node:child_process';
 import { createConnection, type Socket } from 'node:net';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseNodeConfig } from '@quorum/protocol';
@@ -34,6 +35,31 @@ async function fixture(type: 'claude-code' | 'codex' | 'pi' | 'omp' | 'mock' | '
   }
   return { connect, config, journal, runner, release, setCancellation: (value: InboxRecord) => { cancellation = value; } };
 }
+
+describe('local control socket lifecycle', () => {
+  it.skipIf(process.platform === 'win32')('replaces a socket a crashed Node left behind', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'qc-'));
+    const path = controlPath(dataDir);
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    // A killed process leaves its Unix socket file behind; nothing listens on it.
+    const child = spawn(process.execPath, ['-e', `require('node:net').createServer().listen(${JSON.stringify(path)}, () => console.log('up'))`], { stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise<void>((resolve) => child.stdout.once('data', () => resolve()));
+    child.kill('SIGKILL');
+    await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    expect((await lstat(path)).isSocket()).toBe(true);
+    const config = parseNodeConfig({ agentId: 'local', token: 'node-token', leaderUrl: 'ws://leader.test', ownerName: 'Local', dataDir, workspaceDir: dataDir,
+      repoRemoteUrl: '/repo', gitIdentity: { name: 'Test', email: 'test@example.com' }, adapter: { type: 'codex' } });
+    const control = await startLocalControl(config, { lastSessionCommand: () => null, getSession: () => null }, { attach: vi.fn() });
+    disposers.push(async () => { await control.close(); await rm(dataDir, { recursive: true, force: true }); });
+    expect((await lstat(path)).isSocket()).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses to start while another Node serves the same data directory', async () => {
+    const f = await fixture();
+    await expect(startLocalControl(f.config, f.journal, f.runner)).rejects.toThrow(/in use/);
+    expect(await f.connect()()).toMatchObject({ ok: true });
+  });
+});
 
 describe('owner-only local control', () => {
   it.skipIf(process.platform === 'win32')('keeps socket paths short for deeply nested Node data directories', () => {
@@ -74,6 +100,13 @@ describe('owner-only local control', () => {
   it.each(['mock', 'opencode'] as const)('explains unsupported %s adapter', async (type) => {
     const f = await fixture(type);
     expect(await f.connect()()).toMatchObject({ ok: false, error: `Adapter ${type} does not support native resume.` });
+  });
+
+  it.each(['reviewer', 'directive'])('refuses to attach a %s session, which must stay read-only', async (profile) => {
+    const f = await fixture();
+    (f.journal.getSession('sid') as { profile: string }).profile = profile;
+    expect(await f.connect()()).toMatchObject({ ok: false, error: expect.stringContaining('Only author sessions') });
+    expect(f.runner.attach).not.toHaveBeenCalled();
   });
 
   it('waits for the fresh pause cancellation cleanup before acquiring', async () => {

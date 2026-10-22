@@ -136,10 +136,11 @@ export function App({ client, url, token, warning, createStream, seed, onAttach,
     if (confirmAttach) {
       setConfirmAttach(false);
       if (input.toLowerCase() === 'y' && task) {
-        const sessions = state.sessions.filter((session) => session.lockKind === 'task' && session.lockRef === String(task.id));
-        const chosen = view.pane === 'agents' ? sessions.find((session) => session.agentId === state.agents[view.agentIndex]?.id)
-          : sessions.find((session) => session.id === task.authorSessionId) ?? sessions[0] ?? state.sessions.find((session) => session.id === task.authorSessionId);
-        if (!chosen) dispatch({ type: 'error', error: 'No selected task session. In Agents select a task participant, then press t.' });
+        // Only the author session: a reviewer stays read-only, and pausing a task releases its reviewer session.
+        const author = state.sessions.find((session) => session.id === task.authorSessionId);
+        const agentId = view.pane === 'agents' ? state.agents[view.agentIndex]?.id : undefined;
+        const chosen = author !== undefined && (agentId === undefined || author.agentId === agentId) ? author : undefined;
+        if (!chosen) dispatch({ type: 'error', error: 'Only the task author session can be attached; reviewer sessions stay read-only.' });
         else if (!onAttach) dispatch({ type: 'error', error: 'Local attach is unavailable in this client.' });
         else onAttach(task.id, chosen.id, state);
       } else if (input.toLowerCase() !== 'n') setConfirmAttach(true);

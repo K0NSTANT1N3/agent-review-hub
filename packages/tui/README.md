@@ -25,9 +25,10 @@ before cancellation. Approve/send back/pause/cancel require an owner token:
 Settings → Agent CLI access, or `quorum-leader add-token --scope owner`.
 `t` confirms y/n, pauses the task, waits for local pause cleanup and all in-flight work,
 then hands the terminal to that session's native agent TUI. Exit the agent to return;
-Quorum checks git, resumes the task, and reloads its transcript. In Chat/Tasks this
-selects the author when listed, otherwise the task participant; in Agents it selects
-that agent's task session. The confirmation does not send anything until `y`.
+Quorum checks git, resumes the task, and reloads its transcript. Attach always
+selects the task's author session. Reviewer and directive sessions stay read-only and
+cannot be attached. The agent starts without Quorum's own credentials (`QUORUM_*`
+variables are removed from its environment). The confirmation does not send anything until `y`.
 
 Start with `--node-config /path/to/quorum.node.json` or `QUORUM_NODE_CONFIG` for attach.
 This is the **local Node config containing its own Node token**, separate from the

@@ -46,5 +46,5 @@ export function detail(overrides: Partial<TaskDetail> = {}): TaskDetail {
 
 export function fixtureState(): State {
   const d = detail();
-  return { ...initialState, connection: 'connected', tasks: [d.task], agents: [agentView(), agentView({ id: 'claude@bob', ownerName: 'bob', trust: 'enforced', adapterType: 'claude-code', detectedAgents: [{ type: 'claude-code', version: '2.1.304', trust: 'enforced' }] })], sessions: [sessionView()], data: { 12: { detail: d, messages: d.messages, events: d.events, transcripts: transcripts(), transcriptSupported: true, human: [] } } };
+  return { ...initialState, connection: 'connected', tasks: [d.task], agents: [agentView(), agentView({ id: 'claude@bob', ownerName: 'bob', trust: 'enforced', adapterType: 'claude-code', detectedAgents: [{ type: 'claude-code', version: '2.1.304', trust: 'enforced' }] })], sessions: [sessionView({ id: 'author', agentId: 'codex@tazo', lockRole: 'author' }), sessionView()], data: { 12: { detail: d, messages: d.messages, events: d.events, transcripts: transcripts(), transcriptSupported: true, human: [] } } };
 }

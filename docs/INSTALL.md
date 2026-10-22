@@ -315,7 +315,9 @@ resume command with inherited terminal input/output. Exit that agent to return.
 Quorum restores the screen, checks git, resumes the task and reloads the transcript.
 
 Attach supports Claude Code, Codex, pi and omp. Codex uses the Node driver's
-`<dataDir>/codex-home`. Remote sessions, mock and OpenCode cannot attach. Native
+`<dataDir>/codex-home`. Attach opens the task's author session only. Reviewer and
+directive sessions stay read-only and cannot attach. Remote sessions, mock and OpenCode
+cannot attach. Native
 session IDs stay on this machine; the Leader/team never receive them. Manual git
 commits/branch switches trigger restoration and a blocked-session warning; possible
 pushes block future turns without rewriting the remote. Inspect and retire a
