@@ -36,8 +36,14 @@ export async function createAdapter(
       const adapterModule = await import(modulePath) as PiModule;
       return adapterModule.createPiAdapter(config);
     }
-    case 'kilo':
-      throw new Error(`${config.type} adapter not implemented yet`);
+    case 'kilo': {
+      const { createKiloAdapter } = await import('./kilo.js');
+      return createKiloAdapter(config, options.dataDir === undefined ? {} : { homeDir: join(options.dataDir, 'kilo-home') });
+    }
+    case 'custom': {
+      const { createCustomAdapter } = await import('./custom.js');
+      return createCustomAdapter(config);
+    }
     case 'mock':
       return createMockAdapter(config);
     case 'opencode': {

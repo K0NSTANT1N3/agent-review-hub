@@ -18,6 +18,7 @@ export interface CliSpawnOptions {
   stdio: ['ignore', 'pipe', 'pipe'];
   detached: boolean;
   windowsHide: boolean;
+  shell: false;
 }
 
 export type SpawnFn = (
@@ -41,6 +42,7 @@ export function cliSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): CliSpawnOp
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',
     windowsHide: true,
+    shell: false,
   };
 }
 

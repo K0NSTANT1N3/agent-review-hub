@@ -13,6 +13,7 @@ import {
   type OwnerSettings,
   type UiEvent,
 } from '@quorum/protocol';
+import { isCliAdapter } from '../shared/adapter-choice.js';
 import type { ApiCallOptions, ApiResult, AppState, DesktopSettings, HostSetup, JoinSetup, Mode } from '../shared/ipc.js';
 import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, isValidPublicHost, publicLeaderUrl } from './join-code.js';
 import { leaderNetworkKind } from './network.js';
@@ -250,7 +251,10 @@ export class Services {
         return { ok: false, detail: `Cannot reach opencode at ${adapter.baseUrl}: ${describe(error)}` };
       }
     }
-    if (adapter.type === 'codex' || adapter.type === 'pi' || adapter.type === 'omp') {
+    if (adapter.type === 'custom') {
+      return { ok: true, detail: 'Custom CLI profiles configured. Quorum does not probe arbitrary custom commands.' };
+    }
+    if (isCliAdapter(adapter)) {
       const bin = adapter.binaryPath ?? adapter.type;
       try {
         const { stdout } = await execFileAsync(bin, ['--version'], { timeout: 20_000 });

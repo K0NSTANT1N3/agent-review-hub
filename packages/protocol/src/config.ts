@@ -126,8 +126,30 @@ const cliAdapterFields = {
 export const CodexAdapterConfigSchema = z.object({ type: z.literal('codex'), ...cliAdapterFields });
 export const PiAdapterConfigSchema = z.object({ type: z.literal('pi'), ...cliAdapterFields });
 export const OmpAdapterConfigSchema = z.object({ type: z.literal('omp'), ...cliAdapterFields });
-/** Reserved until the Kilo integration is implemented. */
 export const KiloAdapterConfigSchema = z.object({ type: z.literal('kilo'), ...cliAdapterFields });
+/** Templates are argv arrays. No shell expansion or word splitting occurs. */
+const CustomCommandSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()),
+});
+const CustomProfileSchema = CustomCommandSchema.extend({ resume: CustomCommandSchema.optional() });
+const jsonPath = z.string().min(1);
+const eventMatch = { event: z.string().min(1) };
+export const CustomAdapterConfigSchema = z.object({
+  type: z.literal('custom'),
+  contextWindow: positiveInt().default(200000),
+  profiles: z.object({ author: CustomProfileSchema, reviewer: CustomProfileSchema, directive: CustomProfileSchema }),
+  sessionIdPath: jsonPath,
+  eventTypePath: jsonPath.default('type'),
+  mapping: z.object({
+    text: z.object({ ...eventMatch, text: jsonPath, mode: z.enum(['delta', 'final']).default('final'), messageId: jsonPath.optional() }),
+    tool_call: z.object({ ...eventMatch, id: jsonPath, name: jsonPath, argsSummary: jsonPath.optional() }).optional(),
+    tool_result: z.object({ ...eventMatch, id: jsonPath, output: jsonPath, ok: jsonPath, exitCode: jsonPath.optional() }).optional(),
+    usage: z.object({ ...eventMatch, inputTokens: jsonPath.optional(), outputTokens: jsonPath.optional(), contextTokens: jsonPath.optional() })
+      .refine((value) => value.inputTokens !== undefined || value.outputTokens !== undefined || value.contextTokens !== undefined, 'usage needs a counter path').optional(),
+    turn_end: z.object(eventMatch),
+  }),
+});
 export const AdapterConfigSchema = z.discriminatedUnion('type', [
   ClaudeCodeAdapterConfigSchema,
   CodexAdapterConfigSchema,
@@ -135,6 +157,7 @@ export const AdapterConfigSchema = z.discriminatedUnion('type', [
   OmpAdapterConfigSchema,
   OpencodeAdapterConfigSchema,
   KiloAdapterConfigSchema,
+  CustomAdapterConfigSchema,
   MockAdapterConfigSchema,
 ]);
 export type AdapterConfig = z.output<typeof AdapterConfigSchema>;
