@@ -142,7 +142,15 @@ describe('adapter registry and optional reports', () => {
   const configs = [
     { type: 'claude-code' }, { type: 'codex' }, { type: 'pi' }, { type: 'omp' },
     { type: 'opencode', baseUrl: 'http://localhost:4096', providerID: 'p', modelID: 'm' },
-    { type: 'kilo' }, { type: 'mock', scriptPath: 'mock.json' },
+    { type: 'kilo' },
+    { type: 'custom', profiles: {
+      author: { command: 'agent', args: ['--write', '{prompt}'] },
+      reviewer: { command: 'agent', args: ['--read-only', '{prompt}'] },
+      directive: { command: 'agent', args: ['--read-only', '{prompt}'] },
+    }, sessionIdPath: 'session.id', eventTypePath: 'type', mapping: {
+      text: { event: 'text', text: 'text', mode: 'final' }, turn_end: { event: 'done' },
+    } },
+    { type: 'mock', scriptPath: 'mock.json' },
   ];
 
   it('keeps the registry, config variants and hello identifiers aligned', () => {

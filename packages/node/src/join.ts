@@ -13,8 +13,8 @@ Node config file, so this machine can run an agent without the desktop app.
 Options:
   --config <path>          where to write the config (default: ./quorum.node.json)
   --data-dir <dir>         Node state and worktrees go under this directory (default: ~/.quorum)
-  --adapter <type>         claude-code (default), codex, pi, omp, opencode or mock
-  --model <name>           claude-code/codex/pi/omp: model to use; opencode: model id (required)
+  --adapter <type>         claude-code (default), codex, pi, omp, kilo, opencode or mock
+  --model <name>           claude-code/codex/pi/omp/kilo: model to use; opencode: model id (required)
   --opencode-url <url>     opencode: server URL (required for opencode)
   --provider <id>          opencode: provider id (required for opencode)
   --mock-script <path>     mock: script file (required for mock; for tests and demos)
@@ -28,7 +28,7 @@ Options:
 export interface JoinOptions {
   configPath: string;
   dataDir: string;
-  adapter: 'claude-code' | 'codex' | 'pi' | 'omp' | 'opencode' | 'mock';
+  adapter: 'claude-code' | 'codex' | 'pi' | 'omp' | 'kilo' | 'opencode' | 'mock';
   model?: string;
   opencodeUrl?: string;
   provider?: string;
@@ -71,8 +71,8 @@ export function parseJoinArgs(args: string[], cwd = process.cwd(), home = homedi
   const code = decodeJoinCode(positionals[0]!);
 
   const adapter = values.adapter ?? 'claude-code';
-  if (adapter !== 'claude-code' && adapter !== 'codex' && adapter !== 'pi' && adapter !== 'omp' && adapter !== 'opencode' && adapter !== 'mock') {
-    throw new Error(`--adapter must be claude-code, codex, pi, omp, opencode or mock (got "${adapter}")`);
+  if (adapter !== 'claude-code' && adapter !== 'codex' && adapter !== 'pi' && adapter !== 'omp' && adapter !== 'kilo' && adapter !== 'opencode' && adapter !== 'mock') {
+    throw new Error(`--adapter must be claude-code, codex, pi, omp, kilo, opencode or mock (got "${adapter}")`);
   }
   const lendMode = LendModeSchema.safeParse(values['lend-mode'] ?? 'always');
   if (!lendMode.success) throw new Error('--lend-mode must be always, when_idle or never');
@@ -134,6 +134,7 @@ function adapterConfig(options: JoinOptions): NodeConfigInput['adapter'] {
     case 'codex':
     case 'pi':
     case 'omp':
+    case 'kilo':
       return { type: options.adapter, ...(options.model !== undefined ? { model: options.model } : {}) };
     case 'opencode':
       if (options.opencodeUrl === undefined || options.provider === undefined || options.model === undefined) {

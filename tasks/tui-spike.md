@@ -456,3 +456,132 @@ Fix:
 Not yet verified live: a reviewer write is blocked with the isolated home. The verification run hit the account usage limit. That run is saved as `codex-usage-limit.jsonl`. The driver maps it to `RATE_LIMITED` and parses the reset time from "try again at 5:02 AM".
 
 Note for operators: in some shells `codex` is a shell function that sets `CODEX_HOME` itself. Test the binary directly, not the function.
+
+
+## Kilo Code (2026-10-22)
+
+### Driver choice
+
+Installed `@kilocode/cli` with npm. `kilo --version` returned `7.8.15`.
+Read `kilo --help`, `kilo run --help` and `kilo debug --help`.
+Kilo supports `serve`. It forks OpenCode.
+The existing HTTP adapter connects to an owner-managed server. It does not set each turn's permissions or isolate owner config.
+Use `kilo run --format json` through `cli-process.ts` instead.
+This gives Quorum a process, config and permission policy for each turn.
+
+Sources: [CLI reference](https://kilo.ai/docs/code-with-ai/platforms/cli-reference),
+[7.8.15 run command](https://github.com/Kilo-Org/kilocode/blob/v7.8.15/packages/opencode/src/cli/cmd/run.ts),
+[config loader](https://github.com/Kilo-Org/kilocode/blob/v7.8.15/packages/opencode/src/config/config.ts),
+[flags](https://github.com/Kilo-Org/kilocode/blob/v7.8.15/packages/core/src/flag/flag.ts),
+[instruction loader](https://github.com/Kilo-Org/kilocode/blob/v7.8.15/packages/opencode/src/session/instruction.ts).
+
+### Capture method
+
+Use one process per output file. Set stdin to `/dev/null`. Do not use a PTY.
+Start in a scratch git repository with `math.js`. It exports `add`.
+Use model `openrouter/openai/gpt-4.1-mini` with an API key from the environment.
+Use the same home and native ID for the author resume. Use a separate reviewer home.
+Replace all local path roots with `/work/repo`. Replace the operator name with `user`.
+Do not include credentials or personal config.
+
+Fresh launch:
+
+```sh
+kilo run --format json --pure --agent quorum --dir <cwd> --model <provider/model> -- '<prompt>' < /dev/null
+```
+
+Resume adds `--session <nativeId>` before `--`.
+Set `PWD=<cwd>` too. Kilo 7.8.15 otherwise uses inherited `PWD` as its workspace root.
+The first exploratory run exposed this behavior. Discarded those outputs.
+The committed captures use the corrected directory and one process per file.
+
+| Capture | Result |
+| --- | --- |
+| [kilo-t1.jsonl](../packages/node/test/fixtures/agents/kilo-t1.jsonl) | Kept `add`. Added `subtract`. Ran Node. Output was `3`. Reply was `DONE 3.` |
+| [kilo-t2.jsonl](../packages/node/test/fixtures/agents/kilo-t2.jsonl) | Resumed the same native session. Recalled `subtract`. |
+| [kilo-reviewer.jsonl](../packages/node/test/fixtures/agents/kilo-reviewer.jsonl) | Prompt requested `pwned.txt`. Only read calls ran. The file stayed absent. |
+
+The reviewer text claimed it would create the file. The tool stream did not show a write or bash call.
+Use filesystem checks as the smoke result. Do not use the assistant's claim as evidence.
+
+### Field mapping
+
+| Normalized value | Native field |
+| --- | --- |
+| Native session ID | `sessionID` on each JSON record. |
+| Text snapshot | `type: text`, `part.text`. Group by `part.messageID`. Deduplicate `part.id`. Keep the last assistant message as the reply. |
+| Thinking | `type: reasoning`, `part.text`. Request with `--thinking` if needed. Not observed in these captures. |
+| Tool call | `type: tool_use`, `part.callID`, `part.tool`, `part.state.input`. Use `filePath`, `path`, `pattern` or `command` as a bounded summary. |
+| Tool result | Same record. `part.state.status` is `completed` or `error`. Read `state.output` or `state.error`. Bash exposes `state.metadata.exit`. |
+| Usage | `type: step_finish`, `part.tokens.input`, `.output`. Sum once per unique part. Preserve raw counters. Do not add cache counters to input. |
+| Context estimate | Latest `part.tokens.total`. Do not sum it across model calls. This includes cache and output tokens. It is an estimate. |
+| Turn end | `step_finish` with `part.reason: stop`. Intermediate steps use `tool-calls`. Require process exit 0, final text and session ID too. |
+| Error | `type: error`, `error.name`, `error.data.message`, `error.data.statusCode`. Also retain the bounded stderr tail. |
+| Rate limit | Map HTTP 429, rate-limit or usage-limit failures to `RATE_LIMITED`. Read epoch/ISO reset fields or retry/reset headers when present. No real limit occurred in these captures. Tests use synthetic limit records. |
+
+The CLI emits tool records after completion. Emit a call immediately followed by its result.
+Do not claim live tool-start timing or text deltas. Namespace call IDs with a turn UUID.
+Bound text, argument summaries, paths and UTF-8 tool output before emitting them.
+
+### Profiles and isolation
+
+Each launch sets HOME and XDG paths under `<dataDir>/kilo-home/<profile>`.
+Each profile has separate native sessions. A reviewer cannot open an author's stored session through this adapter.
+Copy only API/OAuth records from the owner's XDG `kilo/auth.json`. Environment API keys remain available.
+Do not copy owner config, instructions, plugins, skills, MCP, approval state or remote-config auth records.
+Remove inherited `KILO_*` and `OPENCODE_*` overrides. Install Quorum's own flags and inline config.
+Disable project config, Claude instructions, external skills, default plugins, updates, LSP and formatters.
+Use `--pure` and select the `quorum` agent on every launch.
+Set both the global and agent permission maps on fresh and resumed turns.
+
+Reviewer and directive permissions default to deny. Allow only `read`, `glob`, `grep` and `list`.
+Author permissions also allow `edit` and `bash`. Other tools, external directories, tasks and MCP stay denied.
+Trust is `low`. Native permissions do not establish an OS sandbox or Quorum's complete path and shell policy.
+The copied login may need a fresh `kilo auth login` when it expires. Provider/model config is not imported.
+
+## Custom CLI adapter (2026-10-22)
+
+Configure `profiles.author`, `.reviewer` and `.directive` separately.
+Each profile has `command`, `args` and optional `resume: { command, args }`.
+Substitute `{prompt}` and `{sessionId}` once in each argv value. Do not use a shell.
+An absent resume template reuses that profile's base template. It never falls back to the author template.
+Require read-only flags for both read-only profiles and their resume commands.
+Quorum cannot infer another CLI's permission rules. Report `low` trust for every custom adapter.
+
+Use `sessionIdPath` and `eventTypePath` to read dotted JSON fields.
+Map native record names with `mapping.text`, `.tool_call`, `.tool_result`, `.usage` and `.turn_end`.
+Text can contain deltas or snapshots. Tool IDs receive a per-turn namespace.
+Sum usage records once. Use the latest context counter.
+Require a turn-end record, final text, session ID and process exit 0.
+See [Choose an agent](../docs/INSTALL.md#choose-an-agent) for a complete config.
+Custom config is local to the Node. Desktop Settings and `join` do not create custom templates.
+
+
+### Kilo production adapter smoke
+
+Ran `createAdapter({ type: 'kilo', model: 'openrouter/openai/gpt-4.1-mini' }, { dataDir })` against CLI 7.8.15.
+Used a separate scratch git repository and Quorum-owned profile homes.
+Author added `multiply` and ran Node. An independent Node check printed `5 42` for `add(2, 3)` and `multiply(6, 7)`.
+The resumed author recalled `multiply`.
+
+| Profile | Fresh turn | Resumed turn | Filesystem result |
+| --- | --- | --- | --- |
+| reviewer | Reported `DENIED`. Only read/search calls ran. | Reported `DENIED`. | `pwned.txt` stayed absent. |
+| directive | Reported `DENIED`. Only read/search calls ran. | Reported `DENIED`. | `pwned.txt` stayed absent. |
+
+Each read-only turn requested creation through write/edit tools or bash.
+The native permissions removed those tools. No OS-level denied write was observed.
+This verifies the tested CLI's tool selection and the resulting filesystem state.
+It does not prove an OS sandbox. Keep trust `low`.
+
+
+### Kilo and custom verification
+
+Ran the full build, typecheck, lint, unit-test and e2e chain twice on the final code.
+Used Node 22.22.3 and pnpm 10.34.7. All ten commands exited 0.
+Each cycle passed 868 unit tests in 50 files and 35 e2e tests in 9 files.
+One existing e2e TODO remained. No unit test failed or skipped.
+Unit counts: protocol 48; CLI 9; TUI 85; Leader 430; Node 225; desktop 71.
+Fixture JSON and anonymization checks passed. `git diff --check` passed.
+Repeated the production factory smoke after the final build. All six turns passed.
+Author edits and resume recall worked. All four read-only probes left `pwned.txt` absent.

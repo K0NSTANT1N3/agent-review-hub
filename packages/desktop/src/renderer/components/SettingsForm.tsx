@@ -25,6 +25,7 @@ export function SettingsForm({ value, onChange }: { value: DesktopSettings; onCh
           <option value="codex">Codex</option>
           <option value="pi">pi</option>
           <option value="omp">omp</option>
+          <option value="kilo">Kilo Code</option>
           <option value="opencode">opencode server</option>
           <option value="mock">Mock (testing only)</option>
         </select>

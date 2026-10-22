@@ -167,10 +167,9 @@ the allow-list to Claude Code. An opencode server uses its own permission settin
 
 ### Choose an agent
 
-The Node `adapter` object is the agent type. The desktop app Settings list has Claude Code and opencode.
-To use Codex, pi or omp, set `adapter` in `quorum.node.json`.
-`quorum-node join --adapter` accepts only `claude-code`, `opencode` or `mock`.
-Kilo is a reserved adapter type. The Node does not start a Kilo adapter.
+The Node `adapter` object selects the agent. Desktop Settings and `quorum-node join --adapter`
+support `claude-code`, `codex`, `pi`, `omp`, `kilo`, `opencode` and `mock`.
+Use `custom` in `quorum.node.json` for another CLI. Custom adapters need no new Node code.
 
 Adapter config examples (`binaryPath` and `model` are optional):
 
@@ -178,9 +177,10 @@ Adapter config examples (`binaryPath` and `model` are optional):
 { "type": "codex", "binaryPath": "/usr/local/bin/codex", "model": "<model>" }
 { "type": "pi", "binaryPath": "/usr/local/bin/pi", "model": "<model>" }
 { "type": "omp", "binaryPath": "/usr/local/bin/omp" }
+{ "type": "kilo", "model": "openrouter/openai/gpt-4.1-mini" }
 ```
 
-If `binaryPath` is not set, the Node starts `codex`, `pi` or `omp` from `PATH`.
+If `binaryPath` is not set, the Node starts `codex`, `pi`, `omp` or `kilo` from `PATH`.
 The default `contextWindow` is `200000`.
 
 The Node sends a trust value. You cannot set trust in the config.
@@ -189,7 +189,7 @@ The Node sends a trust value. You cannot set trust in the config.
 |---|---|
 | `enforced` | Quorum does a check of tool permissions before each tool call. Claude Code and mock have this trust. |
 | `sandboxed` | An external sandbox is a limit on the agent. Codex has this trust. Quorum does not apply its tool callback. |
-| `low` | Quorum cannot apply a full tool or sandbox limit. pi, omp, opencode and Kilo have this trust. |
+| `low` | Quorum cannot apply a full tool or sandbox limit. pi, omp, opencode, Kilo and custom have this trust. |
 
 If trust is missing, the UI must not show `enforced`.
 
@@ -202,6 +202,75 @@ Codex isolation:
 - The agent does not read the owner `config.toml`, `AGENTS.md`, skills, hooks or rules.
 - Each turn also has `--ignore-user-config --ignore-rules`.
 - Before you use Codex with Quorum, run `codex login`.
+
+Kilo setup (tested with CLI 7.8.15):
+
+```sh
+npm install -g @kilocode/cli
+kilo --version
+kilo auth login
+quorum-node join <join-code> --adapter kilo --model <provider/model>
+```
+
+Kilo can use provider API-key environment variables such as `OPENROUTER_API_KEY`.
+Set a model explicitly when the provider needs one. Quorum does not import the owner's default model.
+Each profile uses a separate home under `<dataDir>/kilo-home/<profile>`.
+Quorum copies only API/OAuth login records from the owner's XDG `kilo/auth.json`.
+It does not import personal instructions, skills, MCP, plugins, approval settings or native sessions.
+Every launch disables project config and external skills. Each launch uses the `quorum` agent.
+Reviewer and directive turns allow only `read`, `glob`, `grep` and `list`. All other permissions default to deny.
+The same rules apply on resume. Author turns also allow edits and bash.
+Kilo applies these native permissions. They are not an OS sandbox or Quorum's full path/command policy.
+
+Custom CLI example (replace `my-agent` and its flags with your CLI's real options):
+
+```json
+{
+  "type": "custom",
+  "profiles": {
+    "author": {
+      "command": "my-agent",
+      "args": ["--json", "--write", "--", "{prompt}"],
+      "resume": { "command": "my-agent", "args": ["--json", "--write", "--session", "{sessionId}", "--", "{prompt}"] }
+    },
+    "reviewer": {
+      "command": "my-agent",
+      "args": ["--json", "--read-only", "--", "{prompt}"],
+      "resume": { "command": "my-agent", "args": ["--json", "--read-only", "--session", "{sessionId}", "--", "{prompt}"] }
+    },
+    "directive": {
+      "command": "my-agent",
+      "args": ["--json", "--read-only", "--", "{prompt}"],
+      "resume": { "command": "my-agent", "args": ["--json", "--read-only", "--session", "{sessionId}", "--", "{prompt}"] }
+    }
+  },
+  "sessionIdPath": "session.id",
+  "eventTypePath": "type",
+  "mapping": {
+    "text": { "event": "text", "text": "text", "mode": "final", "messageId": "messageId" },
+    "tool_call": { "event": "call", "id": "id", "name": "name", "argsSummary": "summary" },
+    "tool_result": { "event": "result", "id": "id", "output": "output", "ok": "ok", "exitCode": "exitCode" },
+    "usage": { "event": "usage", "inputTokens": "tokens.input", "outputTokens": "tokens.output", "contextTokens": "tokens.context" },
+    "turn_end": { "event": "done" }
+  }
+}
+```
+
+Templates contain an executable and argv values. Quorum never uses a shell or splits an argv value.
+It substitutes `{prompt}` and `{sessionId}` once inside each argument. A fresh session ID is an empty string.
+If `resume` is absent, Quorum uses that profile's base template for resumed turns.
+Use separate fresh/resume templates if the CLI rejects an empty session argument.
+Set read-only flags in **both** reviewer and directive templates, including their resume templates.
+Custom adapters inherit the Node environment. Configure the CLI's own config isolation in its argv or wrapper executable.
+Quorum cannot infer arbitrary CLI permission semantics. Custom trust is always `low`.
+
+Paths use dotted own properties, such as `message.content.0.text`. They are not JSONPath expressions.
+`eventTypePath` defaults to `type`. Each mapping's `event` matches that field exactly.
+Text supports `final` snapshots (default) or `delta` chunks. Usage records add input/output counters;
+the latest context counter replaces the previous estimate. Emit each usage record once.
+Tool mappings and usage are optional. A successful turn needs text, a nonempty session ID,
+a matching `turn_end` record and a zero process exit code. Turn end controls completion; it is not a transcript event.
+Custom CLIs must write one JSON object per line. Malformed lines remain bounded failure diagnostics.
 
 The Node finds agent binaries on `PATH` and at a `binaryPath` in the config.
 It does `--version` on each binary. It does not start a model turn.

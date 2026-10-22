@@ -61,7 +61,7 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 | New adapters | Codex, pi and omp CLI adapters. The Node starts a new command for each profile. The Node can resume a session. Trust: Codex `sandboxed`. pi and omp `low`. |
 | Owner tokens | Scope `owner` on API tokens. `quorum-leader add-token --scope owner`. Owner tokens can act on the tasks of their owner. An admin owner token can act on all tasks. |
 | Codex isolation | The driver sets `CODEX_HOME=<dataDir>/codex-home` with a link to `auth.json`. The agent does not read owner `config.toml`, `AGENTS.md` or skills. Turns also have `--ignore-user-config --ignore-rules`. |
-| Known gaps | The operator did not complete a live check of Codex isolation (the account usage limit stopped the check). Kilo has no adapter. omp cannot stop configured MCP servers. |
+| Known gaps | The operator did not complete a live check of Codex isolation (the account usage limit stopped the check). Kilo now has an isolated JSON CLI adapter (see below). omp cannot stop configured MCP servers. |
 
 ## Who did what
 
@@ -83,3 +83,15 @@ workflow built all installers on GitHub runners: `Quorum-0.1.0-linux-x86_64.AppI
 
 Branch per change, PR to `main`, CI must be green. Spec: [`docs/implementation-spec.md`](../docs/implementation-spec.md).
 User guide: [`docs/INSTALL.md`](../docs/INSTALL.md). Detailed history of the build plan: [`tasks/claude.md`](claude.md).
+
+
+## Unreleased (feat/kilo-adapter)
+
+| Change | Notes |
+| --- | --- |
+| Kilo Code | CLI 7.8.15. JSON driver emits text, tools and usage. It resumes native sessions. Desktop Settings and `join --adapter kilo` support it. Trust: `low`. |
+| Kilo isolation | Quorum owns HOME/XDG directories per profile. It imports provider logins only. Each turn disables personal/project config, external skills and plugins. Reviewer/directive permissions allow read/search tools only, including on resume. |
+| Custom CLI | Config-only `custom` adapter. Each profile has argv and optional resume argv. Dotted JSON fields map text, tools, usage, session ID and completion. No shell. Trust: always `low`. |
+| Evidence | Three real Kilo fixtures cover author edits, Node execution, resume recall and a reviewer write request. See `tasks/tui-spike.md`. |
+| Verification | Full build/typecheck/lint/unit/e2e chain passed twice on final code. Each cycle: 868 unit tests; 35 e2e tests; 1 existing e2e TODO. Final live author, resumed author, and fresh/resumed reviewer/directive probes passed. |
+| Known gaps | Kilo native permissions are not an OS sandbox. Author bash does not implement Quorum's command allowlist. Custom operators must supply isolation and read-only flags. Custom templates have no desktop editor. |

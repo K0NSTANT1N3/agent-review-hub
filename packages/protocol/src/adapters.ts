@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /** Registry identifiers. Presence here does not imply a runtime implementation. */
-export const ADAPTER_TYPES = ['claude-code', 'codex', 'pi', 'omp', 'opencode', 'kilo', 'mock'] as const;
+export const ADAPTER_TYPES = ['claude-code', 'codex', 'pi', 'omp', 'opencode', 'kilo', 'custom', 'mock'] as const;
 export const AdapterTypeSchema = z.enum(ADAPTER_TYPES);
 export type AdapterType = z.infer<typeof AdapterTypeSchema>;
 

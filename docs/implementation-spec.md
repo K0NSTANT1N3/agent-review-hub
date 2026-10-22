@@ -1144,7 +1144,7 @@ interface AgentAdapter {
 
 `onEvent` is the AgentEvent stream. The runner stamps `seq` and `at` per Quorum `sid`, redacts the owner's home directory to `~` in every string field, then journals batches (flush at 100 events, 65536 bytes, 250 ms, or turn end). Adapters that cannot stream never call it. Binary CLI adapters spawn with `stdio: ['ignore', 'pipe', 'pipe']` (stdin ignored, no PTY). The prompt is one argv value after `--`.
 
-Reported trust (not a config setting): `claude-code` and `mock` → `enforced`; `codex` → `sandboxed`; `pi`, `omp`, `opencode`, `kilo` → `low`. Detection scans `PATH` (and configured `binaryPath`) for `claude`, `codex`, `pi`, `omp`, `kilo`, `opencode`, runs `--version`, and never starts a model turn.
+Reported trust (not a config setting): `claude-code` and `mock` → `enforced`; `codex` → `sandboxed`; `pi`, `omp`, `opencode`, `kilo`, `custom` → `low`. Detection scans `PATH` (and configured `binaryPath`) for `claude`, `codex`, `pi`, `omp`, `kilo`, `opencode`, runs `--version`, and never starts a model turn.
 
 ### 15.2 Claude Code adapter (`@anthropic-ai/claude-agent-sdk`)
 - Uses `query({ prompt, options })` and iterates the async stream.
@@ -1211,6 +1211,25 @@ One implementation (`createPiAdapter`) with different launch flags. Binary is `c
 - **omp:** `createSession` returns `{ nativeId: null }`. Every turn passes `--no-rules --no-lsp --no-pty --no-title --auto-approve`. Resume adds `--resume <id>`. omp has no `--no-mcp` flag in this release; configured MCP servers cannot be disabled through the documented CLI.
 
 Both parse the pi/omp JSON event family (`session`, `message_start`/`update`/`end`, `tool_execution_start`/`end`, `agent_end`). Thinking events (`thinking_delta` / `thinking_end`) are forwarded when present. Context estimate is the latest assistant `usage.totalTokens`. Map rate-limit text to `RATE_LIMITED`.
+
+### 15.7 Kilo adapter (CLI)
+
+Use `kilo run --format json --pure --agent quorum --dir <cwd> [--session <id>] [--model <model>] -- <prompt>`.
+Set `PWD` to `cwd`. Reassert global and `quorum` agent permissions on every fresh/resumed turn.
+Default deny; allow `read`, `glob`, `grep`, `list`. Authors also allow `edit`, `bash`.
+Use separate HOME/XDG trees at `<dataDir>/kilo-home/<profile>`. Copy only provider API/OAuth logins.
+Disable owner/project config discovery, Claude instructions, external skills and plugins.
+Map `text`, `tool_use`, `step_finish`, `error` JSON records as documented in `tasks/tui-spike.md`.
+Trust stays `low`. Native permission rules do not provide an OS sandbox.
+
+### 15.8 Custom adapter (CLI)
+
+`CustomAdapterConfigSchema` defines `profiles` (author/reviewer/directive), each with `command`, argv `args`, and optional `resume` command/argv.
+Replace `{prompt}` and `{sessionId}` inside each argument once. Use no shell.
+Read the native ID through `sessionIdPath`; match event names through `eventTypePath` (default `type`).
+Dotted field mappings normalize text, tool calls/results and usage. `turn_end` marks completion, not an AgentEvent.
+Require text, a session ID, completion and zero exit status. Trust is always `low`.
+The operator must configure native read-only flags and config isolation for every reviewer/directive launch, including resumes.
 
 ---
 

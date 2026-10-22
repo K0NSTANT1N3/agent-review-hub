@@ -98,9 +98,9 @@ describe('quorum-node join', () => {
     await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('writes codex, pi and omp adapter configs', () => {
+  it('writes codex, pi, omp and kilo adapter configs', () => {
     expect(JOIN_USAGE).toMatch(/codex, pi, omp/);
-    for (const type of ['codex', 'pi', 'omp'] as const) {
+    for (const type of ['codex', 'pi', 'omp', 'kilo'] as const) {
       const result = runJoin([code(), '--adapter', type, '--model', 'test-model', '--force'], () => {}, dir, home);
       expect(result.config.adapter).toMatchObject({ type, model: 'test-model' });
     }

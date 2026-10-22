@@ -143,7 +143,7 @@ describe('Codex adapter', () => {
   it('registers Codex lazily without launching a turn', async () => {
     const adapter = await createAdapter(config);
     expect(await adapter.createSession({ cwd: '/repo', profile: 'reviewer' })).toEqual({ nativeId: null });
-    await expect(createAdapter({ type: 'kilo', contextWindow: 200_000 })).rejects.toThrow('kilo adapter not implemented yet');
+    expect(await createAdapter({ type: 'kilo', contextWindow: 200_000 })).toHaveProperty('runTurn');
   });
 
   describe('owner config isolation', () => {
