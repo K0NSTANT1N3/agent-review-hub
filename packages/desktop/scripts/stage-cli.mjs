@@ -15,9 +15,12 @@ execFileSync(pnpm[0], [...pnpm.slice(1), '--filter', '@quorum/cli', 'deploy', '-
 });
 copyFileSync(process.execPath, join(destination, process.platform === 'win32' ? 'node.exe' : 'node'));
 // Include Node's license, including its third-party notices, with the redistributed runtime.
-const license = await globalThis.fetch(`https://raw.githubusercontent.com/nodejs/node/v${process.versions.node}/LICENSE`);
-if (!license.ok) throw new Error(`Cannot get Node license: HTTP ${license.status}`);
-writeFileSync(join(destination, 'NODE-LICENSE'), await license.text());
+// Vendored so offline builds work; vendor/README.md says how to refresh it.
+copyFileSync(join(desktop, 'vendor', 'node-LICENSE'), join(destination, 'NODE-LICENSE'));
+const licensed = readFileSync(join(desktop, 'vendor', 'node-LICENSE.version'), 'utf8').trim();
+if (licensed !== process.versions.node) {
+  console.warn(`[stage-cli] vendor/node-LICENSE is for Node ${licensed}, but this build bundles Node ${process.versions.node}. Refresh it: see vendor/README.md.`);
+}
 mkdirSync(join(destination, 'bin'));
 for (const name of ['quorum', 'quorum-tui']) {
   const entry = name === 'quorum-tui' ? 'app/node_modules/@quorum/tui/dist/cli.js' : 'app/dist/cli.js';

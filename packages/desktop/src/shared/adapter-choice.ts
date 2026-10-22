@@ -22,3 +22,7 @@ export function settingsAdapter(type: AdapterConfig['type'], contextWindow = 200
   if (type === 'mock') return { type, scriptPath: '', contextWindow };
   return { type, contextWindow };
 }
+
+/** First-run requirement on the welcome screen. */
+export const WELCOME_REQUIREMENTS =
+  'You need Git access to the team repository and one supported coding agent installed and logged in on this computer: Claude Code, Codex, pi, omp or Kilo Code.';

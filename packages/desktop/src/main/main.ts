@@ -120,7 +120,7 @@ handle(IPC.installCli, async () => {
     type: 'question', buttons: ['Cancel', 'Install'], defaultId: 1, cancelId: 0,
     message: 'Install command-line tool?',
     detail: `Copy the bundled tools to ${plan.payload}.\n` + (process.platform === 'win32'
-      ? `Add ${plan.bin} to your user PATH.`
+      ? `Put ${plan.bin} first in your user PATH.`
       : `Create quorum and quorum-tui symlinks in ${plan.bin}.` + (plan.profile ? `\nAdd this directory to PATH in ${plan.profile}.` : '')),
   });
   return response === 1 ? installCli(options) : 'Installation cancelled.';
