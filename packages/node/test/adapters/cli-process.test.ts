@@ -24,7 +24,7 @@ describe('CLI process', () => {
     expect(await result).toEqual({ code: 0, signal: null, stderr: '', malformedLineCount: 25, malformedLines: badLines.slice(-20) });
     expect(onJson.mock.calls.map(([value]) => value)).toEqual([{ text: '界'.repeat(30) }, null, { last: true }]);
     expect(spawnFn).toHaveBeenCalledWith('/bin/agent', ['--json', '$(literal); text'], {
-      cwd: '/repo', env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true,
+      cwd: '/repo', env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true, shell: false,
     });
   });
 

@@ -9,6 +9,7 @@ const cache = new Map<string, Promise<DetectedAgent[]>>();
 
 export function adapterTrust(type: AdapterType): AgentTrust {
   if (type === 'claude-code' || type === 'mock') return 'enforced';
+  // Kilo uses native deny rules; custom delegates permission flags to config. Neither provides a Quorum sandbox.
   return type === 'codex' ? 'sandboxed' : 'low';
 }
 

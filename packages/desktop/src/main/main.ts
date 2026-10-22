@@ -1,11 +1,12 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BrowserWindow, Notification, app, ipcMain, powerMonitor, safeStorage, shell } from 'electron';
+import { BrowserWindow, Notification, app, dialog, ipcMain, powerMonitor, safeStorage, shell } from 'electron';
 import { addAgent, startLeader } from '@quorum/leader';
 import { resolveClaudeExecutable, startDaemon } from '@quorum/node';
 import type { ApiRouteName } from '@quorum/protocol';
 import { IPC, type ApiCallOptions, type DesktopSettings, type HostSetup, type JoinSetup, type ResetOptions } from '../shared/ipc.js';
+import { cliInstallPlan, installCli } from './install-cli.js';
 import { addressOptions } from './network.js';
 import { createNotifier } from './notifier.js';
 import { Services } from './services.js';
@@ -107,6 +108,23 @@ handle(IPC.updateSettings, (settings: DesktopSettings) => services.updateSetting
 handle(IPC.restart, () => services.restart());
 handle(IPC.reset, (options?: ResetOptions) => services.reset({ deleteLeaderData: options?.deleteLeaderData === true }));
 handle(IPC.networkAddresses, () => addressOptions());
+handle(IPC.installCli, async () => {
+  if (!app.isPackaged) throw new Error('Install a packaged Quorum app to use this action.');
+  const options = {
+    source: join(process.resourcesPath, 'cli'), dataDir: app.getPath('userData'),
+    home: app.getPath('home'), version: app.getVersion(), platform: process.platform,
+    shell: process.env.SHELL, path: process.env.PATH,
+  };
+  const plan = cliInstallPlan(options);
+  const { response } = await dialog.showMessageBox({
+    type: 'question', buttons: ['Cancel', 'Install'], defaultId: 1, cancelId: 0,
+    message: 'Install command-line tool?',
+    detail: `Copy the bundled tools to ${plan.payload}.\n` + (process.platform === 'win32'
+      ? `Add ${plan.bin} to your user PATH.`
+      : `Create quorum and quorum-tui symlinks in ${plan.bin}.` + (plan.profile ? `\nAdd this directory to PATH in ${plan.profile}.` : '')),
+  });
+  return response === 1 ? installCli(options) : 'Installation cancelled.';
+});
 handle(IPC.checkAgent, () => services.checkAgent());
 handle(IPC.openExternal, async (url: string) => {
   if (/^https?:\/\//.test(url)) await shell.openExternal(url);

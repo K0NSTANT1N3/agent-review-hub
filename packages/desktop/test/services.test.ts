@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addAgent, startLeader } from '@quorum/leader';
-import type { NodeConfig, OwnerSettings } from '@quorum/protocol';
+import { CustomAdapterConfigSchema, type NodeConfig, type OwnerSettings } from '@quorum/protocol';
 import { DEFAULT_SETTINGS } from '../src/shared/ipc.js';
 import { agentIdFor, decodeJoinCode, encodeJoinCode, httpBaseFromLeaderUrl, isEncryptedLeaderUrl, isValidPublicHost, publicLeaderUrl } from '../src/main/join-code.js';
 import { networkInterfaces } from 'node:os';
@@ -331,14 +331,20 @@ describe('Services', () => {
     expect(existsSync(join(data2, 'leader'))).toBe(false);
   });
 
-  it('checks codex, pi and omp by an optional binary path', async () => {
+  it('checks CLI binaries including Kilo without probing arbitrary custom commands', async () => {
     const { host } = await hosted();
-    for (const type of ['codex', 'pi', 'omp'] as const) {
+    for (const type of ['codex', 'pi', 'omp', 'kilo'] as const) {
       await host.updateSettings({ ...DEFAULT_SETTINGS, adapter: { type, binaryPath: process.execPath, contextWindow: 200000 } });
       const result = await host.checkAgent();
       expect(result.ok).toBe(true);
       expect(result.detail).toContain(type);
     }
+    const profile = { command: '/missing/never-execute', args: ['{prompt}'] };
+    await host.updateSettings({ ...DEFAULT_SETTINGS, adapter: CustomAdapterConfigSchema.parse({
+      type: 'custom', profiles: { author: profile, reviewer: profile, directive: profile },
+      sessionIdPath: 'id', mapping: { text: { event: 'text', text: 'text' }, turn_end: { event: 'done' } },
+    }) });
+    expect(await host.checkAgent()).toMatchObject({ ok: true, detail: expect.stringContaining('does not probe') });
   });
 
   it('stops the agent and reports an auth error when the Leader rejects the daemon', async () => {

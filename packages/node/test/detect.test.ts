@@ -61,6 +61,6 @@ describe('agent detection', () => {
   });
 
   it('assigns trust to every registered adapter type', () => {
-    expect(ADAPTER_TYPES.map((type) => adapterTrust(type))).toEqual(['enforced', 'sandboxed', 'low', 'low', 'low', 'low', 'enforced']);
+    expect(ADAPTER_TYPES.map((type) => adapterTrust(type))).toEqual(['enforced', 'sandboxed', 'low', 'low', 'low', 'low', 'low', 'enforced']);
   });
 });

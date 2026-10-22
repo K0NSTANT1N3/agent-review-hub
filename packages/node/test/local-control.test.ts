@@ -11,7 +11,7 @@ import { controlPath, startLocalControl } from '../src/local-control.js';
 const disposers: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(disposers.splice(0).map((dispose) => dispose())); });
 
-async function fixture(type: 'claude-code' | 'codex' | 'pi' | 'omp' | 'mock' | 'opencode' = 'codex') {
+async function fixture(type: 'claude-code' | 'codex' | 'pi' | 'omp' | 'mock' | 'opencode' | 'kilo' = 'codex') {
   const dataDir = await mkdtemp(join(tmpdir(), 'qc-'));
   const config = parseNodeConfig({ agentId: 'local', token: 'node-token', leaderUrl: 'ws://leader.test',
     ownerName: 'Local', dataDir, workspaceDir: dataDir, repoRemoteUrl: '/repo', gitIdentity: { name: 'Test', email: 'test@example.com' },
@@ -97,7 +97,7 @@ describe('owner-only local control', () => {
     expect(f.release).toHaveBeenCalledOnce();
   });
 
-  it.each(['mock', 'opencode'] as const)('explains unsupported %s adapter', async (type) => {
+  it.each(['mock', 'opencode', 'kilo'] as const)('explains unsupported %s adapter', async (type) => {
     const f = await fixture(type);
     expect(await f.connect()()).toMatchObject({ ok: false, error: `Adapter ${type} does not support native resume.` });
   });

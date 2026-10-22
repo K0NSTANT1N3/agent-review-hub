@@ -34,6 +34,37 @@ Download the installer for your system from the project's **Releases** page:
 | macOS | `Quorum-x.y.z-mac-arm64.dmg` | Builds are unsigned. Do the [macOS first-run steps](#macos-first-run) below. |
 | Windows | `Quorum-x.y.z-win-x64.exe` | Builds are unsigned: on the SmartScreen prompt choose **More info → Run anyway**. |
 
+### Install the command-line tools
+
+The v0.1.5 installers include `quorum`, `quorum-tui` and Node.js.
+You do not need a source checkout or a separate Node.js installation.
+
+1. Install the app in a permanent location. On macOS, copy **Quorum.app** from the DMG to **Applications**.
+2. Open Quorum. Host or join a team.
+3. Open **Settings**. Click **Install command-line tool**.
+4. Read the confirmation. Click **Install**.
+5. Open a new terminal. Run:
+
+   ```bash
+   quorum --version
+   quorum tui --help
+   ```
+
+On macOS and Linux, the action makes `quorum` and `quorum-tui` symlinks in `~/.local/bin`.
+If this directory is not on PATH, the confirmation names the shell file that the action will update
+(`~/.zshrc`, `~/.bashrc`, or a fish configuration file).
+On Windows, the action adds the private CLI directory to your user PATH. Open a new terminal from the Start menu.
+If an existing terminal app keeps the old PATH, close that app and open it again.
+
+The tools use a private copy in the Quorum data folder. On Linux, they continue to work after an AppImage closes.
+After you update Quorum, click **Install command-line tool** again to update the commands.
+The action does not replace an unrelated command with the same name. Move that command before you try again.
+If your shell does not read the named shell file, add `~/.local/bin` to PATH in your shell configuration.
+
+To remove the commands on macOS or Linux, delete the two symlinks and the `command-line` directory in the Quorum data folder.
+Remove the line marked `# Quorum command-line tools` from the shell file if you no longer need it.
+On Windows, remove the CLI directory from your user PATH, then delete that directory.
+
 ### macOS first run
 
 The app is unsigned, so macOS blocks it the first time. Do these steps one time only.
@@ -136,10 +167,9 @@ the allow-list to Claude Code. An opencode server uses its own permission settin
 
 ### Choose an agent
 
-The Node `adapter` object is the agent type. The desktop app Settings list has Claude Code and opencode.
-To use Codex, pi or omp, set `adapter` in `quorum.node.json`.
-`quorum-node join --adapter` accepts only `claude-code`, `opencode` or `mock`.
-Kilo is a reserved adapter type. The Node does not start a Kilo adapter.
+The Node `adapter` object selects the agent. Desktop Settings and `quorum-node join --adapter`
+support `claude-code`, `codex`, `pi`, `omp`, `kilo`, `opencode` and `mock`.
+Use `custom` in `quorum.node.json` for another CLI. Custom adapters need no new Node code.
 
 Adapter config examples (`binaryPath` and `model` are optional):
 
@@ -147,9 +177,10 @@ Adapter config examples (`binaryPath` and `model` are optional):
 { "type": "codex", "binaryPath": "/usr/local/bin/codex", "model": "<model>" }
 { "type": "pi", "binaryPath": "/usr/local/bin/pi", "model": "<model>" }
 { "type": "omp", "binaryPath": "/usr/local/bin/omp" }
+{ "type": "kilo", "model": "openrouter/openai/gpt-4.1-mini" }
 ```
 
-If `binaryPath` is not set, the Node starts `codex`, `pi` or `omp` from `PATH`.
+If `binaryPath` is not set, the Node starts `codex`, `pi`, `omp` or `kilo` from `PATH`.
 The default `contextWindow` is `200000`.
 
 The Node sends a trust value. You cannot set trust in the config.
@@ -158,7 +189,7 @@ The Node sends a trust value. You cannot set trust in the config.
 |---|---|
 | `enforced` | Quorum does a check of tool permissions before each tool call. Claude Code and mock have this trust. |
 | `sandboxed` | An external sandbox is a limit on the agent. Codex has this trust. Quorum does not apply its tool callback. |
-| `low` | Quorum cannot apply a full tool or sandbox limit. pi, omp, opencode and Kilo have this trust. |
+| `low` | Quorum cannot apply a full tool or sandbox limit. pi, omp, opencode, Kilo and custom have this trust. |
 
 If trust is missing, the UI must not show `enforced`.
 
@@ -171,6 +202,75 @@ Codex isolation:
 - The agent does not read the owner `config.toml`, `AGENTS.md`, skills, hooks or rules.
 - Each turn also has `--ignore-user-config --ignore-rules`.
 - Before you use Codex with Quorum, run `codex login`.
+
+Kilo setup (tested with CLI 7.8.15):
+
+```sh
+npm install -g @kilocode/cli
+kilo --version
+kilo auth login
+quorum-node join <join-code> --adapter kilo --model <provider/model>
+```
+
+Kilo can use provider API-key environment variables such as `OPENROUTER_API_KEY`.
+Set a model explicitly when the provider needs one. Quorum does not import the owner's default model.
+Each profile uses a separate home under `<dataDir>/kilo-home/<profile>`.
+Quorum copies only API/OAuth login records from the owner's XDG `kilo/auth.json`.
+It does not import personal instructions, skills, MCP, plugins, approval settings or native sessions.
+Every launch disables project config and external skills. Each launch uses the `quorum` agent.
+Reviewer and directive turns allow only `read`, `glob`, `grep` and `list`. All other permissions default to deny.
+The same rules apply on resume. Author turns also allow edits and bash.
+Kilo applies these native permissions. They are not an OS sandbox or Quorum's full path/command policy.
+
+Custom CLI example (replace `my-agent` and its flags with your CLI's real options):
+
+```json
+{
+  "type": "custom",
+  "profiles": {
+    "author": {
+      "command": "my-agent",
+      "args": ["--json", "--write", "--", "{prompt}"],
+      "resume": { "command": "my-agent", "args": ["--json", "--write", "--session", "{sessionId}", "--", "{prompt}"] }
+    },
+    "reviewer": {
+      "command": "my-agent",
+      "args": ["--json", "--read-only", "--", "{prompt}"],
+      "resume": { "command": "my-agent", "args": ["--json", "--read-only", "--session", "{sessionId}", "--", "{prompt}"] }
+    },
+    "directive": {
+      "command": "my-agent",
+      "args": ["--json", "--read-only", "--", "{prompt}"],
+      "resume": { "command": "my-agent", "args": ["--json", "--read-only", "--session", "{sessionId}", "--", "{prompt}"] }
+    }
+  },
+  "sessionIdPath": "session.id",
+  "eventTypePath": "type",
+  "mapping": {
+    "text": { "event": "text", "text": "text", "mode": "final", "messageId": "messageId" },
+    "tool_call": { "event": "call", "id": "id", "name": "name", "argsSummary": "summary" },
+    "tool_result": { "event": "result", "id": "id", "output": "output", "ok": "ok", "exitCode": "exitCode" },
+    "usage": { "event": "usage", "inputTokens": "tokens.input", "outputTokens": "tokens.output", "contextTokens": "tokens.context" },
+    "turn_end": { "event": "done" }
+  }
+}
+```
+
+Templates contain an executable and argv values. Quorum never uses a shell or splits an argv value.
+It substitutes `{prompt}` and `{sessionId}` once inside each argument. A fresh session ID is an empty string.
+If `resume` is absent, Quorum uses that profile's base template for resumed turns.
+Use separate fresh/resume templates if the CLI rejects an empty session argument.
+Set read-only flags in **both** reviewer and directive templates, including their resume templates.
+Custom adapters inherit the Node environment. Configure the CLI's own config isolation in its argv or wrapper executable.
+Quorum cannot infer arbitrary CLI permission semantics. Custom trust is always `low`.
+
+Paths use dotted own properties, such as `message.content.0.text`. They are not JSONPath expressions.
+`eventTypePath` defaults to `type`. Each mapping's `event` matches that field exactly.
+Text supports `final` snapshots (default) or `delta` chunks. Usage records add input/output counters;
+the latest context counter replaces the previous estimate. Emit each usage record once.
+Tool mappings and usage are optional. A successful turn needs text, a nonempty session ID,
+a matching `turn_end` record and a zero process exit code. Turn end controls completion; it is not a transcript event.
+Custom CLIs must write one JSON object per line. Malformed lines remain bounded failure diagnostics.
 
 The Node finds agent binaries on `PATH` and at a `binaryPath` in the config.
 It does `--version` on each binary. It does not start a model turn.
@@ -201,7 +301,7 @@ The `quorum` CLI lets a coding agent or a script use Quorum as you.
 The CLI can create tasks, wait for tasks, read diffs, answer a blocked author agent and ask agents.
 A CLI token cannot approve, send back, cancel or merge a task. Only you can do these actions in the app.
 
-To connect the CLI:
+First, install the command-line tools (see §2). Then connect the CLI:
 
 1. Open **Settings → Agent CLI access**.
 2. Type a label, for example `Claude Code on my laptop`.
@@ -217,12 +317,6 @@ quorum task answer 12 "Use Redis for the counters."
 quorum task wait 12 --json
 quorum task diff 12
 quorum ask bob-agent "Where is the retry logic for payments?"
-```
-
-The installers do not include the CLI in v0.1. To use the CLI, install the CLI package file (see [§10.1](#101-install-the-programs)), or build it from source (see §7) and make an alias:
-
-```bash
-alias quorum="node /path/to/agent-review-hub/packages/cli/dist/cli.js"
 ```
 
 Agents use `--json` and the exit code:
@@ -244,32 +338,26 @@ On a headless Leader, the host can make a token with `quorum-leader add-token --
 `quorum-tui` is a terminal program for one Leader.
 The program shows the agents, the tasks and the transcript of the selected task.
 
-To start `quorum-tui` from the repository:
+To start the terminal UI:
 
-1. Build the TUI package:
-
-   ```bash
-   corepack pnpm --filter @quorum/tui build
-   ```
-
-2. Start the program in a TTY terminal:
+1. Install the command-line tools (see §2).
+2. Run `quorum login` with the Leader URL and token (see above).
+3. Run the program in an interactive terminal:
 
    ```bash
-   node packages/tui/dist/cli.js --url https://leader.example.com --token '<token>'
+   quorum tui
    ```
 
-You can make an alias:
-
-```bash
-alias quorum-tui="node /path/to/agent-review-hub/packages/tui/dist/cli.js"
-```
+Use `quorum tui --url https://leader.example.com --token '<token>'` to override the saved login.
+`quorum-tui` remains available as a separate command.
+Run `quorum tui --help` to see the options without starting the UI.
 
 The program accepts these flags:
 
 * `--url` — Leader URL (`http://` or `https://`)
 * `--token` — API token
 * `--help` (`-h`) — help text
-* `--version` — `quorum-tui 0.1.0`
+* `quorum --version` — CLI version; `quorum-tui --version` — standalone TUI version
 
 The program reads the connection data in this order:
 
@@ -435,7 +523,7 @@ Make the npm package files from the repository, then install them with npm:
 ```bash
 git clone https://github.com/K0NSTANT1N3/agent-review-hub.git && cd agent-review-hub
 corepack pnpm install --filter '@quorum/leader...' --filter '@quorum/node...' --filter '@quorum/cli...'
-for p in protocol leader node cli; do (cd packages/$p && corepack pnpm pack --pack-destination ../../dist-npm); done
+for p in protocol leader node tui cli; do (cd packages/$p && corepack pnpm pack --pack-destination ../../dist-npm); done
 npm install -g --allow-scripts=better-sqlite3 ./dist-npm/*.tgz
 ```
 
@@ -446,7 +534,7 @@ The `--filter` options install only the server packages. They do not download th
 `--allow-scripts=better-sqlite3` permits the SQLite native module to install. With an older npm version that does not support this option, omit it.
 
 This installs three programs: `quorum-leader` (the Leader), `quorum-node` (the agent Node) and `quorum` (the CLI for coding agents and scripts).
-Each program shows its commands with `--help`. Install all four package files together, because the other packages use `@quorum/protocol`.
+Each program shows its commands with `--help`. The CLI also includes `quorum tui` and the separate `quorum-tui` command. Install all five package files together, because the other packages use `@quorum/protocol`.
 
 CAUTION: Do not install `@quorum/...` packages from the npm registry. The maintainers did not publish Quorum to npm. The `@quorum` scope on npm belongs to a different organization.
 

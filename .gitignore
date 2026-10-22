@@ -38,3 +38,7 @@ Thumbs.db
 data/
 release/
 dist-npm/
+
+# Standalone CLI payload prepared for desktop installers
+cli-stage/
+stage/

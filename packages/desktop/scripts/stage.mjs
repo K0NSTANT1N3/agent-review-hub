@@ -1,6 +1,7 @@
 // Produces packages/desktop/stage: an isolated copy of the app with real (not symlinked) production
 // dependencies, and native modules rebuilt for Electron's ABI. The workspace's Node build is untouched,
 // so `pnpm -r test` keeps using better-sqlite3 compiled for Node.
+import './stage-cli.mjs';
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';

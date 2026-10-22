@@ -2,11 +2,17 @@
 
 Full-screen Ink client for one Quorum Leader. Node 22 or later required.
 
+Install the desktop app. Open **Settings > Install command-line tool** and confirm.
+Open a new terminal:
+
 ```sh
-corepack pnpm --filter @quorum/tui build
-node packages/tui/dist/cli.js --url https://leader.example.com --token '<token>'
-node packages/tui/dist/cli.js --help
+quorum login --url https://leader.example.com --token '<token>'
+quorum tui
+quorum-tui --help
 ```
+
+The desktop installers include Node.js. For local npm package files, Node 22 or later is required.
+The npm packages are prepared but not published. Do not install the unrelated registry packages under `@quorum`.
 
 Flags override `QUORUM_URL` / `QUORUM_TOKEN`, then the existing `quorum` CLI login.
 Config path: `QUORUM_CONFIG`, else `$XDG_CONFIG_HOME/quorum/cli.json`, else
@@ -22,7 +28,7 @@ or sends the input. `m` cycles answer author, send back, and ask an agent.
 
 `a` approves, `s` starts a send-back comment, `p` pauses/resumes, `c` asks for y/n
 before cancellation. Approve/send back/pause/cancel require an owner token:
-Settings → Agent CLI access, or `quorum-leader add-token --scope owner`.
+`quorum-leader add-token --scope owner`. Settings → Agent CLI access creates requester tokens.
 `t` confirms y/n, pauses the task, waits for local pause cleanup and all in-flight work,
 then hands the terminal to that session's native agent TUI. Exit the agent to return;
 Quorum checks git, resumes the task, and reloads its transcript. Attach always
